@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIN Site Lock 设置</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:#101828;font-size:16px;padding:40px 16px;
+  }
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:24px;margin-bottom:24px}
+  .card{
+    background:#fff;border-radius:14px;padding:28px;margin-bottom:20px;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  .card h2{font-size:18px;margin-bottom:16px}
+  label{display:block;font-size:14px;color:#475467;margin:14px 0 6px}
+  input,select{
+    padding:11px 14px;font-size:15px;border:1.5px solid #d0d5dd;border-radius:10px;
+    outline:none;background:#fff;color:#101828;transition:border-color .15s;width:100%;
+  }
+  input:focus,select:focus{border-color:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+  .btn{
+    margin-top:16px;padding:11px 24px;font-size:15px;font-weight:600;color:#fff;
+    background:#2563eb;border:none;border-radius:10px;cursor:pointer;transition:background .15s;
+  }
+  .btn:hover{background:#1d4ed8}
+  .add-row{display:flex;gap:10px;flex-wrap:wrap}
+  .add-row select{width:130px;flex:none}
+  .add-row input{flex:1;min-width:200px}
+  .add-row .btn{margin-top:0;flex:none}
+  #list{list-style:none;margin-top:16px}
+  #list li{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:11px 14px;background:#f8f9fb;border-radius:9px;margin-bottom:8px;font-size:15px;
+    font-family:ui-monospace,Consolas,monospace;
+  }
+  .del{
+    padding:7px 14px;font-size:13px;font-weight:600;color:#dc2626;background:#fee2e2;
+    border:none;border-radius:8px;cursor:pointer;transition:background .15s;flex:none;
+  }
+  .del:hover{background:#fecaca}
+  .empty{color:#98a2b3;font-size:14px;text-align:center;padding:16px 0}
+  .tip{font-size:13px;color:#98a2b3;margin-top:10px;line-height:1.5}
+  .idle-row{display:flex;gap:10px;align-items:center}
+  .idle-row input{width:120px;flex:none}
+  .idle-row span{color:#667085;font-size:14px}
+  .idle-row .btn{margin-top:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>PIN Site Lock 设置</h1>
+
+  <div class="card">
+    <h2>受保护列表</h2>
+    <div class="add-row">
+      <select id="type">
+        <option value="domain">域名</option>
+        <option value="ip">IP（含端口）</option>
+        <option value="url">URL 前缀</option>
+      </select>
+      <input id="value" type="text" placeholder="例如 example.com / 192.168.1.10:3000 / https://a.com/admin" />
+      <button id="add" class="btn">添加</button>
+    </div>
+    <p class="tip">域名：匹配该域及其所有子域；IP：填端口则精确匹配，不填则匹配所有端口（仅 IPv4）；URL 前缀：需含 http/https 协议。</p>
+    <ul id="list"></ul>
+  </div>
+
+  <div class="card">
+    <h2>设置 PIN</h2>
+    <div id="curpinRow" style="display:none">
+      <label>当前 PIN</label>
+      <input id="curpin" type="password" autocomplete="off" />
+    </div>
+    <label>新 PIN（至少 4 位）</label>
+    <input id="newpin" type="password" autocomplete="new-password" />
+    <label>确认新 PIN</label>
+    <input id="confirmpin" type="password" autocomplete="new-password" />
+    <button id="setPin" class="btn">保存 PIN</button>
+  </div>
+
+  <div class="card">
+    <h2>空闲自动锁</h2>
+    <div class="idle-row">
+      <input id="idleMin" type="number" min="1" max="240" />
+      <span>分钟（1~240，静置或系统锁屏后自动重新上锁）</span>
+      <button id="saveIdle" class="btn">保存</button>
+    </div>
+  </div>
+</div>
+<script type="module" src="options.js"></script>
+</body>
+</html>

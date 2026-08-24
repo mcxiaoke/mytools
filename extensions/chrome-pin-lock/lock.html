@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>需要 PIN</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#1e3a5f 0%,#0f2027 100%);
+    padding:16px;
+  }
+  .card{
+    background:#fff;border-radius:16px;padding:40px 36px;width:min(420px,94vw);
+    box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:center;
+  }
+  .icon{
+    width:68px;height:68px;border-radius:50%;background:#eef3ff;
+    display:flex;align-items:center;justify-content:center;margin:0 auto 18px;
+  }
+  h2{font-size:22px;color:#101828;margin-bottom:8px}
+  #hint{color:#667085;font-size:15px;line-height:1.6;word-break:break-all;margin-bottom:26px}
+  #pin{
+    width:100%;padding:14px 16px;font-size:24px;letter-spacing:8px;text-align:center;
+    border:2px solid #d0d5dd;border-radius:12px;outline:none;transition:border-color .15s,color:#101828;
+  }
+  #pin:focus{border-color:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+  #ok{
+    width:100%;margin-top:16px;padding:14px;font-size:17px;font-weight:600;color:#fff;
+    background:#2563eb;border:none;border-radius:12px;cursor:pointer;transition:background .15s;
+  }
+  #ok:hover:not(:disabled){background:#1d4ed8}
+  #ok:disabled,#pin:disabled{opacity:.5;cursor:not-allowed}
+  #msg{color:#dc2626;font-size:14px;min-height:1.5em;margin-top:14px}
+  #goOptions{display:inline-block;margin-top:18px;color:#98a2b3;font-size:14px;text-decoration:none}
+  #goOptions:hover{color:#2563eb;text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="11" width="16" height="9" rx="2"/>
+      <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+    </svg>
+  </div>
+  <h2>此站点已加锁</h2>
+  <p id="hint"></p>
+  <input id="pin" type="password" placeholder="输入 PIN" autofocus autocomplete="off" inputmode="numeric" />
+  <button id="ok">解 锁</button>
+  <p id="msg"></p>
+  <a href="#" id="goOptions">去设置 PIN</a>
+</div>
+<script type="module" src="lock.js"></script>
+</body>
+</html>

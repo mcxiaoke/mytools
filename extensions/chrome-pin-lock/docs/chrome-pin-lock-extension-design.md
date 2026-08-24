@@ -500,7 +500,7 @@ pinEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') okBtn.click();
 设置页负责：
 
 1. **受保护列表管理**：增删 `{ type: 'domain'|'ip'|'url', value }`，存 `storage.local.protected`，增加格式校验与去重。
-2. **设置 / 修改 PIN**：调用 `lib.setPin()`，增加二次确认与强度提示。
+2. **设置 / 修改 PIN**：调用 `lib.setPin()`，二次确认输入；**已有 PIN 时必须先验证当前 PIN 才能修改**（防止从锁页"去设置"入口直接改 PIN 绕过验证）。
 3. **空闲时长**：存 `storage.local.idleMinutes`。
 
 示例 `options.js`（核心逻辑，已补全校验与渲染）：
@@ -598,7 +598,7 @@ loadIdle();
 render();
 ```
 
-**修正要点：** 原文档 `options.js` 仅骨架，无校验、去重、删除、二次确认；现补全且与 `lib.isProtected` 保持一致的归一化逻辑。PIN 仅要求 ≥4 位（门禁定位，见 §8）；`idleMinutes` 上限 240 分钟，对齐 `setDetectionInterval` 的 API 上限。
+**修正要点：** 原文档 `options.js` 仅骨架，无校验、去重、删除、二次确认；现补全且与 `lib.isProtected` 保持一致的归一化逻辑。PIN 仅要求 ≥4 位（门禁定位，见 §8）；`idleMinutes` 上限 240 分钟，对齐 `setDetectionInterval` 的 API 上限。修改 PIN 前需通过 `verifyPin` 验证当前 PIN。
 
 ### 4.6 空闲自动锁定（idle auto-lock，已修正）
 
@@ -748,6 +748,11 @@ render();
 ---
 
 ## 10. 变更概述（相对原文档的变更清单）
+
+### 三次修订（2026-08-24 13:57，配合首次实现反馈）
+
+- **安全修复**：设置页修改 PIN 前必须先输入并验证当前 PIN（`verifyPin`），修复"从锁页『去设置 PIN』入口可直接改 PIN"的绕过。
+- **UI 重做**：`lock.html` 改为居中卡片式布局（渐变背景、大号居中 PIN 输入框、全宽解锁按钮）；`options.html` 改为卡片分区分栏（受保护列表 / PIN / 空闲锁），整体字号、输入框加大。
 
 ### 二次修订（2026-08-24 13:21）
 
