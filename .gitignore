@@ -1,84 +1,101 @@
-# Miscellaneous
-*.class
+# ============================================================
+# C 构建产物
+# ============================================================
+bin/
+release/
+*.exe
+*.o
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.dll
+*.so
+*.dylib
+*.dSYM/
+
+# ============================================================
+# .NET / C# 构建产物
+# ============================================================
+**/obj/
+**/bin/
+*.user
+*.suo
+*.cache
 *.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.buildlog/
-.history
-.svn/
+*.vspscc
+*.vssscc
+*.vsix
+*.nupkg
+*.snupkg
+project.assets.json
+project.nuget.cache
+*.nuget.dgspec.json
+*.nuget.g.props
+*.nuget.g.targets
+
+# ============================================================
+# Node.js
+# ============================================================
+node_modules/
+.npm-cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# ============================================================
+# Web
+# ============================================================
+dist/
+screenshots/
+
+# ============================================================
+# IDE / 编辑器
+# ============================================================
+# Visual Studio
+.vs/
+
+# Visual Studio Code
 .vscode/
 
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
+# JetBrains (Rider / CLion etc.)
 .idea/
+*.DotSettings.user
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# ============================================================
+# 操作系统生成文件
+# ============================================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.pub-cache/
-.pub/
-/build/
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
 
-# Web related
-lib/generated_*
-generated/
+# Linux
+*~
+.directory
 
-# Symbolication related
-app.*.symbols
+**/__pycache__/
 
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-/android/key.properties
-
-
-#Ignore Some local Devlopment File
-_local_temp/
-
-#Generated build info (recreated by scripts/generate_build_info.dart,
-#output to lib/generated/, which is already ignored by the generated/ rule)
-
-#Sync reference servers (not committed, for local testing only)
-
-
-.tmp/
-.temp/
-temp/
-tmp/
-server/nodejs/data/
-server/go/data/
-server/dist/
-coverage/
-
-#Ignore App Store Listing Assets
-app_store_listing_assets/
-
-release_n_security_strategy.md
-/unused
-/releases
-remove.txt
-directives.txt
-working.txt
-
-
+# Agents
 .workbuddy/
 
-# fdb session state
-.fdb/
+# ============================================================
+# 项目特定
+# ============================================================
+lib/
+debug/
+target/
+build/
+build-win/
+build-linux/
+*.cfg
+*.log
+temp*
