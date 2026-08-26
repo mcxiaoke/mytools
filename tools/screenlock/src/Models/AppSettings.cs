@@ -38,7 +38,7 @@ namespace ScreenLock.Models
         {
             var def = new AppSettings();
             if (loaded == null) return def;
-            if (loaded.IdleMinutes <= 0 || loaded.IdleMinutes > 24 * 60) loaded.IdleMinutes = def.IdleMinutes;
+            if (loaded.IdleMinutes < 0 || loaded.IdleMinutes > 24 * 60) loaded.IdleMinutes = def.IdleMinutes;
             if (loaded.OverlayOpacity < 0.3 || loaded.OverlayOpacity > 1.0) loaded.OverlayOpacity = def.OverlayOpacity;
             return loaded;
         }

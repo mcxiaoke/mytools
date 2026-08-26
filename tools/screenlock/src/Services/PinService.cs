@@ -6,8 +6,17 @@ namespace ScreenLock.Services
 {
     public class PinService
     {
+        private const int Pbkdf2Iterations = 100000;
+
         public string Salt { get; private set; }
         public string Hash { get; private set; }
+
+        public bool JustUpgraded { get; private set; }
+
+        public void ClearUpgraded()
+        {
+            JustUpgraded = false;
+        }
 
         public bool IsConfigured
         {
@@ -18,6 +27,7 @@ namespace ScreenLock.Services
         {
             Salt = salt;
             Hash = hash;
+            JustUpgraded = false;
         }
 
         public void SetNewPin(string pin)
@@ -25,6 +35,7 @@ namespace ScreenLock.Services
             var salt = GenerateSalt();
             Salt = Convert.ToBase64String(salt);
             Hash = ComputeHash(salt, pin);
+            JustUpgraded = false;
         }
 
         public static byte[] GenerateSalt()
@@ -39,11 +50,19 @@ namespace ScreenLock.Services
 
         public static string ComputeHash(byte[] salt, string pin)
         {
+            var password = Encoding.UTF8.GetBytes(Convert.ToBase64String(salt) + ":" + pin);
+            using (var derive = new Rfc2898DeriveBytes(password, salt, Pbkdf2Iterations, HashAlgorithmName.SHA256))
+            {
+                return "pbkdf2$" + Pbkdf2Iterations + "$" + Convert.ToBase64String(derive.GetBytes(32));
+            }
+        }
+
+        private static string ComputeLegacyHash(byte[] salt, string pin)
+        {
             using (var sha = SHA256.Create())
             {
                 var input = Encoding.UTF8.GetBytes(Convert.ToBase64String(salt) + ":" + pin);
-                var digest = sha.ComputeHash(input);
-                return Convert.ToBase64String(digest);
+                return Convert.ToBase64String(sha.ComputeHash(input));
             }
         }
 
@@ -54,7 +73,16 @@ namespace ScreenLock.Services
             try { salt = Convert.FromBase64String(Salt); }
             catch { return false; }
             var candidate = ComputeHash(salt, pin);
-            return FixedTimeEquals(candidate, Hash);
+            if (FixedTimeEquals(candidate, Hash)) return true;
+
+            // 兼容旧版单轮 SHA256 哈希，验证通过后透明升级为 PBKDF2
+            if (FixedTimeEquals(ComputeLegacyHash(salt, pin), Hash))
+            {
+                Hash = candidate;
+                JustUpgraded = true;
+                return true;
+            }
+            return false;
         }
 
         private static bool FixedTimeEquals(string a, string b)

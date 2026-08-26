@@ -9,7 +9,7 @@
         Background="Transparent"
         Focusable="False"
         Cursor="None">
-    <Border x:Name="RootBorder" Background="#E00B0F14">
+    <Border x:Name="RootBorder" Background="#FF0B0F14">
         <Grid>
             <StackPanel x:Name="InputPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
                 <TextBlock Text="屏幕已锁定" FontSize="34" FontWeight="Bold" Foreground="#FFD8DEE9" HorizontalAlignment="Center"/>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -20,6 +21,11 @@ namespace ScreenLock
 
         private static Mutex _mutex;
         private static NotifyIcon _trayIcon;
+
+        private bool _sessionLocked;
+        private DateTime _pauseUntil = DateTime.MinValue;
+        private readonly List<ToolStripMenuItem> _idleItems = new List<ToolStripMenuItem>();
+        private ToolStripMenuItem _autoStartItem;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -63,6 +69,9 @@ namespace ScreenLock
 
             Idle = new IdleDetector();
             Idle.Threshold = TimeSpan.FromMinutes(Config.Current.IdleMinutes);
+            Idle.WarnBefore = TimeSpan.FromSeconds(30);
+            Idle.ShouldSuspend = ShouldSuspendIdle;
+            Idle.Warning += OnIdleWarning;
             Idle.ThresholdReached += OnIdleThresholdReached;
             Idle.Start();
 
@@ -72,27 +81,51 @@ namespace ScreenLock
                 UpdateTrayText();
             };
 
-            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            SystemEvents.SessionSwitch += OnSessionSwitch;
 
             Exit += OnAppExit;
 
             UpdateTrayText();
         }
 
+        private bool ShouldSuspendIdle()
+        {
+            return _sessionLocked
+                || DateTime.Now < _pauseUntil
+                || IdleDetector.IsSystemBusy();
+        }
+
         private void OnIdleThresholdReached()
         {
+            if (_sessionLocked) return;
             Controller.LockSafe();
         }
 
-        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        private void OnIdleWarning()
         {
-            if (e.Mode != PowerModes.Resume) return;
+            if (_trayIcon == null) return;
+            ShowBalloon(string.Format("空闲 {0} 分钟后自动锁定，动一下鼠标可取消", Config.Current.IdleMinutes));
+        }
+
+        private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (IsShuttingDown || Controller == null || Idle == null) return;
-                var idle = TimeSpan.FromMilliseconds(IdleDetector.GetIdleMilliseconds());
-                if (!Controller.IsLocked && idle >= Idle.Threshold)
+                if (IsShuttingDown || Idle == null || Controller == null) return;
+                if (e.Reason == SessionSwitchReason.SessionLock)
+                {
+                    _sessionLocked = true;
+                    Idle.Suspend();
+                }
+                else if (e.Reason == SessionSwitchReason.SessionUnlock)
+                {
+                    _sessionLocked = false;
+                    Idle.Reset();
+                }
+                else if (e.Reason == SessionSwitchReason.RemoteDisconnect)
+                {
                     Controller.LockSafe();
+                }
             }));
         }
 
@@ -104,6 +137,7 @@ namespace ScreenLock
             Idle.Reset();
             Controller.ApplyPinFromConfig();
             AutoStartService.Sync(c.AutoStart);
+            RefreshMenuChecks();
             UpdateTrayText();
             if (_trayIcon != null)
             {
@@ -136,10 +170,52 @@ namespace ScreenLock
 
             menu.Items.Add(lockItem);
             menu.Items.Add(new ToolStripSeparator());
+
+            var idleMenu = new ToolStripMenuItem("空闲锁定");
+            var presets = new[] { 0, 1, 3, 5, 10, 15, 30 };
+            foreach (var m in presets)
+            {
+                var minutes = m;
+                var item = new ToolStripMenuItem(minutes == 0 ? "禁用" : minutes + " 分钟") { Tag = minutes };
+                item.Click += (s, e) => SetIdleMinutes(minutes);
+                _idleItems.Add(item);
+                idleMenu.DropDownItems.Add(item);
+            }
+            menu.Items.Add(idleMenu);
+
+            var pauseMenu = new ToolStripMenuItem("暂停计时");
+            var pause30Item = new ToolStripMenuItem("暂停 30 分钟");
+            pause30Item.Click += (s, e) => PauseFor(TimeSpan.FromMinutes(30));
+            var pause60Item = new ToolStripMenuItem("暂停 1 小时");
+            pause60Item.Click += (s, e) => PauseFor(TimeSpan.FromHours(1));
+            var resumeItem = new ToolStripMenuItem("恢复计时");
+            resumeItem.Click += (s, e) => ResumeIdle();
+            pauseMenu.DropDownItems.Add(pause30Item);
+            pauseMenu.DropDownItems.Add(pause60Item);
+            pauseMenu.DropDownItems.Add(resumeItem);
+            menu.Items.Add(pauseMenu);
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            _autoStartItem = new ToolStripMenuItem("开机自启")
+            {
+                CheckOnClick = true,
+                Checked = Config.Current.AutoStart
+            };
+            _autoStartItem.CheckedChanged += (s, e) =>
+            {
+                Config.Current.AutoStart = _autoStartItem.Checked;
+                AutoStartService.Sync(_autoStartItem.Checked);
+                Config.Save();
+            };
+            menu.Items.Add(_autoStartItem);
+
             menu.Items.Add(reloadItem);
             menu.Items.Add(openDirItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
+
+            RefreshMenuChecks();
 
             _trayIcon = new NotifyIcon
             {
@@ -149,6 +225,51 @@ namespace ScreenLock
                 ContextMenuStrip = menu
             };
             _trayIcon.DoubleClick += (s, e) => Controller.LockSafe();
+        }
+
+        private void SetIdleMinutes(int minutes)
+        {
+            Config.Current.IdleMinutes = minutes;
+            Config.Save();
+            Idle.Threshold = TimeSpan.FromMinutes(minutes);
+            Idle.Reset();
+            RefreshMenuChecks();
+            UpdateTrayText();
+        }
+
+        private void PauseFor(TimeSpan duration)
+        {
+            _pauseUntil = DateTime.Now.Add(duration);
+            Idle.Reset();
+            UpdateTrayText();
+            ShowBalloon(string.Format("已暂停自动锁定，{0:HH:mm} 后恢复", _pauseUntil));
+        }
+
+        private void ResumeIdle()
+        {
+            _pauseUntil = DateTime.MinValue;
+            Idle.Reset();
+            UpdateTrayText();
+        }
+
+        private void RefreshMenuChecks()
+        {
+            foreach (var item in _idleItems)
+                item.Checked = (int)item.Tag == Config.Current.IdleMinutes;
+            if (_autoStartItem != null)
+                _autoStartItem.Checked = Config.Current.AutoStart;
+        }
+
+        private void ShowBalloon(string text)
+        {
+            if (_trayIcon == null) return;
+            try
+            {
+                _trayIcon.BalloonTipTitle = "ScreenLock";
+                _trayIcon.BalloonTipText = text;
+                _trayIcon.ShowBalloonTip(3000);
+            }
+            catch { }
         }
 
         private static System.Drawing.Icon LoadAppIcon()
@@ -172,7 +293,14 @@ namespace ScreenLock
             if (_trayIcon == null) return;
             try
             {
-                _trayIcon.Text = string.Format("ScreenLock - 空闲 {0} 分钟锁定", Config.Current.IdleMinutes);
+                string text;
+                if (DateTime.Now < _pauseUntil)
+                    text = string.Format("ScreenLock - 自动锁定已暂停至 {0:HH:mm}", _pauseUntil);
+                else if (Config.Current.IdleMinutes <= 0)
+                    text = "ScreenLock - 空闲锁定已禁用";
+                else
+                    text = string.Format("ScreenLock - 空闲 {0} 分钟锁定", Config.Current.IdleMinutes);
+                _trayIcon.Text = text;
             }
             catch { }
         }
@@ -207,8 +335,11 @@ namespace ScreenLock
         {
             try
             {
+                var path = Path.Combine(ConfigService.DirPath, "log.txt");
+                if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
+                    File.Delete(path);
                 File.AppendAllText(
-                    Path.Combine(ConfigService.DirPath, "log.txt"),
+                    path,
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + ex + Environment.NewLine);
             }
             catch { }
@@ -217,7 +348,7 @@ namespace ScreenLock
         private void OnAppExit(object sender, ExitEventArgs e)
         {
             IsShuttingDown = true;
-            try { SystemEvents.PowerModeChanged -= OnPowerModeChanged; } catch { }
+            try { SystemEvents.SessionSwitch -= OnSessionSwitch; } catch { }
             try { if (Controller != null) Controller.Dispose(); } catch { }
             try { if (Idle != null) Idle.Dispose(); } catch { }
             try

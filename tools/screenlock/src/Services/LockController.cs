@@ -75,6 +75,7 @@ namespace ScreenLock.Services
             if (result == PinAttemptResult.Success)
             {
                 error = null;
+                PersistPinUpgrade();
                 Unlock();
                 return PinAttemptResult.Success;
             }
@@ -109,7 +110,19 @@ namespace ScreenLock.Services
 
         public bool VerifyForExit(string pin)
         {
-            return _pinService.Verify(pin);
+            var ok = _pinService.Verify(pin);
+            if (ok) PersistPinUpgrade();
+            return ok;
+        }
+
+        private void PersistPinUpgrade()
+        {
+            if (!_pinService.JustUpgraded) return;
+            var c = _config.Current;
+            c.PinSalt = _pinService.Salt;
+            c.PinHash = _pinService.Hash;
+            _config.Save();
+            _pinService.ClearUpgraded();
         }
 
         public void Dispose()
