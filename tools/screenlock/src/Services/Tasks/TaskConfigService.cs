@@ -1,0 +1,552 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using ScreenLock.Models;
+
+namespace ScreenLock.Services.Tasks
+{
+    public class TaskLoadResult
+    {
+        public List<TaskDefinition> Tasks { get; set; } = new List<TaskDefinition>();
+        public List<string> Errors { get; set; } = new List<string>();
+        public bool FileCreated { get; set; }
+        public string RawJson { get; set; }
+    }
+
+    public static class TaskConfigService
+    {
+        public static string FilePath
+        {
+            get { return ConfigService.TaskFilePath; }
+        }
+
+        public static string SampleFilePath
+        {
+            get { return Path.Combine(ConfigService.DirPath, "tasks.sample.json"); }
+        }
+
+        public static TaskLoadResult LoadOrCreate()
+        {
+            var result = new TaskLoadResult();
+            try
+            {
+                string dir = ConfigService.DirPath;
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string logsDir = ConfigService.LogsDirPath;
+                if (!Directory.Exists(logsDir)) Directory.CreateDirectory(logsDir);
+                string scriptsDir = ConfigService.ScriptsDirPath;
+                if (!Directory.Exists(scriptsDir)) Directory.CreateDirectory(scriptsDir);
+            }
+            catch { }
+
+            if (!File.Exists(FilePath))
+            {
+                try
+                {
+                    string sample = BuildSampleJson();
+                    File.WriteAllText(FilePath, sample, Encoding.UTF8);
+                    // also write sample file for reference
+                    try { File.WriteAllText(SampleFilePath, sample, Encoding.UTF8); } catch { }
+                    result.FileCreated = true;
+                }
+                catch (Exception ex)
+                {
+                    result.Errors.Add("failed to create tasks.json: " + ex.Message);
+                    return result;
+                }
+            }
+
+            return Load();
+        }
+
+        public static TaskLoadResult Load()
+        {
+            var result = new TaskLoadResult();
+            try
+            {
+                if (!File.Exists(FilePath))
+                {
+                    result.Errors.Add("tasks.json not found: " + FilePath);
+                    return result;
+                }
+                string json = File.ReadAllText(FilePath, Encoding.UTF8);
+                result.RawJson = json;
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    return result;
+                }
+                var tasks = ParseTasksJson(json, result.Errors);
+                // dedup by name
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var t in tasks)
+                {
+                    string err = t.Validate();
+                    if (err != null)
+                    {
+                        result.Errors.Add("task [" + (t.Name ?? "?") + "] invalid: " + err);
+                        continue;
+                    }
+                    if (seen.Contains(t.Name))
+                    {
+                        result.Errors.Add("duplicate task name: " + t.Name + " (skipped)");
+                        continue;
+                    }
+                    seen.Add(t.Name);
+                    result.Tasks.Add(t);
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Errors.Add("load exception: " + ex.Message);
+            }
+            return result;
+        }
+
+        public static bool Reload(out TaskLoadResult result)
+        {
+            result = Load();
+            return result.Errors.Count == 0;
+        }
+
+        private static List<TaskDefinition> ParseTasksJson(string json, List<string> errors)
+        {
+            var list = new List<TaskDefinition>();
+            try
+            {
+                json = StripComments(json);
+                json = json.Trim();
+                if (json.Length == 0) return list;
+                // top can be array [...] or object { "tasks": [...] }
+                int idx = 0;
+                SkipWs(json, ref idx);
+                if (idx >= json.Length) return list;
+                if (json[idx] == '[')
+                {
+                    var arr = ParseArray(json, ref idx);
+                    foreach (var obj in arr)
+                    {
+                        var dict2 = obj as Dictionary<string, object>;
+                        if (dict2 != null) list.Add(ParseTaskObject(dict2, errors));
+                        else errors.Add("tasks array item not an object");
+                    }
+                }
+                else if (json[idx] == '{')
+                {
+                    var dict = ParseObject(json, ref idx);
+                    // if has "tasks" array
+                    object tasksObj;
+                    if (dict.TryGetValue("tasks", out tasksObj) && tasksObj is List<object>)
+                    {
+                        var arr = (List<object>)tasksObj;
+                        foreach (var item in arr)
+                        {
+                            if (item is Dictionary<string, object>)
+                                list.Add(ParseTaskObject((Dictionary<string, object>)item, errors));
+                            else
+                                errors.Add("tasks array item not an object");
+                        }
+                    }
+                    else if (dict.ContainsKey("name"))
+                    {
+                        // single task object
+                        list.Add(ParseTaskObject(dict, errors));
+                    }
+                    else
+                    {
+                        // maybe empty or global config only
+                        // try parse tasks if exists as raw string? ignore
+                    }
+                }
+                else
+                {
+                    errors.Add("tasks.json must be array or object");
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add("parse error: " + ex.Message);
+            }
+            return list;
+        }
+
+        private static TaskDefinition ParseTaskObject(Dictionary<string, object> dict, List<string> errors)
+        {
+            var task = new TaskDefinition();
+            try
+            {
+                object v;
+                if (dict.TryGetValue("name", out v)) task.Name = ToStr(v);
+                if (dict.TryGetValue("enabled", out v)) task.Enabled = ToBool(v, true);
+                // trigger
+                if (dict.TryGetValue("trigger", out v) && v is Dictionary<string, object>)
+                {
+                    var td = (Dictionary<string, object>)v;
+                    var trig = new TaskTrigger();
+                    object tv;
+                    if (td.TryGetValue("type", out tv)) { trig.RawType = ToStr(tv); trig.Type = ParseTriggerType(trig.RawType); }
+                    if (td.TryGetValue("delaySec", out tv)) trig.DelaySec = ToInt(tv, trig.DelaySec);
+                    if (td.TryGetValue("delay", out tv)) trig.DelaySec = ToInt(tv, trig.DelaySec);
+                    if (td.TryGetValue("everySec", out tv)) trig.EverySec = ToInt(tv, 0);
+                    if (td.TryGetValue("every", out tv)) trig.Every = ToStr(tv);
+                    if (td.TryGetValue("intervalSec", out tv)) trig.EverySec = ToInt(tv, trig.EverySec);
+                    if (td.TryGetValue("at", out tv)) trig.At = ToStr(tv);
+                    if (td.TryGetValue("time", out tv)) trig.At = ToStr(tv);
+                    if (td.TryGetValue("expr", out tv)) trig.Expr = ToStr(tv);
+                    if (td.TryGetValue("cron", out tv)) trig.Expr = ToStr(tv);
+                    if (td.TryGetValue("afterMinutes", out tv)) trig.AfterMinutes = ToInt(tv, 0);
+                    if (td.TryGetValue("after", out tv) && trig.AfterMinutes == 0) trig.AfterMinutes = ToInt(tv, 0);
+                    task.Trigger = trig;
+                }
+                else if (dict.TryGetValue("trigger", out v) && v is string)
+                {
+                    var trig = new TaskTrigger();
+                    trig.RawType = ToStr(v);
+                    trig.Type = ParseTriggerType(trig.RawType);
+                    task.Trigger = trig;
+                }
+                // action
+                if (dict.TryGetValue("action", out v) && v is Dictionary<string, object>)
+                {
+                    var ad = (Dictionary<string, object>)v;
+                    var act = new TaskAction();
+                    object av;
+                    if (ad.TryGetValue("file", out av)) act.File = ToStr(av);
+                    if (ad.TryGetValue("path", out av) && string.IsNullOrWhiteSpace(act.File)) act.File = ToStr(av);
+                    if (ad.TryGetValue("command", out av) && string.IsNullOrWhiteSpace(act.File)) act.File = ToStr(av);
+                    if (ad.TryGetValue("args", out av)) act.Args = ToStr(av);
+                    if (ad.TryGetValue("arguments", out av) && string.IsNullOrWhiteSpace(act.Args)) act.Args = ToStr(av);
+                    if (ad.TryGetValue("workDir", out av)) act.WorkDir = ToStr(av);
+                    if (ad.TryGetValue("workingDirectory", out av) && string.IsNullOrWhiteSpace(act.WorkDir)) act.WorkDir = ToStr(av);
+                    if (ad.TryGetValue("cwd", out av) && string.IsNullOrWhiteSpace(act.WorkDir)) act.WorkDir = ToStr(av);
+                    task.Action = act;
+                }
+                else if (dict.TryGetValue("file", out v))
+                {
+                    // flat style: file/args at top level
+                    var act = new TaskAction();
+                    act.File = ToStr(v);
+                    object av;
+                    if (dict.TryGetValue("args", out av)) act.Args = ToStr(av);
+                    if (dict.TryGetValue("workDir", out av)) act.WorkDir = ToStr(av);
+                    task.Action = act;
+                }
+                // options
+                if (dict.TryGetValue("options", out v) && v is Dictionary<string, object>)
+                {
+                    var od = (Dictionary<string, object>)v;
+                    var opt = new TaskOptions();
+                    object ov;
+                    if (od.TryGetValue("hidden", out ov)) opt.Hidden = ToBool(ov, true);
+                    if (od.TryGetValue("timeoutSec", out ov)) opt.TimeoutSec = ToInt(ov, 0);
+                    if (od.TryGetValue("timeout", out ov) && opt.TimeoutSec == 0) opt.TimeoutSec = ToInt(ov, 0);
+                    if (od.TryGetValue("allowConcurrent", out ov)) opt.AllowConcurrent = ToBool(ov, false);
+                    if (od.TryGetValue("concurrent", out ov) && !opt.AllowConcurrent) opt.AllowConcurrent = ToBool(ov, false);
+                    if (od.TryGetValue("retry", out ov)) opt.Retry = ToInt(ov, 0);
+                    if (od.TryGetValue("workDir", out ov)) opt.WorkDir = ToStr(ov);
+                    task.Options = opt;
+                }
+                // also allow hidden/timeout at top level
+                object hv;
+                if (dict.TryGetValue("hidden", out hv) && task.Options.Hidden == true)
+                {
+                    // if explicitly set at top, override
+                    // only if present
+                    task.Options.Hidden = ToBool(hv, task.Options.Hidden);
+                }
+                if (dict.TryGetValue("timeoutSec", out hv)) task.Options.TimeoutSec = ToInt(hv, task.Options.TimeoutSec);
+            }
+            catch (Exception ex)
+            {
+                errors.Add("parse task [" + task.Name + "] error: " + ex.Message);
+            }
+            if (task.Trigger == null) task.Trigger = new TaskTrigger();
+            if (task.Action == null) task.Action = new TaskAction();
+            if (task.Options == null) task.Options = new TaskOptions();
+            return task;
+        }
+
+        private static TaskTriggerType ParseTriggerType(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return TaskTriggerType.Startup;
+            raw = raw.Trim().ToLowerInvariant();
+            switch (raw)
+            {
+                case "startup": return TaskTriggerType.Startup;
+                case "start": return TaskTriggerType.Startup;
+                case "boot": return TaskTriggerType.Startup;
+                case "interval": return TaskTriggerType.Interval;
+                case "every": return TaskTriggerType.Interval;
+                case "periodic": return TaskTriggerType.Interval;
+                case "daily": return TaskTriggerType.Daily;
+                case "day": return TaskTriggerType.Daily;
+                case "cron": return TaskTriggerType.Cron;
+                case "schedule": return TaskTriggerType.Cron;
+                case "sessionlock": return TaskTriggerType.SessionLock;
+                case "lock": return TaskTriggerType.SessionLock;
+                case "session_lock": return TaskTriggerType.SessionLock;
+                case "sessionunlock": return TaskTriggerType.SessionUnlock;
+                case "unlock": return TaskTriggerType.SessionUnlock;
+                case "session_unlock": return TaskTriggerType.SessionUnlock;
+                case "idle": return TaskTriggerType.Idle;
+                default: return TaskTriggerType.Startup;
+            }
+        }
+
+        private static string ToStr(object v)
+        {
+            if (v == null) return "";
+            if (v is string) return (string)v;
+            return v.ToString();
+        }
+        private static bool ToBool(object v, bool def)
+        {
+            if (v == null) return def;
+            if (v is bool) return (bool)v;
+            string s = v.ToString().Trim().ToLowerInvariant();
+            if (s == "true" || s == "1" || s == "yes") return true;
+            if (s == "false" || s == "0" || s == "no") return false;
+            return def;
+        }
+        private static int ToInt(object v, int def)
+        {
+            if (v == null) return def;
+            if (v is int) return (int)v;
+            if (v is long) return (int)(long)v;
+            if (v is double) return (int)(double)v;
+            string s = v.ToString().Trim();
+            int n;
+            if (int.TryParse(s, out n)) return n;
+            double d;
+            if (double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out d)) return (int)d;
+            // try duration like 5m
+            int dur = TaskDefinition.ParseDuration(s);
+            if (dur > 0) return dur;
+            return def;
+        }
+
+        // Minimal JSON parser: supports object, array, string, number, bool, null
+        private static string StripComments(string json)
+        {
+            // strip // and /* */ comments, naive but enough for config
+            var sb = new StringBuilder(json.Length);
+            bool inStr = false;
+            bool esc = false;
+            for (int i = 0; i < json.Length; i++)
+            {
+                char c = json[i];
+                if (inStr)
+                {
+                    sb.Append(c);
+                    if (esc) esc = false;
+                    else if (c == '\\') esc = true;
+                    else if (c == '"') inStr = false;
+                    continue;
+                }
+                if (c == '"') { inStr = true; sb.Append(c); continue; }
+                if (c == '/' && i + 1 < json.Length && json[i + 1] == '/')
+                {
+                    // line comment
+                    i += 2;
+                    while (i < json.Length && json[i] != '\n') i++;
+                    if (i < json.Length) sb.Append('\n');
+                    continue;
+                }
+                if (c == '/' && i + 1 < json.Length && json[i + 1] == '*')
+                {
+                    i += 2;
+                    while (i + 1 < json.Length && !(json[i] == '*' && json[i + 1] == '/')) i++;
+                    i++; // skip /
+                    continue;
+                }
+                sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        private static void SkipWs(string s, ref int i)
+        {
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+        }
+
+        private static Dictionary<string, object> ParseObject(string s, ref int i)
+        {
+            var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            SkipWs(s, ref i);
+            if (i >= s.Length || s[i] != '{') return dict;
+            i++; // {
+            while (i < s.Length)
+            {
+                SkipWs(s, ref i);
+                if (i >= s.Length) break;
+                if (s[i] == '}') { i++; break; }
+                if (s[i] == ',') { i++; continue; }
+                // key
+                string key = ParseString(s, ref i);
+                SkipWs(s, ref i);
+                if (i < s.Length && s[i] == ':') i++;
+                SkipWs(s, ref i);
+                if (key == null) break;
+                object val = ParseValue(s, ref i);
+                dict[key] = val;
+            }
+            return dict;
+        }
+
+        private static List<object> ParseArray(string s, ref int i)
+        {
+            var list = new List<object>();
+            SkipWs(s, ref i);
+            if (i >= s.Length || s[i] != '[') return list;
+            i++; // [
+            while (i < s.Length)
+            {
+                SkipWs(s, ref i);
+                if (i >= s.Length) break;
+                if (s[i] == ']') { i++; break; }
+                if (s[i] == ',') { i++; continue; }
+                object val = ParseValue(s, ref i);
+                list.Add(val);
+            }
+            return list;
+        }
+
+        private static object ParseValue(string s, ref int i)
+        {
+            SkipWs(s, ref i);
+            if (i >= s.Length) return null;
+            char c = s[i];
+            if (c == '"') return ParseString(s, ref i);
+            if (c == '{') return ParseObject(s, ref i);
+            if (c == '[') return ParseArray(s, ref i);
+            if (c == 't' && i + 3 < s.Length && s.Substring(i, 4) == "true") { i += 4; return true; }
+            if (c == 'f' && i + 4 < s.Length && s.Substring(i, 5) == "false") { i += 5; return false; }
+            if (c == 'n' && i + 3 < s.Length && s.Substring(i, 4) == "null") { i += 4; return null; }
+            // number or bare word
+            int start = i;
+            while (i < s.Length && s[i] != ',' && s[i] != '}' && s[i] != ']' && !char.IsWhiteSpace(s[i])) i++;
+            string token = s.Substring(start, i - start).Trim();
+            // try int
+            int n;
+            if (int.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out n)) return n;
+            long ln;
+            if (long.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out ln)) return ln;
+            double d;
+            if (double.TryParse(token, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out d)) return d;
+            return token;
+        }
+
+        private static string ParseString(string s, ref int i)
+        {
+            SkipWs(s, ref i);
+            if (i >= s.Length || s[i] != '"') return null;
+            i++;
+            var sb = new StringBuilder();
+            while (i < s.Length)
+            {
+                char c = s[i];
+                if (c == '\\')
+                {
+                    i++;
+                    if (i >= s.Length) break;
+                    char e = s[i];
+                    switch (e)
+                    {
+                        case '"': sb.Append('"'); break;
+                        case '\\': sb.Append('\\'); break;
+                        case '/': sb.Append('/'); break;
+                        case 'n': sb.Append('\n'); break;
+                        case 'r': sb.Append('\r'); break;
+                        case 't': sb.Append('\t'); break;
+                        case 'b': sb.Append('\b'); break;
+                        case 'f': sb.Append('\f'); break;
+                        case 'u':
+                            if (i + 4 < s.Length)
+                            {
+                                int code;
+                                if (int.TryParse(s.Substring(i + 1, 4), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out code))
+                                {
+                                    sb.Append((char)code);
+                                    i += 4;
+                                }
+                            }
+                            break;
+                        default: sb.Append(e); break;
+                    }
+                    i++;
+                    continue;
+                }
+                if (c == '"') { i++; return sb.ToString(); }
+                sb.Append(c);
+                i++;
+            }
+            return sb.ToString();
+        }
+
+        private static string BuildSampleJson()
+        {
+            return @"// ScreenLock AutoRun tasks - place alongside config.json
+// docs: docs/AUTORUN-DESIGN.md
+// Trigger types: startup | interval | daily | cron | sessionLock | sessionUnlock | idle
+// Scripts without path are resolved from: <DirPath>/scripts/  (portable: exe/scripts/, roaming: %AppData%/ScreenLock/scripts/)
+// Supported: .ps1/.bat/.cmd/.vbs (hidden), .js -> node, .py/.pyw -> python (auto from PATH, hidden)
+[
+  // startup: run 10s after login - bare name loads from scripts/
+  // {
+  //   ""name"": ""startup-notify"",
+  //   ""enabled"": true,
+  //   ""trigger"": { ""type"": ""startup"", ""delaySec"": 10 },
+  //   ""action"": { ""file"": ""hello.js"", ""args"": ""--verbose"" },
+  //   ""options"": { ""hidden"": true, ""timeoutSec"": 60 }
+  // },
+
+  // interval: every 60s (or ""1h30m"")
+  // {
+  //   ""name"": ""heartbeat"",
+  //   ""trigger"": { ""type"": ""interval"", ""everySec"": 3600 },
+  //   ""action"": { ""file"": ""sync.bat"" }
+  // },
+  // {
+  //   ""name"": ""py-heartbeat"",
+  //   ""trigger"": { ""type"": ""interval"", ""every"": ""1h"" },
+  //   ""action"": { ""file"": ""monitor.py"", ""args"": ""--check"" }
+  // },
+
+  // daily: at 03:00 every day
+  // {
+  //   ""name"": ""daily-clean"",
+  //   ""trigger"": { ""type"": ""daily"", ""at"": ""03:00"" },
+  //   ""action"": { ""file"": ""clean.ps1"" },
+  //   ""options"": { ""timeoutSec"": 600 }
+  // },
+
+  // cron: every Monday 09:00  -> ""0 9 * * 1""
+  // {
+  //   ""name"": ""weekly-report"",
+  //   ""trigger"": { ""type"": ""cron"", ""expr"": ""0 9 * * 1"" },
+  //   ""action"": { ""file"": ""weekly.js"" }
+  // },
+
+  // session events: run when you Win+L or unlock
+  // {
+  //   ""name"": ""on-lock"",
+  //   ""trigger"": { ""type"": ""sessionLock"" },
+  //   ""action"": { ""file"": ""onLock.cmd"" }
+  // },
+  // {
+  //   ""name"": ""on-unlock"",
+  //   ""trigger"": { ""type"": ""sessionUnlock"" },
+  //   ""action"": { ""file"": ""onUnlock.py"" }
+  // },
+
+  // idle: after 10 minutes idle
+  // {
+  //   ""name"": ""idle-clean"",
+  //   ""trigger"": { ""type"": ""idle"", ""afterMinutes"": 10 },
+  //   ""action"": { ""file"": ""idle.ps1"" }
+  // }
+]
+";
+        }
+    }
+}

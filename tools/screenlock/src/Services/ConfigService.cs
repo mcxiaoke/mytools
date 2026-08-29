@@ -31,6 +31,26 @@ namespace ScreenLock.Services
             get { return IsPortableMode ? PortableFilePath : Path.Combine(AppDataDirPath, "config.json"); }
         }
 
+        public static string TaskFilePath
+        {
+            get { return Path.Combine(DirPath, "tasks.json"); }
+        }
+
+        public static string LogsDirPath
+        {
+            get { return Path.Combine(DirPath, "logs"); }
+        }
+
+        public static string ScriptsDirPath
+        {
+            get { return Path.Combine(DirPath, "scripts"); }
+        }
+
+        public static string GlobalTasksEnabledPath
+        {
+            get { return Path.Combine(DirPath, "tasks.enabled"); }
+        }
+
         public AppSettings Current { get; private set; }
 
         public void LoadOrCreate()
@@ -87,6 +107,10 @@ namespace ScreenLock.Services
                 s.OverlayOpacity = d;
             if (map.ContainsKey("PinSalt")) s.PinSalt = map["PinSalt"];
             if (map.ContainsKey("PinHash")) s.PinHash = map["PinHash"];
+            if (map.ContainsKey("TasksEnabled"))
+                s.TasksEnabled = map["TasksEnabled"] == "true";
+            else
+                s.TasksEnabled = true;
             return AppSettings.Merge(s);
         }
 
@@ -100,7 +124,8 @@ namespace ScreenLock.Services
             sb.AppendLine("  \"ShowClock\": " + (Current.ShowClock ? "true" : "false") + ",");
             sb.AppendLine("  \"OverlayOpacity\": " + Current.OverlayOpacity.ToString(CultureInfo.InvariantCulture) + ",");
             sb.AppendLine("  \"PinSalt\": \"" + Escape(Current.PinSalt ?? "") + "\",");
-            sb.AppendLine("  \"PinHash\": \"" + Escape(Current.PinHash ?? "") + "\"");
+            sb.AppendLine("  \"PinHash\": \"" + Escape(Current.PinHash ?? "") + "\",");
+            sb.AppendLine("  \"TasksEnabled\": " + (Current.TasksEnabled ? "true" : "false"));
             sb.AppendLine("}");
             File.WriteAllText(FilePath, sb.ToString(), Encoding.UTF8);
         }

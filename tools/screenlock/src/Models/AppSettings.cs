@@ -11,6 +11,7 @@ namespace ScreenLock.Models
         public double OverlayOpacity { get; set; } = 0.88;
         public string PinSalt { get; set; } = "";
         public string PinHash { get; set; } = "";
+        public bool TasksEnabled { get; set; } = true;
 
         public bool HasPin()
         {
@@ -32,6 +33,7 @@ namespace ScreenLock.Models
             target.OverlayOpacity = OverlayOpacity;
             target.PinSalt = PinSalt;
             target.PinHash = PinHash;
+            target.TasksEnabled = TasksEnabled;
         }
 
         public static AppSettings Merge(AppSettings loaded)

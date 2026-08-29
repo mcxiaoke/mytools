@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using ScreenLock.Services;
+using ScreenLock.Services.Tasks;
 using ScreenLock.Views;
 
 namespace ScreenLock
@@ -17,6 +18,7 @@ namespace ScreenLock
         public static ConfigService Config { get; private set; }
         public static LockController Controller { get; private set; }
         public static IdleDetector Idle { get; private set; }
+        public static TaskSchedulerService TaskScheduler { get; private set; }
         public static bool IsShuttingDown { get; private set; }
 
         private static Mutex _mutex;
@@ -26,6 +28,7 @@ namespace ScreenLock
         private DateTime _pauseUntil = DateTime.MinValue;
         private readonly List<ToolStripMenuItem> _idleItems = new List<ToolStripMenuItem>();
         private ToolStripMenuItem _autoStartItem;
+        private ToolStripMenuItem _tasksEnabledItem;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -82,6 +85,23 @@ namespace ScreenLock
             };
 
             SystemEvents.SessionSwitch += OnSessionSwitch;
+
+            // AutoRun tasks - independent shell, logs to logs/task-*.log
+            try
+            {
+                TaskScheduler = new TaskSchedulerService(Idle);
+                // ensure scripts dir exists early
+                try { System.IO.Directory.CreateDirectory(ConfigService.ScriptsDirPath); } catch { }
+                TaskScheduler.Start();
+                // sync tray toggle with actual scheduler state (persisted)
+                try
+                {
+                    if (_tasksEnabledItem != null)
+                        _tasksEnabledItem.Checked = TaskScheduler.IsGlobalEnabled;
+                }
+                catch { }
+            }
+            catch (Exception ex) { LogError(ex); }
 
             Exit += OnAppExit;
 
@@ -149,6 +169,35 @@ namespace ScreenLock
             }
         }
 
+        private void ReloadTasks()
+        {
+            if (TaskScheduler == null)
+            {
+                ShowBalloon("任务调度器未初始化");
+                return;
+            }
+            var result = TaskScheduler.Reload();
+            // sync global toggle if config was edited externally
+            try
+            {
+                if (_tasksEnabledItem != null && TaskScheduler != null)
+                {
+                    bool global = TaskScheduler.IsGlobalEnabled;
+                    if (_tasksEnabledItem.Checked != global)
+                        _tasksEnabledItem.Checked = global;
+                }
+            }
+            catch { }
+            var msg = result.Errors.Count == 0
+                ? string.Format("任务已重载：{0} 个生效", result.Tasks.Count)
+                : string.Format("任务重载完成：{0} 个生效，{1} 个错误", result.Tasks.Count, result.Errors.Count);
+            if (result.Errors.Count > 0)
+                msg += "，详见 logs/tasks.log";
+            if (TaskScheduler != null && !TaskScheduler.IsGlobalEnabled)
+                msg += "（总开关已禁用）";
+            ShowBalloon(msg);
+        }
+
         private void CreateTrayIcon()
         {
             var menu = new ContextMenuStrip();
@@ -159,10 +208,72 @@ namespace ScreenLock
             var reloadItem = new ToolStripMenuItem("Reload Config");
             reloadItem.Click += (s, e) => ReloadConfig();
 
+            var reloadTasksItem = new ToolStripMenuItem("重载任务 (tasks.json)");
+            reloadTasksItem.Click += (s, e) => ReloadTasks();
+
+            _tasksEnabledItem = new ToolStripMenuItem("启用任务调度")
+            {
+                CheckOnClick = true,
+                Checked = Config.Current.TasksEnabled
+            };
+            // sync scheduler global switch (in case Start already read config)
+            try { if (TaskScheduler != null) TaskScheduler.SetGlobalEnabled(_tasksEnabledItem.Checked); } catch { }
+            _tasksEnabledItem.CheckedChanged += (s, e) =>
+            {
+                bool enabled = _tasksEnabledItem.Checked;
+                try { if (TaskScheduler != null) TaskScheduler.SetGlobalEnabled(enabled); } catch { }
+                try
+                {
+                    Config.Current.TasksEnabled = enabled;
+                    Config.Save();
+                    ShowBalloon(enabled ? "任务调度已启用" : "任务调度已禁用");
+                }
+                catch { }
+            };
+
+            var openScriptsItem = new ToolStripMenuItem("打开 scripts 目录");
+            openScriptsItem.Click += (s, e) =>
+            {
+                try
+                {
+                    var dir = ConfigService.ScriptsDirPath;
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    System.Diagnostics.Process.Start(dir);
+                }
+                catch { }
+            };
+
             var openDirItem = new ToolStripMenuItem("打开配置目录");
             openDirItem.Click += (s, e) =>
             {
                 try { System.Diagnostics.Process.Start(ConfigService.DirPath); } catch { }
+            };
+
+            var openTasksItem = new ToolStripMenuItem("编辑 tasks.json");
+            openTasksItem.Click += (s, e) =>
+            {
+                try
+                {
+                    var path = ConfigService.TaskFilePath;
+                    if (!File.Exists(path))
+                    {
+                        try { TaskConfigService.LoadOrCreate(); } catch { }
+                    }
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                catch { }
+            };
+
+            var openLogsItem = new ToolStripMenuItem("打开 logs 目录");
+            openLogsItem.Click += (s, e) =>
+            {
+                try
+                {
+                    var dir = ConfigService.LogsDirPath;
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    System.Diagnostics.Process.Start(dir);
+                }
+                catch { }
             };
 
             var exitItem = new ToolStripMenuItem("退出...");
@@ -210,7 +321,16 @@ namespace ScreenLock
             };
             menu.Items.Add(_autoStartItem);
 
+            var taskMenu = new ToolStripMenuItem("任务");
+            taskMenu.DropDownItems.Add(_tasksEnabledItem);
+            taskMenu.DropDownItems.Add(new ToolStripSeparator());
+            taskMenu.DropDownItems.Add(reloadTasksItem);
+            taskMenu.DropDownItems.Add(openTasksItem);
+            taskMenu.DropDownItems.Add(openScriptsItem);
+            taskMenu.DropDownItems.Add(openLogsItem);
+
             menu.Items.Add(reloadItem);
+            menu.Items.Add(taskMenu);
             menu.Items.Add(openDirItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
@@ -349,6 +469,8 @@ namespace ScreenLock
         {
             IsShuttingDown = true;
             try { SystemEvents.SessionSwitch -= OnSessionSwitch; } catch { }
+            try { if (TaskScheduler != null) TaskScheduler.Stop(); } catch { }
+            try { if (TaskScheduler != null) TaskScheduler.Dispose(); } catch { }
             try { if (Controller != null) Controller.Dispose(); } catch { }
             try { if (Idle != null) Idle.Dispose(); } catch { }
             try
