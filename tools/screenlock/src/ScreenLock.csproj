@@ -10,8 +10,6 @@
     <AssemblyName>ScreenLock</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.1.0</Version>
-    <Product>ScreenLock</Product>
     <Nullable>disable</Nullable>
     <ApplicationIcon>Assets\Icon.ico</ApplicationIcon>
   </PropertyGroup>
