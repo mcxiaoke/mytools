@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using ScreenLock.Models;
+using SimpleJSON;
 
 namespace ScreenLock.Services
 {
@@ -93,6 +94,74 @@ namespace ScreenLock.Services
         private AppSettings ReadFile()
         {
             var json = File.ReadAllText(FilePath, Encoding.UTF8);
+            var s = new AppSettings();
+            try
+            {
+                var node = JSONNode.Parse(json);
+                if (node != null && node.IsObject)
+                {
+                    var obj = node.AsObject;
+                    if (obj.HasKey("IdleMinutes")) s.IdleMinutes = obj["IdleMinutes"].AsInt;
+                    if (obj.HasKey("AutoStart")) s.AutoStart = obj["AutoStart"].AsBool;
+                    if (obj.HasKey("ShowClock")) s.ShowClock = obj["ShowClock"].AsBool;
+                    if (obj.HasKey("OverlayOpacity")) s.OverlayOpacity = obj["OverlayOpacity"].AsDouble;
+                    if (obj.HasKey("PinSalt")) s.PinSalt = obj["PinSalt"].Value;
+                    if (obj.HasKey("PinHash")) s.PinHash = obj["PinHash"].Value;
+                    if (obj.HasKey("TasksEnabled")) s.TasksEnabled = obj["TasksEnabled"].AsBool;
+                    else s.TasksEnabled = true;
+
+                    // ExcludeProcesses: support array ["a.exe","b.exe"] or comma-string "a.exe, b.exe"
+                    if (obj.HasKey("ExcludeProcesses"))
+                    {
+                        var exclNode = obj["ExcludeProcesses"];
+                        var list = new List<string>();
+                        if (exclNode.IsArray)
+                        {
+                            foreach (JSONNode item in exclNode.AsArray.Children)
+                            {
+                                var v = item.Value != null ? item.Value.Trim() : "";
+                                if (!string.IsNullOrEmpty(v)) list.Add(v);
+                            }
+                            s.ExcludeProcesses = list;
+                        }
+                        else if (exclNode.IsString)
+                        {
+                            var str = exclNode.Value;
+                            var parts = str.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                            var list2 = new List<string>();
+                            foreach (var p in parts)
+                            {
+                                var t = p.Trim();
+                                if (!string.IsNullOrEmpty(t)) list2.Add(t);
+                            }
+                            s.ExcludeProcesses = list2;
+                        }
+                        else
+                        {
+                            s.ExcludeProcesses = new List<string>();
+                        }
+                    }
+                    else
+                    {
+                        s.ExcludeProcesses = new List<string>();
+                    }
+                }
+                else
+                {
+                    // fallback to old parser for malformed? use SimpleJson
+                    return ReadFileLegacy(json);
+                }
+            }
+            catch
+            {
+                // fallback to legacy parser on exception
+                return ReadFileLegacy(json);
+            }
+            return AppSettings.Merge(s);
+        }
+
+        private AppSettings ReadFileLegacy(string json)
+        {
             var map = SimpleJson.Parse(json);
             var s = new AppSettings();
             int n;
@@ -111,6 +180,9 @@ namespace ScreenLock.Services
                 s.TasksEnabled = map["TasksEnabled"] == "true";
             else
                 s.TasksEnabled = true;
+            var excl = ExtractStringArray(json, "ExcludeProcesses");
+            if (excl != null) s.ExcludeProcesses = excl;
+            else s.ExcludeProcesses = new List<string>();
             return AppSettings.Merge(s);
         }
 
@@ -125,7 +197,10 @@ namespace ScreenLock.Services
             sb.AppendLine("  \"OverlayOpacity\": " + Current.OverlayOpacity.ToString(CultureInfo.InvariantCulture) + ",");
             sb.AppendLine("  \"PinSalt\": \"" + Escape(Current.PinSalt ?? "") + "\",");
             sb.AppendLine("  \"PinHash\": \"" + Escape(Current.PinHash ?? "") + "\",");
-            sb.AppendLine("  \"TasksEnabled\": " + (Current.TasksEnabled ? "true" : "false"));
+            sb.AppendLine("  \"TasksEnabled\": " + (Current.TasksEnabled ? "true" : "false") + ",");
+            sb.Append("  \"ExcludeProcesses\": ");
+            sb.Append(SerializeStringArray(Current.ExcludeProcesses));
+            sb.AppendLine();
             sb.AppendLine("}");
             File.WriteAllText(FilePath, sb.ToString(), Encoding.UTF8);
         }
@@ -133,6 +208,143 @@ namespace ScreenLock.Services
         private static string Escape(string value)
         {
             return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string SerializeStringArray(List<string> list)
+        {
+            if (list == null || list.Count == 0) return "[]";
+            var sb = new StringBuilder();
+            sb.Append("[");
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append("\"").Append(Escape(list[i] ?? "")).Append("\"");
+            }
+            sb.Append("]");
+            return sb.ToString();
+        }
+
+        private static List<string> ExtractStringArray(string json, string key)
+        {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return null;
+            try
+            {
+                // find "key" (case-insensitive)
+                int idx = json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) return null;
+                idx = json.IndexOf(':', idx);
+                if (idx < 0) return null;
+                idx++;
+                // skip ws
+                while (idx < json.Length && char.IsWhiteSpace(json[idx])) idx++;
+                if (idx >= json.Length) return null;
+                if (json[idx] == '[')
+                {
+                    // parse array of strings
+                    idx++;
+                    var result = new List<string>();
+                    while (idx < json.Length)
+                    {
+                        while (idx < json.Length && char.IsWhiteSpace(json[idx])) idx++;
+                        if (idx >= json.Length) break;
+                        if (json[idx] == ']') { idx++; break; }
+                        if (json[idx] == ',') { idx++; continue; }
+                        if (json[idx] == '"')
+                        {
+                            // read string
+                            int start = idx;
+                            int p = idx;
+                            string s = SimpleJsonReadString(json, ref p);
+                            if (s != null)
+                            {
+                                // trim and ignore empty
+                                s = s.Trim();
+                                if (!string.IsNullOrEmpty(s)) result.Add(s);
+                                idx = p;
+                            }
+                            else
+                            {
+                                idx++;
+                            }
+                        }
+                        else
+                        {
+                            // unexpected token, skip to next
+                            idx++;
+                        }
+                    }
+                    return result;
+                }
+                else if (json[idx] == '"')
+                {
+                    int p = idx;
+                    string s = SimpleJsonReadString(json, ref p);
+                    if (s == null) return new List<string>();
+                    // support comma-separated inside single string
+                    var parts = s.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                    var list = new List<string>();
+                    foreach (var part in parts)
+                    {
+                        var t = part.Trim();
+                        if (!string.IsNullOrEmpty(t)) list.Add(t);
+                    }
+                    return list;
+                }
+                else
+                {
+                    // bare value (unlikely)
+                    return new List<string>();
+                }
+            }
+            catch { return null; }
+        }
+
+        private static string SimpleJsonReadString(string s, ref int i)
+        {
+            // reuse SimpleJson.ReadString logic but static
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            if (i >= s.Length || s[i] != '"') return null;
+            i++;
+            var sb = new StringBuilder();
+            while (i < s.Length)
+            {
+                char c = s[i];
+                if (c == '\\')
+                {
+                    i++;
+                    if (i >= s.Length) break;
+                    char e = s[i];
+                    switch (e)
+                    {
+                        case '"': sb.Append('"'); break;
+                        case '\\': sb.Append('\\'); break;
+                        case '/': sb.Append('/'); break;
+                        case 'n': sb.Append('\n'); break;
+                        case 't': sb.Append('\t'); break;
+                        case 'r': sb.Append('\r'); break;
+                        case 'b': sb.Append('\b'); break;
+                        case 'f': sb.Append('\f'); break;
+                        case 'u':
+                            if (i + 4 < s.Length)
+                            {
+                                int code;
+                                if (int.TryParse(s.Substring(i + 1, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out code))
+                                {
+                                    sb.Append((char)code);
+                                    i += 4;
+                                }
+                            }
+                            break;
+                        default: sb.Append(e); break;
+                    }
+                    i++;
+                    continue;
+                }
+                if (c == '"') { i++; return sb.ToString(); }
+                sb.Append(c);
+                i++;
+            }
+            return sb.ToString();
         }
     }
 

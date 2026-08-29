@@ -137,3 +137,19 @@
 - **脚本找不到？** 裸名需放 `scripts/`，或写绝对路径；日志首行会打印解析后 `starting: ... [workDir=...]`。
 - **手动任务不出现？** 仅 `type:manual` 且 `enabled:true` 会出现在托盘，需保存并重载。
 - **中文路径？** 全程 UTF-8，`tasks.json` 请用 UTF-8 保存。
+
+## 12. 排除进程（防游戏挂机锁屏）
+
+`config.json` 新增 `ExcludeProcesses`，列出的进程运行时**暂停空闲计时**，不在此期间锁屏。适合游戏挂机、下载器、编译任务等场景，与系统的全屏检测互为补充。
+
+```json
+{
+  "IdleMinutes": 5,
+  "ExcludeProcesses": ["GenshinImpact.exe", "eldenring", "qbittorrent.exe"]
+}
+```
+
+- 支持数组 `["game.exe","a.exe"]` 或单字符串 `"game.exe, notepad.exe"`（逗号/分号分隔），大小写不敏感，可含 `.exe` 或完整路径（如 `C:\\Games\\MyGame\\game.exe` 会自动取文件名）
+- 匹配 `Process.ProcessName`（不含 `.exe`），无需写完整路径；重启或托盘 `Reload Config` 后生效
+- 实现：`App.ShouldSuspendIdle()` → `ProcessExclusionService.IsExcludedRunning()`（`GetProcesses()` 2s 缓存），命中则冻结 `IdleDetector._effectiveMs`，退出进程后计时继续累计而非重置
+- 例：挂机 `pathofexile.exe` 时填 `["PathOfExile.exe"]`，后台挂机期间即使键鼠无操作也不会弹锁屏；关闭游戏后恢复正常计时

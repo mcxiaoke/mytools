@@ -54,6 +54,9 @@ ScreenLock.exe
   "PinHash": "<SHA256>",
   "PinSalt": "<base64>",
   "ShowClock": true,
+  "OverlayOpacity": 0.88,
+  "TasksEnabled": true,
+  "ExcludeProcesses": ["GenshinImpact.exe", "notepad.exe"],
   "UnlockOnResume": true,
   "FailedAttempts": 0
 }
@@ -62,6 +65,7 @@ ScreenLock.exe
 - 除 PIN 相关字段外均可直接改 JSON；托盘右键 Reload Config 后生效。
 - `PinHash` = SHA256(salt + PIN)，盐值随机生成，PIN 明文不落盘。
 - `AutoStart` 字段与注册表 Run 键保持同步（改 JSON 后 reload 时同步注册表）。
+- `TasksEnabled` 总开关（默认 true），`ExcludeProcesses` 为排除进程列表（见 §3.2），支持 `["game.exe"]` 或 `"game.exe, notepad.exe"`，大小写不敏感，可含 `.exe` 或全路径，列出进程运行时暂停空闲计时。
 
 ### 3.2 空闲检测（IdleDetector）
 
@@ -75,7 +79,9 @@ static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
 - `DispatcherTimer` 每 1000ms 轮询一次；
 - `idle = Environment.TickCount - (int)info.dwTime`（注意 TickCount 回绕处理，用无符号差值计算）；
-- 达到 `IdleMinutes * 60_000` 触发锁定。
+- `App.ShouldSuspendIdle()` 聚合多重暂停条件：会话已锁(`_sessionLocked`)/暂停计时(`_pauseUntil`)/全屏忙碌(`IsSystemBusy`)**/排除进程运行中**；任一命中则冻结 `_effectiveMs` 累计，不计入空闲时长；
+- 排除进程由 `ProcessExclusionService.IsExcludedRunning(ExcludeProcesses)` 判定（`Path.GetFileName` 去路径、去 `.exe`、大小写不敏感、`Process.GetProcesses()` 比对 `ProcessName`，2s 缓存），适用于游戏挂机等场景；
+- 达到 `IdleMinutes * 60_000` 且未被暂停时触发锁定。
 
 ### 3.3 锁屏窗口（LockWindow）
 

@@ -113,9 +113,17 @@ namespace ScreenLock
 
         private bool ShouldSuspendIdle()
         {
-            return _sessionLocked
-                || DateTime.Now < _pauseUntil
-                || IdleDetector.IsSystemBusy();
+            if (_sessionLocked) return true;
+            if (DateTime.Now < _pauseUntil) return true;
+            if (IdleDetector.IsSystemBusy()) return true;
+            try
+            {
+                var excl = Config.Current != null ? Config.Current.ExcludeProcesses : null;
+                if (excl != null && excl.Count > 0 && ProcessExclusionService.IsExcludedRunning(excl))
+                    return true;
+            }
+            catch { }
+            return false;
         }
 
         private void OnIdleThresholdReached()
@@ -160,6 +168,7 @@ namespace ScreenLock
             Idle.Reset();
             Controller.ApplyPinFromConfig();
             AutoStartService.Sync(c.AutoStart);
+            try { ProcessExclusionService.InvalidateCache(); } catch { }
             RefreshMenuChecks();
             UpdateTrayText();
             if (_trayIcon != null)

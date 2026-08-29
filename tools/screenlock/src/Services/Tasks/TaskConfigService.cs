@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using ScreenLock.Models;
+using SimpleJSON;
 
 namespace ScreenLock.Services.Tasks
 {
@@ -221,18 +222,62 @@ namespace ScreenLock.Services.Tasks
         private static List<TaskDefinition> ParseTasksJson(string json, List<string> errors)
         {
             var list = new List<TaskDefinition>();
+            // try SimpleJSON first (single file, supports // comments, arrays/objects, no custom code)
             try
             {
-                json = StripComments(json);
-                json = json.Trim();
-                if (json.Length == 0) return list;
-                // top can be array [...] or object { "tasks": [...] }
-                int idx = 0;
-                SkipWs(json, ref idx);
-                if (idx >= json.Length) return list;
-                if (json[idx] == '[')
+                var node = JSONNode.Parse(json);
+                if (node != null)
                 {
-                    var arr = ParseArray(json, ref idx);
+                    if (node.IsArray)
+                    {
+                        foreach (JSONNode item in node.AsArray.Children)
+                        {
+                            if (item.IsObject) list.Add(ParseTaskNode(item.AsObject, errors));
+                            else errors.Add("tasks array item not an object");
+                        }
+                        return list;
+                    }
+                    else if (node.IsObject)
+                    {
+                        var obj = node.AsObject;
+                        if (obj.HasKey("tasks") && obj["tasks"].IsArray)
+                        {
+                            foreach (JSONNode item in obj["tasks"].AsArray.Children)
+                            {
+                                if (item.IsObject) list.Add(ParseTaskNode(item.AsObject, errors));
+                                else errors.Add("tasks array item not an object");
+                            }
+                            return list;
+                        }
+                        else if (obj.HasKey("name"))
+                        {
+                            list.Add(ParseTaskNode(obj, errors));
+                            return list;
+                        }
+                        else
+                        {
+                            // empty object or unknown, return empty
+                            return list;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // fall through to legacy parser
+            }
+            // fallback to legacy hand-written parser (handles /* */ comments etc.)
+            try
+            {
+                var legacyJson = StripComments(json);
+                legacyJson = legacyJson.Trim();
+                if (legacyJson.Length == 0) return list;
+                int idx = 0;
+                SkipWs(legacyJson, ref idx);
+                if (idx >= legacyJson.Length) return list;
+                if (legacyJson[idx] == '[')
+                {
+                    var arr = ParseArray(legacyJson, ref idx);
                     foreach (var obj in arr)
                     {
                         var dict2 = obj as Dictionary<string, object>;
@@ -240,10 +285,9 @@ namespace ScreenLock.Services.Tasks
                         else errors.Add("tasks array item not an object");
                     }
                 }
-                else if (json[idx] == '{')
+                else if (legacyJson[idx] == '{')
                 {
-                    var dict = ParseObject(json, ref idx);
-                    // if has "tasks" array
+                    var dict = ParseObject(legacyJson, ref idx);
                     object tasksObj;
                     if (dict.TryGetValue("tasks", out tasksObj) && tasksObj is List<object>)
                     {
@@ -258,13 +302,7 @@ namespace ScreenLock.Services.Tasks
                     }
                     else if (dict.ContainsKey("name"))
                     {
-                        // single task object
                         list.Add(ParseTaskObject(dict, errors));
-                    }
-                    else
-                    {
-                        // maybe empty or global config only
-                        // try parse tasks if exists as raw string? ignore
                     }
                 }
                 else
@@ -277,6 +315,125 @@ namespace ScreenLock.Services.Tasks
                 errors.Add("parse error: " + ex.Message);
             }
             return list;
+        }
+
+        private static TaskDefinition ParseTaskNode(JSONObject obj, List<string> errors)
+        {
+            var task = new TaskDefinition();
+            try
+            {
+                if (obj.HasKey("name")) task.Name = obj["name"].Value;
+                if (obj.HasKey("enabled")) task.Enabled = obj["enabled"].AsBool;
+
+                // trigger
+                if (obj.HasKey("trigger"))
+                {
+                    var trigNode = obj["trigger"];
+                    if (trigNode.IsObject)
+                    {
+                        var td = trigNode.AsObject;
+                        var trig = new TaskTrigger();
+                        if (td.HasKey("type")) { trig.RawType = td["type"].Value; trig.Type = ParseTriggerType(trig.RawType); }
+                        if (td.HasKey("delaySec")) trig.DelaySec = td["delaySec"].AsInt;
+                        if (td.HasKey("delay")) trig.DelaySec = td["delay"].AsInt;
+                        if (td.HasKey("everySec")) trig.EverySec = td["everySec"].AsInt;
+                        if (td.HasKey("every")) trig.Every = td["every"].Value;
+                        if (td.HasKey("intervalSec")) trig.EverySec = td["intervalSec"].AsInt;
+                        if (td.HasKey("at")) trig.At = td["at"].Value;
+                        if (td.HasKey("time")) trig.At = td["time"].Value;
+                        if (td.HasKey("expr")) trig.Expr = td["expr"].Value;
+                        if (td.HasKey("cron")) trig.Expr = td["cron"].Value;
+                        if (td.HasKey("afterMinutes")) trig.AfterMinutes = td["afterMinutes"].AsInt;
+                        if (td.HasKey("after") && trig.AfterMinutes == 0) trig.AfterMinutes = td["after"].AsInt;
+                        if (td.HasKey("hotkey")) trig.Hotkey = td["hotkey"].Value;
+                        if (td.HasKey("key") && string.IsNullOrWhiteSpace(trig.Hotkey)) trig.Hotkey = td["key"].Value;
+                        if (td.HasKey("path")) trig.WatchPath = td["path"].Value;
+                        if (td.HasKey("watchPath") && string.IsNullOrWhiteSpace(trig.WatchPath)) trig.WatchPath = td["watchPath"].Value;
+                        if (td.HasKey("dir") && string.IsNullOrWhiteSpace(trig.WatchPath)) trig.WatchPath = td["dir"].Value;
+                        if (td.HasKey("filter")) trig.WatchFilter = td["filter"].Value;
+                        if (td.HasKey("pattern") && string.IsNullOrWhiteSpace(trig.WatchFilter)) trig.WatchFilter = td["pattern"].Value;
+                        if (td.HasKey("event")) trig.WatchEvent = td["event"].Value;
+                        if (td.HasKey("watchEvent") && string.IsNullOrWhiteSpace(trig.WatchEvent)) trig.WatchEvent = td["watchEvent"].Value;
+                        task.Trigger = trig;
+                    }
+                    else if (trigNode.IsString)
+                    {
+                        var trig = new TaskTrigger();
+                        trig.RawType = trigNode.Value;
+                        trig.Type = ParseTriggerType(trig.RawType);
+                        task.Trigger = trig;
+                    }
+                }
+
+                // action
+                if (obj.HasKey("action") && obj["action"].IsObject)
+                {
+                    var ad = obj["action"].AsObject;
+                    var act = new TaskAction();
+                    if (ad.HasKey("file")) act.File = ad["file"].Value;
+                    if (ad.HasKey("path") && string.IsNullOrWhiteSpace(act.File)) act.File = ad["path"].Value;
+                    if (ad.HasKey("command") && string.IsNullOrWhiteSpace(act.File)) act.File = ad["command"].Value;
+                    if (ad.HasKey("args")) act.Args = ad["args"].Value;
+                    if (ad.HasKey("arguments") && string.IsNullOrWhiteSpace(act.Args)) act.Args = ad["arguments"].Value;
+                    if (ad.HasKey("workDir")) act.WorkDir = ad["workDir"].Value;
+                    if (ad.HasKey("workingDirectory") && string.IsNullOrWhiteSpace(act.WorkDir)) act.WorkDir = ad["workingDirectory"].Value;
+                    if (ad.HasKey("cwd") && string.IsNullOrWhiteSpace(act.WorkDir)) act.WorkDir = ad["cwd"].Value;
+                    task.Action = act;
+                }
+                else if (obj.HasKey("file"))
+                {
+                    var act = new TaskAction();
+                    act.File = obj["file"].Value;
+                    if (obj.HasKey("args")) act.Args = obj["args"].Value;
+                    if (obj.HasKey("workDir")) act.WorkDir = obj["workDir"].Value;
+                    task.Action = act;
+                }
+
+                // options
+                if (obj.HasKey("options") && obj["options"].IsObject)
+                {
+                    var od = obj["options"].AsObject;
+                    var opt = new TaskOptions();
+                    if (od.HasKey("hidden")) opt.Hidden = od["hidden"].AsBool;
+                    if (od.HasKey("timeoutSec")) opt.TimeoutSec = od["timeoutSec"].AsInt;
+                    if (od.HasKey("timeout") && opt.TimeoutSec == 0) opt.TimeoutSec = od["timeout"].AsInt;
+                    if (od.HasKey("allowConcurrent")) opt.AllowConcurrent = od["allowConcurrent"].AsBool;
+                    if (od.HasKey("concurrent") && !opt.AllowConcurrent) opt.AllowConcurrent = od["concurrent"].AsBool;
+                    if (od.HasKey("retry")) opt.Retry = od["retry"].AsInt;
+                    if (od.HasKey("workDir")) opt.WorkDir = od["workDir"].Value;
+                    if (od.HasKey("notifyOnFailure")) opt.NotifyOnFailure = od["notifyOnFailure"].AsBool;
+                    if (od.HasKey("notify")) opt.NotifyOnFailure = od["notify"].AsBool;
+                    task.Options = opt;
+                }
+                if (obj.HasKey("hidden")) task.Options.Hidden = obj["hidden"].AsBool;
+                if (obj.HasKey("timeoutSec")) task.Options.TimeoutSec = obj["timeoutSec"].AsInt;
+
+                // when
+                JSONNode wv = null;
+                if (obj.HasKey("when")) wv = obj["when"];
+                else if (obj.HasKey("condition")) wv = obj["condition"];
+                if (wv != null && wv.IsObject)
+                {
+                    var wd = wv.AsObject;
+                    var cond = new TaskCondition();
+                    if (wd.HasKey("onlyIdle")) cond.OnlyIdle = wd["onlyIdle"].AsBool;
+                    if (wd.HasKey("acPower")) cond.AcPower = wd["acPower"].AsBool;
+                    if (wd.HasKey("fileExists")) cond.FileExists = wd["fileExists"].Value;
+                    if (wd.HasKey("fileNotExists")) cond.FileNotExists = wd["fileNotExists"].Value;
+                    if (wd.HasKey("network")) cond.NetworkAvailable = wd["network"].AsBool;
+                    if (wd.HasKey("networkAvailable")) cond.NetworkAvailable = wd["networkAvailable"].AsBool;
+                    task.When = cond;
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add("parse task [" + task.Name + "] error: " + ex.Message);
+            }
+            if (task.Trigger == null) task.Trigger = new TaskTrigger();
+            if (task.Action == null) task.Action = new TaskAction();
+            if (task.Options == null) task.Options = new TaskOptions();
+            if (task.When == null) task.When = new TaskCondition();
+            return task;
         }
 
         private static TaskDefinition ParseTaskObject(Dictionary<string, object> dict, List<string> errors)
