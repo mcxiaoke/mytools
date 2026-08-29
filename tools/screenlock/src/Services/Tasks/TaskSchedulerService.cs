@@ -195,8 +195,76 @@ namespace ScreenLock.Services.Tasks
                 case TaskTriggerType.SessionLock:
                 case TaskTriggerType.SessionUnlock: return new SessionEventTrigger(task);
                 case TaskTriggerType.Idle: return new IdleTrigger(task, _idleDetector);
+                case TaskTriggerType.Manual: return new ManualTrigger(task);
+                case TaskTriggerType.Hotkey: return new HotkeyTrigger(task);
+                case TaskTriggerType.Watch: return new FileWatcherTrigger(task);
                 default: return new StartupTrigger(task);
             }
+        }
+
+        public IReadOnlyList<TaskDefinition> GetManualTasks()
+        {
+            lock (_lock)
+            {
+                var list = new List<TaskDefinition>();
+                foreach (var t in _tasks) if (t.Trigger.Type == TaskTriggerType.Manual && t.Enabled) list.Add(t);
+                return list.AsReadOnly();
+            }
+        }
+
+        public bool RunManual(string name)
+        {
+            TaskDefinition task = null;
+            lock (_lock)
+            {
+                foreach (var t in _tasks) if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)) { task = t; break; }
+            }
+            if (task == null) return false;
+            if (!_globalEnabled) return false;
+            if (!task.Enabled) return false;
+            // check condition
+            string skip;
+            if (!TaskConditionEvaluator.ShouldRun(task, out skip))
+            {
+                TaskLogger.Warn(task.Name, "manual skipped: " + skip);
+                return false;
+            }
+            Task.Run(() => ExecuteAsync(task, "manual"));
+            return true;
+        }
+
+        public void RecordFailureNotify(TaskDefinition task, int code)
+        {
+            try
+            {
+                if (task.Options != null && !task.Options.NotifyOnFailure) return;
+                if (code == 0) return;
+                // try show balloon via App
+                try
+                {
+                    var app = System.Windows.Application.Current as ScreenLock.App;
+                    if (app != null)
+                    {
+                        app.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            try
+                            {
+                                // use reflection to call ShowBalloon if accessible, else fallback
+                                var m = typeof(ScreenLock.App).GetMethod("ShowBalloonPublic", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
+                                if (m != null) m.Invoke(app, new object[] { "任务失败 [" + task.Name + "] exit=" + code + "，详见 logs/task-" + task.Name + ".log" });
+                                else
+                                {
+                                    // fallback via tray
+                                    System.Windows.Forms.MessageBox.Show("任务 " + task.Name + " 失败 exit=" + code, "ScreenLock", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Warning);
+                                }
+                            }
+                            catch { }
+                        }));
+                    }
+                }
+                catch { }
+            }
+            catch { }
         }
 
         private void StopTriggers()
@@ -221,6 +289,14 @@ namespace ScreenLock.Services.Tasks
 
         private async Task ExecuteAsync(TaskDefinition task, string reason)
         {
+            // condition check
+            string skipReason;
+            if (!TaskConditionEvaluator.ShouldRun(task, out skipReason))
+            {
+                TaskLogger.Info(task.Name, "skipped(" + reason + ") condition not met: " + skipReason);
+                return;
+            }
+
             bool skip = false;
             lock (_lock)
             {
@@ -237,6 +313,7 @@ namespace ScreenLock.Services.Tasks
                 TaskLogger.Warn(task.Name, "skipped(" + reason + ") concurrent execution not allowed");
                 return;
             }
+            int lastCode = 0;
             try
             {
                 int retry = task.Options != null ? task.Options.Retry : 0;
@@ -254,6 +331,7 @@ namespace ScreenLock.Services.Tasks
                         TaskLogger.Error(task.Name, "run exception: " + ex);
                         code = -1;
                     }
+                    lastCode = code;
                     if (code == 0 || attempt > retry) break;
                     TaskLogger.Info(task.Name, "retry " + attempt + "/" + retry + " after non-zero exit " + code);
                     await Task.Delay(1000).ConfigureAwait(false);
@@ -263,6 +341,36 @@ namespace ScreenLock.Services.Tasks
             {
                 lock (_lock) _running[task.Name] = false;
             }
+            // failure notify
+            try
+            {
+                if (lastCode != 0)
+                {
+                    RecordFailureNotify(task, lastCode);
+                    // also keep recent list for tray
+                    lock (_lock)
+                    {
+                        AddRecent(task.Name, lastCode);
+                    }
+                }
+                else
+                {
+                    lock (_lock) AddRecent(task.Name, 0);
+                }
+            }
+            catch { }
+        }
+
+        private List<string> _recent = new List<string>();
+        private void AddRecent(string name, int code)
+        {
+            string entry = string.Format("{0:HH:mm:ss} {1} {2}", DateTime.Now, name, code == 0 ? "ok" : "fail:" + code);
+            _recent.Insert(0, entry);
+            if (_recent.Count > 10) _recent.RemoveAt(10);
+        }
+        public IReadOnlyList<string> GetRecent()
+        {
+            lock (_lock) return _recent.AsReadOnly();
         }
 
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)

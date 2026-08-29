@@ -11,7 +11,10 @@ namespace ScreenLock.Models
         Cron,
         SessionLock,
         SessionUnlock,
-        Idle
+        Idle,
+        Manual,
+        Hotkey,
+        Watch
     }
 
     public class TaskTrigger
@@ -23,8 +26,26 @@ namespace ScreenLock.Models
         public string At { get; set; } = "";
         public string Expr { get; set; } = "";
         public int AfterMinutes { get; set; } = 0;
+        public string Hotkey { get; set; } = "";
+        public string WatchPath { get; set; } = "";
+        public string WatchFilter { get; set; } = "*.*";
+        public string WatchEvent { get; set; } = "created";
 
         public string RawType { get; set; } = "";
+    }
+
+    public class TaskCondition
+    {
+        public bool OnlyIdle { get; set; } = false;
+        public bool AcPower { get; set; } = false;
+        public string FileExists { get; set; } = "";
+        public string FileNotExists { get; set; } = "";
+        public bool NetworkAvailable { get; set; } = false;
+
+        public bool HasAny()
+        {
+            return OnlyIdle || AcPower || !string.IsNullOrWhiteSpace(FileExists) || !string.IsNullOrWhiteSpace(FileNotExists) || NetworkAvailable;
+        }
     }
 
     public class TaskAction
@@ -41,6 +62,7 @@ namespace ScreenLock.Models
         public bool AllowConcurrent { get; set; } = false;
         public int Retry { get; set; } = 0;
         public string WorkDir { get; set; } = "";
+        public bool NotifyOnFailure { get; set; } = true;
     }
 
     public class TaskDefinition
@@ -50,6 +72,7 @@ namespace ScreenLock.Models
         public TaskTrigger Trigger { get; set; } = new TaskTrigger();
         public TaskAction Action { get; set; } = new TaskAction();
         public TaskOptions Options { get; set; } = new TaskOptions();
+        public TaskCondition When { get; set; } = new TaskCondition();
 
         public string Validate()
         {
@@ -84,6 +107,16 @@ namespace ScreenLock.Models
             if (Trigger.Type == TaskTriggerType.Idle)
             {
                 if (Trigger.AfterMinutes <= 0) return "idle afterMinutes required and >0";
+            }
+            if (Trigger.Type == TaskTriggerType.Hotkey)
+            {
+                if (string.IsNullOrWhiteSpace(Trigger.Hotkey)) return "hotkey required (e.g. Ctrl+Alt+Q)";
+                string err;
+                if (!HotkeyHelper.Validate(Trigger.Hotkey, out err)) return "hotkey invalid: " + err;
+            }
+            if (Trigger.Type == TaskTriggerType.Watch)
+            {
+                if (string.IsNullOrWhiteSpace(Trigger.WatchPath)) return "watch path required";
             }
             if (Options != null && Options.TimeoutSec < 0) return "timeoutSec invalid";
             if (Options != null && Options.Retry < 0) return "retry invalid";
@@ -285,6 +318,82 @@ namespace ScreenLock.Models
                 }
             }
             return false;
+        }
+    }
+
+    internal static class HotkeyHelper
+    {
+        public static bool Validate(string hotkey, out string error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(hotkey)) { error = "empty"; return false; }
+            int mods;
+            int vk;
+            if (!TryParse(hotkey, out mods, out vk, out error)) return false;
+            if (vk == 0) { error = "no key"; return false; }
+            return true;
+        }
+
+        public static bool TryParse(string hotkey, out int mods, out int vk, out string error)
+        {
+            mods = 0; vk = 0; error = null;
+            if (string.IsNullOrWhiteSpace(hotkey)) { error = "empty"; return false; }
+            // format: Ctrl+Alt+Shift+Win+Key  (case insensitive, + or - separator)
+            string s = hotkey.Trim();
+            s = s.Replace("-", "+");
+            var parts = s.Split(new char[] { '+' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) { error = "empty"; return false; }
+            string keyPart = parts[parts.Length - 1].Trim();
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                string m = parts[i].Trim().ToLowerInvariant();
+                if (m == "ctrl" || m == "control") mods |= 0x0002;
+                else if (m == "alt") mods |= 0x0001;
+                else if (m == "shift") mods |= 0x0004;
+                else if (m == "win" || m == "windows" || m == "meta") mods |= 0x0008;
+                else { error = "unknown modifier " + parts[i]; return false; }
+            }
+            // key: single char A-Z, 0-9, F1-24, or names like Space, Enter, Esc
+            string k = keyPart.ToUpperInvariant();
+            if (k.Length == 1)
+            {
+                char c = k[0];
+                if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+                {
+                    vk = (int)c;
+                    return true;
+                }
+            }
+            // try function keys
+            if (k.StartsWith("F"))
+            {
+                int fn;
+                if (int.TryParse(k.Substring(1), out fn) && fn >= 1 && fn <= 24)
+                {
+                    vk = 0x70 + (fn - 1); // VK_F1=0x70
+                    return true;
+                }
+            }
+            // named keys
+            switch (k)
+            {
+                case "SPACE": vk = 0x20; return true;
+                case "ENTER": case "RETURN": vk = 0x0D; return true;
+                case "ESC": case "ESCAPE": vk = 0x1B; return true;
+                case "TAB": vk = 0x09; return true;
+                case "BACKSPACE": case "BACK": vk = 0x08; return true;
+                case "INS": case "INSERT": vk = 0x2D; return true;
+                case "DEL": case "DELETE": vk = 0x2E; return true;
+                case "HOME": vk = 0x24; return true;
+                case "END": vk = 0x23; return true;
+                case "PGUP": case "PAGEUP": vk = 0x21; return true;
+                case "PGDN": case "PAGEDOWN": vk = 0x22; return true;
+                case "LEFT": vk = 0x25; return true;
+                case "UP": vk = 0x26; return true;
+                case "RIGHT": vk = 0x27; return true;
+                case "DOWN": vk = 0x28; return true;
+                default: error = "unknown key " + keyPart; return false;
+            }
         }
     }
 }

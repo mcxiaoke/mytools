@@ -1,0 +1,190 @@
+<Window x:Class="ScreenLock.Views.TaskEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="任务编辑器" Height="620" Width="900"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+        Background="#FFF7F7F7">
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260"/>
+            <ColumnDefinition Width="12"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Left: task list -->
+        <Border Grid.Column="0" Grid.Row="0" Background="White" CornerRadius="6" BorderBrush="#FFE0E0E0" BorderThickness="1">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="任务列表" FontWeight="Bold" FontSize="13" Margin="0,0,0,6"/>
+                <ListBox x:Name="TaskList" Grid.Row="1" SelectionChanged="TaskList_SelectionChanged" DisplayMemberPath="Name"/>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <Button Content="新增" Width="58" Height="28" Margin="2" Click="OnAddClick"/>
+                    <Button Content="复制" Width="58" Height="28" Margin="2" Click="OnDuplicateClick"/>
+                    <Button Content="删除" Width="58" Height="28" Margin="2" Click="OnDeleteClick"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Right: detail form -->
+        <Border Grid.Column="2" Grid.Row="0" Background="White" CornerRadius="6" BorderBrush="#FFE0E0E0" BorderThickness="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="12">
+                <StackPanel>
+                    <TextBlock Text="基础信息" FontWeight="Bold" Foreground="#FF444444" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <TextBlock Text="名称 *" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NameBox" Grid.Column="1" Height="26" Margin="0,4" Padding="4,2"/>
+                        <CheckBox x:Name="EnabledBox" Grid.Column="2" Content="启用" VerticalAlignment="Center" Margin="8,0,0,0" IsChecked="True"/>
+                        <TextBlock Text="说明" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,6,0,0"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="名称仅限字母数字_- ，用于日志 task-xxx.log" Foreground="#FF888888" FontSize="11" Margin="0,6,0,0"/>
+                        <TextBlock x:Name="ValidateText" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Foreground="#FFD93025" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,12"/>
+
+                    <TextBlock Text="触发器 (Trigger)" FontWeight="Bold" Foreground="#FF444444" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <TextBlock Text="类型 *" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="TriggerTypeBox" Grid.Column="1" Height="26" Margin="0,4" SelectionChanged="TriggerTypeBox_SelectionChanged">
+                            <ComboBoxItem Content="startup - 启动后延迟" Tag="startup"/>
+                            <ComboBoxItem Content="interval - 间隔" Tag="interval"/>
+                            <ComboBoxItem Content="daily - 每天固定时间" Tag="daily"/>
+                            <ComboBoxItem Content="cron - Cron 表达式" Tag="cron"/>
+                            <ComboBoxItem Content="sessionLock - 锁屏时" Tag="sessionLock"/>
+                            <ComboBoxItem Content="sessionUnlock - 解锁时" Tag="sessionUnlock"/>
+                            <ComboBoxItem Content="idle - 空闲后" Tag="idle"/>
+                            <ComboBoxItem Content="manual - 手动（托盘点击）" Tag="manual"/>
+                            <ComboBoxItem Content="hotkey - 热键" Tag="hotkey"/>
+                            <ComboBoxItem Content="watch - 文件监听" Tag="watch"/>
+                        </ComboBox>
+                    </Grid>
+                    <!-- trigger params panels -->
+                    <StackPanel x:Name="PanelStartup" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="40"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="延迟秒" VerticalAlignment="Center"/><TextBox x:Name="DelayBox" Grid.Column="1" Height="24" Margin="0,4" Text="5"/><TextBlock Grid.Column="2" Text="秒" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelInterval" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="间隔" VerticalAlignment="Center"/><TextBox x:Name="EveryBox" Grid.Column="1" Height="24" Margin="0,4" ToolTip="支持 3600 或 1h30m"/>
+                        </Grid>
+                        <TextBlock Text="可填 60 / 3600 或 1h30m / 30s" Foreground="#FF888888" FontSize="11" Margin="92,0,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelDaily" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="时间" VerticalAlignment="Center"/><TextBox x:Name="AtBox" Grid.Column="1" Height="24" Margin="0,4" ToolTip="HH:mm 或 HH:mm:ss"/>
+                        </Grid>
+                        <TextBlock Text="示例 02:30 或 14:00:00" Foreground="#FF888888" FontSize="11" Margin="92,0,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelCron" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="表达式" VerticalAlignment="Center"/><TextBox x:Name="CronBox" Grid.Column="1" Height="24" Margin="0,4" ToolTip="分 时 日 月 周，如 0 9 * * 1"/>
+                        </Grid>
+                        <TextBlock Text="示例 0 9 * * 1 = 每周一 09:00" Foreground="#FF888888" FontSize="11" Margin="92,0,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelIdle" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="40"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="空闲分钟" VerticalAlignment="Center"/><TextBox x:Name="IdleBox" Grid.Column="1" Height="24" Margin="0,4" Text="10"/><TextBlock Grid.Column="2" Text="分" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelHotkey" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="热键" VerticalAlignment="Center"/><TextBox x:Name="HotkeyBox" Grid.Column="1" Height="24" Margin="0,4" ToolTip="如 Ctrl+Alt+Q"/>
+                        </Grid>
+                        <TextBlock Text="格式 Ctrl+Alt+Shift+Win+Q, 支持 F1-F24，单个字母需带修饰键" Foreground="#FF888888" FontSize="11" Margin="92,0,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelWatch" Margin="90,0,0,0" Visibility="Collapsed">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="60"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <TextBlock Text="监听路径" VerticalAlignment="Center"/><TextBox x:Name="WatchPathBox" Grid.Column="1" Height="24" Margin="0,4"/><Button Content="浏览" Grid.Column="2" Height="24" Margin="4,4,0,4" Click="OnWatchBrowseClick"/>
+                            <TextBlock Text="过滤" Grid.Row="1" VerticalAlignment="Center"/><TextBox x:Name="WatchFilterBox" Grid.Row="1" Grid.Column="1" Height="24" Margin="0,4" Text="*.*"/>
+                            <TextBlock Text="事件" Grid.Row="2" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="WatchEventBox" Grid.Row="2" Grid.Column="1" Height="24" Margin="0,4" SelectedIndex="0">
+                                <ComboBoxItem Content="created - 新建" Tag="created"/>
+                                <ComboBoxItem Content="changed - 修改" Tag="changed"/>
+                                <ComboBoxItem Content="deleted - 删除" Tag="deleted"/>
+                                <ComboBoxItem Content="renamed - 重命名" Tag="renamed"/>
+                                <ComboBoxItem Content="all - 全部" Tag="all"/>
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel x:Name="PanelManual" Margin="90,0,0,0" Visibility="Collapsed">
+                        <TextBlock Text="手动任务将在托盘 任务 → 手动运行 中出现，点击即执行" Foreground="#FF888888" FontSize="11" Margin="0,4,0,0"/>
+                    </StackPanel>
+
+                    <Separator Margin="0,12,0,12"/>
+
+                    <TextBlock Text="执行 (Action)" FontWeight="Bold" Foreground="#FF444444" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="60"/><ColumnDefinition Width="90"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <TextBlock Text="文件 *" VerticalAlignment="Center"/>
+                        <TextBox x:Name="FileBox" Grid.Column="1" Height="26" Margin="0,4" Padding="4,2"/>
+                        <Button Content="浏览" Grid.Column="2" Height="26" Margin="4,4,0,4" Click="OnBrowseFileClick"/>
+                        <ComboBox x:Name="ScriptQuickBox" Grid.Column="3" Height="26" Margin="4,4,0,4" ToolTip="快速选择 scripts/ 中的脚本">
+                            <ComboBoxItem Content="scripts/ 快速选择" IsEnabled="False"/>
+                        </ComboBox>
+                        <TextBlock Text="参数" Grid.Row="1" VerticalAlignment="Center"/>
+                        <TextBox x:Name="ArgsBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Height="26" Margin="0,4" ToolTip="支持 {{date}} {{time}} {{yyyyMMdd}} 等模板"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text='参数支持模板 {{date}} {{time}} {{yyyyMMdd_HHmmss}} {{task}} 等' Foreground="#FF888888" FontSize="11" Margin="0,34,0,0"/>
+                        <TextBlock Text="工作目录" Grid.Row="2" VerticalAlignment="Center" Margin="0,10,0,0"/>
+                        <TextBox x:Name="WorkDirBox" Grid.Row="2" Grid.Column="1" Height="26" Margin="0,10,0,4"/>
+                        <Button Content="浏览" Grid.Row="2" Grid.Column="2" Height="26" Margin="4,10,0,4" Click="OnBrowseDirClick"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="裸文件名如 hello.js 自动在 scripts/ 中查找；留空则取文件所在目录" Foreground="#FF888888" FontSize="11" Margin="0,2,0,0"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,12"/>
+
+                    <TextBlock Text="选项 (Options)" FontWeight="Bold" Foreground="#FF444444" Margin="0,0,0,8"/>
+                    <WrapPanel>
+                        <CheckBox x:Name="HiddenBox" Content="隐藏窗口（脚本默认）" IsChecked="True" Margin="0,4,16,4"/>
+                        <CheckBox x:Name="AllowConcurrentBox" Content="允许并发" Margin="0,4,16,4"/>
+                        <CheckBox x:Name="NotifyBox" Content="失败时通知" IsChecked="True" Margin="0,4,16,4"/>
+                    </WrapPanel>
+                    <Grid Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="100"/><ColumnDefinition Width="90"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="超时秒" VerticalAlignment="Center"/><TextBox x:Name="TimeoutBox" Grid.Column="1" Height="24" Margin="0,4" Text="0"/>
+                        <TextBlock Text="重试次数" Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0"/><TextBox x:Name="RetryBox" Grid.Column="3" Height="24" Margin="0,4" Text="0"/>
+                    </Grid>
+                    <TextBlock Text="0 表示不限" Foreground="#FF888888" FontSize="11" Margin="90,0,0,0"/>
+
+                    <Separator Margin="0,12,0,12"/>
+
+                    <TextBlock Text="执行条件 (When) 可选" FontWeight="Bold" Foreground="#FF444444" Margin="0,0,0,8"/>
+                    <WrapPanel>
+                        <CheckBox x:Name="OnlyIdleBox" Content="仅空闲时" Margin="0,4,16,4"/>
+                        <CheckBox x:Name="AcPowerBox" Content="仅交流供电" Margin="0,4,16,4"/>
+                        <CheckBox x:Name="NetworkBox" Content="仅有网络" Margin="0,4,16,4"/>
+                    </WrapPanel>
+                    <Grid Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <TextBlock Text="需存在文件" VerticalAlignment="Center"/><TextBox x:Name="FileExistsBox" Grid.Column="1" Height="24" Margin="0,4"/>
+                        <TextBlock Text="需不存在" Grid.Row="1" VerticalAlignment="Center"/><TextBox x:Name="FileNotExistsBox" Grid.Row="1" Grid.Column="1" Height="24" Margin="0,4"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,12"/>
+                    <TextBlock Text="提示：所有脚本类任务默认隐藏黑窗口；热键需重启生效；文件监听防抖 500ms" Foreground="#FF888888" FontSize="11" TextWrapping="Wrap"/>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="校验" Width="80" Height="32" Margin="4,0" Click="OnValidateClick"/>
+            <Button Content="保存并重载" Width="100" Height="32" Margin="4,0" Click="OnSaveReloadClick"/>
+            <Button Content="保存" Width="80" Height="32" Margin="4,0" Click="OnSaveClick"/>
+            <Button Content="关闭" Width="80" Height="32" Margin="4,0" Click="OnCloseClick"/>
+        </StackPanel>
+    </Grid>
+</Window>

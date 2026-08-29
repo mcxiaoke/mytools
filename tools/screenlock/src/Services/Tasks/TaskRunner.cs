@@ -19,12 +19,16 @@ namespace ScreenLock.Services.Tasks
             bool hidden = task.Options != null ? task.Options.Hidden : true;
             int timeoutSec = task.Options != null ? task.Options.TimeoutSec : 0;
 
-            // expand env vars in file/args/workDir
+            // expand env vars + template vars {{date}} etc in file/args/workDir
             try
             {
                 if (!string.IsNullOrEmpty(file)) file = Environment.ExpandEnvironmentVariables(file);
                 if (!string.IsNullOrEmpty(args)) args = Environment.ExpandEnvironmentVariables(args);
                 if (!string.IsNullOrEmpty(workDir)) workDir = Environment.ExpandEnvironmentVariables(workDir);
+                // template expansion
+                file = TemplateExpander.Expand(file, task);
+                args = TemplateExpander.Expand(args, task);
+                workDir = TemplateExpander.Expand(workDir, task);
             }
             catch { }
 

@@ -1,8 +1,8 @@
 # AutoRun 计划任务模块设计方案
 
-> 版本：v0.3（2026-08-29）
+> 版本：v0.4（2026-08-29）
 > 归属：`ScreenLock` 宿主复用，仅借壳常驻，不侵入锁屏核心
-> 目标：替代 Windows 计划任务的常用轻量场景 + 替代原 `AutoHotkeyV2/AutoRun*` 脚本
+> 目标：替代 Windows 计划任务的常用轻量场景 + 替代原 `AutoHotkeyV2/AutoRun*` 脚本 + 轻量自动化箱
 
 ## 1. 定位与非目标
 
@@ -31,15 +31,18 @@
 ```
 src/
  Models/
-   TaskDefinition.cs        // 任务定义模型
+   TaskDefinition.cs        // 任务定义模型（含 TaskCondition/TaskOptions/HotkeyHelper）
  Services/
    ConfigService.cs         // 已有，新增 LogsDirPath/ScriptsDirPath/TasksEnabled 辅助
    Tasks/
-     TaskConfigService.cs   // tasks.json 读写、校验、Watcher
+     TaskConfigService.cs   // tasks.json 读写、校验、Save
      TaskLogger.cs          // 日志落盘与轮转
      ScriptResolver.cs      // 脚本路径解析（scripts/）+ PATH 中查找 node/python
-     TaskRunner.cs          // 进程启动（无窗口）、超时、输出捕获
-     TaskSchedulerService.cs// 调度中枢，管理所有 Trigger 生命周期（含全局启用开关）
+     TemplateExpander.cs    // {{date}} 等变量模板展开
+     TaskConditionEvaluator.cs // when 条件判定
+     HotkeyService.cs       // RegisterHotKey 全局热键宿主窗口
+     TaskRunner.cs          // 进程启动（无窗口、模板、条件、超时）
+     TaskSchedulerService.cs// 调度中枢，含全局开关、手动触发、最近运行
      Triggers/
        ITrigger.cs
        StartupTrigger.cs
@@ -48,6 +51,11 @@ src/
        CronTrigger.cs
        SessionEventTrigger.cs
        IdleTrigger.cs
+       ManualTrigger.cs     // 托盘手动点击
+       HotkeyTrigger.cs     // 热键
+       FileWatcherTrigger.cs// 文件监听
+ Views/
+   TaskEditorWindow.xaml    // 轻量任务编辑器（校验、选脚本、自动填目录）
 ```
 
 新增配置文件与日志（均自动创建）：
@@ -60,7 +68,7 @@ src/
 <DirPath>/scripts/                // 脚本目录，裸文件名自动在此解析（.ps1/.bat/.js/.py 等）
 ```
 
-托盘新增：`任务` 二级菜单——`启用任务调度`（默认启用，持久化到 `config.json:TasksEnabled`，禁用时停止所有触发器）、`重载任务`、`编辑 tasks.json`、`打开 scripts 目录`、`打开 logs 目录`。
+托盘新增：`任务` 二级菜单——`启用任务调度`（默认启用）、`手动运行`（动态列出 `manual` 任务）、`最近运行`、`任务编辑器...`、`重载任务`、`编辑 tasks.json`、`打开 scripts/logs 目录`，支持热键后台触发与文件监听防抖 500ms。
 
 ## 4. 配置模型 `tasks.json`
 
@@ -98,55 +106,87 @@ src/
 |---|---|---|
 | `startup` | `delaySec?: int` | 登录/进程启动后延迟执行一次。`delaySec` 默认 5 |
 | `interval` | `everySec: int` 或 `every: "1h30m"` | 周期执行。首次在 `every` 后执行 |
-| `daily` | `at: "HH:mm"` 或 `at: "HH:mm:ss"` | 每天固定时间执行一次，错过（休眠）则在唤醒后 1 分钟内补执行 |
+| `daily` | `at: "HH:mm"` 或 `at: "HH:mm:ss"` | 每天固定时间执行一次，错过（休眠）则在唤醒后 5s 补执行 |
 | `cron` | `expr: "30 2 * * *"` | 5 字段 cron（分 时 日 月 周），按分钟精度 |
 | `sessionLock` | - | 系统会话锁定（Win+L / 超时锁）时 |
 | `sessionUnlock` | - | 会话解锁时 |
 | `idle` | `afterMinutes: int` | 系统空闲达到阈值时（复用 IdleDetector 阈值或独立阈值） |
+| `manual` | - | 仅手动（托盘 `任务→手动运行` 点击触发），替代 AHK 托盘启动器 |
+| `hotkey` | `hotkey: "Ctrl+Alt+Q"` | 全局热键触发，`Ctrl/Alt/Shift/Win + A-Z/0-9/F1-24`，`RegisterHotKey` 实现 |
+| `watch` | `path: string, filter?: "*.ext", event?: "created\|changed\|deleted\|renamed\|all"` | 文件/目录监听，`FileSystemWatcher` 防抖 500ms |
 
-一期实现：`startup / interval / daily / cron / sessionLock / sessionUnlock / idle` 全部支持；`idle` 依赖 `IdleDetector` 回调。
+`manual/hotkey/watch` 为 v0.4 新增，`hotkey` 注册失败记 `tasks.log`，`watch` 若 `path` 为文件则监听其目录。
 
 ### 4.3 Action
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `file` | string | 可执行文件或脚本路径。裸文件名（如 `hello.js`）自动在 `<DirPath>/scripts/` 中查找，便携/非便携自动适配 |
-| `args` | string | 参数，原样透传 |
-| `workDir` | string | 工作目录，空则取解析后 `file` 所在目录 |
+| `file` | string | 裸文件名自动在 `<DirPath>/scripts/` 中查找，支持 `{{date}}` 等模板 |
+| `args` | string | 支持模板 `{{date}} {{time}} {{yyyyMMdd}} {{task}}` 等，见 §4.5 |
+| `workDir` | string | 空则取解析后 `file` 所在目录 |
 
 **脚本自动包装（均 `Hidden` 无黑窗口）**：
 - `.ps1/.psm1` → `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "file" args`
 - `.cmd/.bat` → `cmd.exe /c "file" args`
 - `.vbs` → `wscript.exe "file" args`
-- `.js` → `node "file" args`（`PATH` 中自动查找 `node.exe`，找不到回退 `node`）
-- `.py/.pyw` → `python -u "file" args`（`PATH` 中自动查找 `python.exe/python3.exe/py.exe`，`-u` 无缓冲）
+- `.js` → `node "file" args`（`PATH` 中自动查找 `node.exe`）
+- `.py/.pyw` → `python -u "file" args`（`PATH` 中查 `python.exe/python3.exe/py.exe`，`-u` 无缓冲）
 - 其他 → 直接 `file args`
 
-均设置 `UseShellExecute=false, CreateNoWindow=true（脚本默认隐藏）, WindowStyle=Hidden, RedirectStdOut/Err=true, StdOutEncoding=UTF8`。`file` 在解析阶段经 `ScriptResolver.ResolveScriptPath` 处理：非绝对路径且为脚本/裸名时优先 `scripts/`；绝对路径直接使用。
+均 `UseShellExecute=false, CreateNoWindow=true, RedirectStdOut/Err=true`。`file` 经 `ScriptResolver.ResolveScriptPath` 处理；`args/file/workDir` 均先 `Environment.Expand` 再 `TemplateExpander`。
+
+### 4.4 When 条件
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `when.onlyIdle` | bool | 仅空闲 >60s 时执行 |
+| `when.acPower` | bool | 仅交流供电时 |
+| `when.networkAvailable` | bool | 仅有网络时 |
+| `when.fileExists` | string | 仅当文件/目录存在时（支持 `%VAR%` 与 `scripts/` 裸名） |
+| `when.fileNotExists` | string | 仅当不存在时 |
+
+条件在 `TaskSchedulerService.ExecuteAsync` 前由 `TaskConditionEvaluator` 判定，不满足记 `skipped(…)`
+
+### 4.5 模板变量
+
+`file/args/workDir` 中 `{{...}}` 会被展开：
+
+| 模板 | 示例 | 说明 |
+|---|---|---|
+| `{{date}}` | `2026-08-29` | `yyyy-MM-dd` |
+| `{{time}}` | `14-03-02` | `HH-mm-ss` |
+| `{{datetime}}` | `2026-08-29_14-03-02` | |
+| `{{yyyyMMdd}}` | `20260829` | 任意 `DateTime` 格式（检测含 `yMdHms` 则按格式） |
+| `{{task}}` | `backup` | 当前任务名 |
+| `{{scripts}}`/`{{logs}}`/`{{dir}}` | 路径 | 对应目录 |
+| `{{ENV}}` |  | 环境变量回退 |
+
+### 4.6 Options 扩展
+
+`options.notifyOnFailure` 默认 `true`，非 0 退出码时 `TaskSchedulerService.RecordFailureNotify` 经 `App.ShowBalloonPublic` 气泡提示并记入 `最近运行`。
 
 ## 5. 调度器设计 `TaskSchedulerService`
 
 ```
 App.OnStartup → TaskSchedulerService.Start()
-                ├─ TaskConfigService.LoadOrCreate() // 不存在则写 tasks.sample.json + 空数组
+                ├─ TaskConfigService.LoadOrCreate() + EnsureScriptsDir()
                 ├─ 校验去重（name 唯一、trigger 合法）
                 ├─ 为每个 enabled task 创建 Trigger 实例
-                ├─ StartupTrigger: Task.Delay(delay) 后执行一次
-                ├─ Interval/Daily/Cron: DispatcherTimer(1s/30s) 轮询 Due
-                ├─ SessionEvent: 订阅 SystemEvents.SessionSwitch
-                └─ Idle: 订阅 IdleDetector.ThresholdReached
-App.OnAppExit → TaskSchedulerService.Stop() // 停止所有 Timer + 取消订阅
-托盘 Reload → TaskSchedulerService.Reload() // 重新 Load + 增量启停
-FileWatcher → tasks.json 变动防抖 500ms 后自动 Reload（可选，一期仅手动 Reload）
+                ├─ StartupTrigger: Task.Delay(delay) 后执行
+                ├─ Interval/Daily/Cron: DispatcherTimer(1s/30s) 轮询
+                ├─ SessionEvent: SystemEvents.SessionSwitch
+                ├─ Idle: IdleDetector.ThresholdReached
+                ├─ Manual: 无计时，仅注册托盘菜单 GetManualTasks()
+                ├─ Hotkey: HotkeyService.RegisterHotKey
+                └─ Watch: FileSystemWatcher（防抖 500ms）
+App.OnAppExit → Stop() // 停止所有 Trigger + UnregisterHotKey
+托盘 Reload → Reload() // 重载并同步全局开关 + RefreshTaskMenu()
+手动点击 → RunManual(name) → TaskConditionEvaluator → ExecuteAsync
 ```
 
-**执行路径**：`Trigger.Fire(task, reason)` → `TaskRunner.RunAsync(task, reason)` → `TaskLogger.LogStart/LogOutput/LogEnd` → 写 `logs/task-<name>.log` + `logs/tasks.log`。
+**执行路径**：`Trigger.Fire → TaskConditionEvaluator.ShouldRun → TaskRunner.RunAsync(经 TemplateExpander) → TaskLogger + 失败气泡 → 最近运行（10 条）`
 
-**关键策略**：
-- 单任务串行：`allowConcurrent=false` 时用 `SemaphoreSlim(1,1)`，触发时若已在跑则记 `skipped(concurrent)` 并返回。
-- 超时：`WaitForExitAsync + Delay(timeout)`，超时则 `KillProcessTree`（WMI/ job object 简化为 `Process.Kill` 递归子进程）。
-- 休眠补偿：`SystemEvents.PowerModeChanged(Resume)` 后 5s 重新计算 `Daily/Cron` 的 Due。
-- 异常隔离：`try/catch` 包裹单次执行，异常仅记日志，不向上传播。
+**关键策略**：并发跳过、超时杀树、休眠补偿、异常隔离同前；`when` 条件不满足记 `skipped(condition)`；`manual` 任务不参与自动调度，仅 `GetManualTasks()` 供托盘渲染。
 
 ## 6. 日志设计 `TaskLogger`
 
@@ -160,30 +200,31 @@ FileWatcher → tasks.json 变动防抖 500ms 后自动 Reload（可选，一期
 
 ## 7. 与现有功能交互
 
-- **配置路径**：新增 `ConfigService.LogsDirPath/ScriptsDirPath/TasksEnabled` 与 `TaskConfigService.FilePath`，复用 `IsPortableMode` 判定；`AppSettings.TasksEnabled` 默认 `true` 持久化到 `config.json`。
-- **托盘菜单**：`App.CreateTrayIcon()` 新增 `任务` 二级菜单：`启用任务调度`（`CheckOnClick` 默认启用，`CheckedChanged` 调用 `TaskSchedulerService.SetGlobalEnabled` 并 `Config.Save()`）、`重载任务`、`编辑 tasks.json`、`打开 scripts 目录`、`打开 logs 目录`。
-- **热加载**：托盘已有 `Reload Config` 旁新增 `Reload Tasks`，调用 `TaskSchedulerService.Reload()` 并气泡提示成功/失败数；`Reload` 时若外部改过 `config.json:TasksEnabled` 会同步总开关勾选态。
-- **自启**：任务调度依赖宿主自启，已有 `AutoStartService` 无需改动。
+- **配置路径**：`ConfigService.LogsDirPath/ScriptsDirPath/TasksEnabled` + `TaskConfigService.FilePath/Save()`，复用 `IsPortableMode`；`AppSettings.TasksEnabled` 默认 `true` 持久化到 `config.json`。
+- **托盘菜单**：`任务` 二级菜单：`启用任务调度`、`手动运行`（动态）、`最近运行`（10 条）、`任务编辑器...`、`重载任务`、`编辑 tasks.json`、`打开 scripts/logs 目录`；`App.RefreshTaskMenu()` 在 `Start/Reload/编辑器保存` 后刷新。
+- **编辑器**：`Views/TaskEditorWindow` 为轻量 WPF 窗口（左侧列表 + 右侧表单），支持新增/复制/删除、按触发器类型动态显隐参数、浏览选择 `scripts/` 脚本并自动填工作目录、调用 `Validate()` 校验、保存经 `TaskConfigService.Save()` 并可选 `Reload`。
+- **热加载**：`Reload Tasks` 同步 `TasksEnabled` 并刷新托盘；失败自动 `ShowBalloonPublic`。
 
 ## 8. 示例 `tasks.json`
 
 ```json
 [
   {
-    "name": "startup-notify",
-    "trigger": { "type": "startup", "delaySec": 10 },
-    "action": { "file": "hello.js", "args": "--verbose" },
+    "name": "quick-notepad",
+    "trigger": { "type": "manual" },
+    "action": { "file": "notepad.exe" }
+  },
+  {
+    "name": "hotkey-sync",
+    "trigger": { "type": "hotkey", "hotkey": "Ctrl+Alt+S" },
+    "action": { "file": "sync.py" },
     "options": { "hidden": true }
   },
   {
-    "name": "hourly-sync",
-    "trigger": { "type": "interval", "everySec": 3600 },
-    "action": { "file": "sync.bat" }
-  },
-  {
-    "name": "py-monitor",
-    "trigger": { "type": "interval", "every": "1h" },
-    "action": { "file": "monitor.py", "args": "--check" }
+    "name": "watch-downloads",
+    "trigger": { "type": "watch", "path": "%USERPROFILE%/Downloads", "filter": "*.zip", "event": "created" },
+    "action": { "file": "unzip.js", "args": "{{task}} {{datetime}}" },
+    "when": { "onlyIdle": false }
   },
   {
     "name": "daily-clean",
@@ -192,28 +233,28 @@ FileWatcher → tasks.json 变动防抖 500ms 后自动 Reload（可选，一期
     "options": { "timeoutSec": 600 }
   },
   {
-    "name": "on-lock",
-    "trigger": { "type": "sessionLock" },
-    "action": { "file": "onLock.cmd", "args": "--lock" }
-  },
-  {
-    "name": "cron-example",
-    "trigger": { "type": "cron", "expr": "0 9 * * 1" },
-    "action": { "file": "weekly.js" }
+    "name": "backup-logs",
+    "trigger": { "type": "interval", "every": "1h" },
+    "action": { "file": "backup.js", "args": "--out logs-{{yyyyMMdd}}.zip" }
   }
 ]
 ```
-> `file` 为裸名时自动在 `scripts/` 中查找，如 `hello.js` → `<DirPath>/scripts/hello.js`，再由 `node`/`python` 自动包装执行，全程无黑窗口。
+> 裸名在 `scripts/` 中查找；`args` 支持 `{{date}}` 等模板；`manual` 在托盘 `手动运行` 中一点即跑；`watch` 防抖 500ms。
 
-## 9. 测试与验收
+## 9. 编辑器
 
-- 手动：`interval 10s` + `startup 2s` 任务，观察 `logs/task-*.log` 是否生成、输出是否捕获、隐藏窗口是否无闪现。
-- 边界：`tasks.json` 语法错误时保持旧任务运行并气泡提示；`name` 重复/缺失 `file` 时跳过并记 `tasks.log`。
-- 并发：`allowConcurrent=false` 的长任务在间隔内再次触发应记 `skipped`。
-- 构建：`MSBuild Release` 通过，`ScreenLock.exe` 单文件运行。
+`TaskEditorWindow`（`900x620`）左侧列表 `新增/复制/删除`，右侧按 `TriggerType` 动态显隐参数区；`文件` 行含 `浏览` 与 `scripts/ 快速选择` 下拉，选中自动填 `工作目录`；`校验` 调 `Validate()` 并提示，重名/缺 `file`/`cron` 错误即阻断保存；`保存` 写 `tasks.json`，`保存并重载` 调 `TaskScheduler.Reload()` 并刷新托盘。
 
-## 10. 后续可扩展
+## 10. 测试与验收
 
-- 任务依赖、失败重试退避、环境变量/展开 `%VAR%`
-- FileWatcher 自动重载、HTTP 触发、托盘显示下次执行时间
-- 抽离为 `MyTools.TaskRunner` 共享库供其他宿主复用
+- 手动：`manual` 在托盘一点即跑，`hotkey Ctrl+Alt+Q` 后台触发，`watch` 放文件到 `Downloads` 立即执行。
+- 条件：`when.fileExists` 不满足时记 `skipped(condition)` 且不执行。
+- 模板：`args:"{{yyyyMMdd}}"` 展开正确，裸名 `hello.js` 在 `scripts/` 中找到并用 `node` 启动。
+- 编辑器：新增任务→校验→保存→重载→托盘出现新手动项。
+- 构建：`dotnet build -c Release` 0 错 1 警告（FileWatcher 未使用变量），`ScreenLock.exe` 单文件运行。
+
+## 11. 后续可扩展
+
+- 任务分组/排序/导入导出、执行历史图表
+- 更多 `when`（电量阈值、窗口标题）、`Template`（`{{env}}`）
+- `FileWatcher` 子目录递归可选

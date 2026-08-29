@@ -29,6 +29,8 @@ namespace ScreenLock
         private readonly List<ToolStripMenuItem> _idleItems = new List<ToolStripMenuItem>();
         private ToolStripMenuItem _autoStartItem;
         private ToolStripMenuItem _tasksEnabledItem;
+        private ToolStripMenuItem _manualMenu;
+        private ToolStripMenuItem _recentMenu;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -100,6 +102,7 @@ namespace ScreenLock
                         _tasksEnabledItem.Checked = TaskScheduler.IsGlobalEnabled;
                 }
                 catch { }
+                try { RefreshTaskMenu(); } catch { }
             }
             catch (Exception ex) { LogError(ex); }
 
@@ -188,6 +191,7 @@ namespace ScreenLock
                 }
             }
             catch { }
+            try { RefreshTaskMenu(); } catch { }
             var msg = result.Errors.Count == 0
                 ? string.Format("任务已重载：{0} 个生效", result.Tasks.Count)
                 : string.Format("任务重载完成：{0} 个生效，{1} 个错误", result.Tasks.Count, result.Errors.Count);
@@ -196,6 +200,71 @@ namespace ScreenLock
             if (TaskScheduler != null && !TaskScheduler.IsGlobalEnabled)
                 msg += "（总开关已禁用）";
             ShowBalloon(msg);
+        }
+
+        public void RefreshTaskMenu()
+        {
+            if (_manualMenu == null || TaskScheduler == null) return;
+            try
+            {
+                _manualMenu.DropDownItems.Clear();
+                var manuals = TaskScheduler.GetManualTasks();
+                if (manuals.Count == 0)
+                {
+                    var empty = new ToolStripMenuItem("暂无手动任务") { Enabled = false };
+                    _manualMenu.DropDownItems.Add(empty);
+                }
+                else
+                {
+                    foreach (var t in manuals)
+                    {
+                        var name = t.Name;
+                        var item = new ToolStripMenuItem(name);
+                        // show hotkey if any
+                        if (t.Trigger.Type == ScreenLock.Models.TaskTriggerType.Hotkey && !string.IsNullOrWhiteSpace(t.Trigger.Hotkey))
+                            item.ToolTipText = "热键: " + t.Trigger.Hotkey;
+                        item.Click += (s, e) =>
+                        {
+                            bool ok = TaskScheduler.RunManual(name);
+                            ShowBalloon(ok ? "已触发任务: " + name : "任务未找到或已禁用: " + name);
+                        };
+                        _manualMenu.DropDownItems.Add(item);
+                    }
+                }
+                // recent
+                if (_recentMenu != null)
+                {
+                    _recentMenu.DropDownItems.Clear();
+                    var recents = TaskScheduler.GetRecent();
+                    if (recents.Count == 0)
+                    {
+                        _recentMenu.DropDownItems.Add(new ToolStripMenuItem("暂无记录") { Enabled = false });
+                    }
+                    else
+                    {
+                        foreach (var r in recents)
+                        {
+                            var rItem = new ToolStripMenuItem(r) { Enabled = false };
+                            _recentMenu.DropDownItems.Add(rItem);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public static void ShowBalloonPublic(string text)
+        {
+            try
+            {
+                var app = Current as App;
+                if (app != null) app.Dispatcher.BeginInvoke(new Action(() => app.ShowBalloon(text)));
+                else
+                {
+                    // fallback if no app
+                }
+            }
+            catch { }
         }
 
         private void CreateTrayIcon()
@@ -321,9 +390,30 @@ namespace ScreenLock
             };
             menu.Items.Add(_autoStartItem);
 
+            _manualMenu = new ToolStripMenuItem("手动运行");
+            _recentMenu = new ToolStripMenuItem("最近运行");
+
+            var editorItem = new ToolStripMenuItem("任务编辑器...");
+            editorItem.Click += (s, e) =>
+            {
+                try
+                {
+                    var win = new Views.TaskEditorWindow();
+                    win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                    win.ShowDialog();
+                    // after editor closed, refresh manual menu
+                    try { RefreshTaskMenu(); } catch { }
+                }
+                catch (Exception ex) { LogError(ex); }
+            };
+
             var taskMenu = new ToolStripMenuItem("任务");
             taskMenu.DropDownItems.Add(_tasksEnabledItem);
             taskMenu.DropDownItems.Add(new ToolStripSeparator());
+            taskMenu.DropDownItems.Add(_manualMenu);
+            taskMenu.DropDownItems.Add(_recentMenu);
+            taskMenu.DropDownItems.Add(new ToolStripSeparator());
+            taskMenu.DropDownItems.Add(editorItem);
             taskMenu.DropDownItems.Add(reloadTasksItem);
             taskMenu.DropDownItems.Add(openTasksItem);
             taskMenu.DropDownItems.Add(openScriptsItem);

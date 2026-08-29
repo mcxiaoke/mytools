@@ -109,6 +109,115 @@ namespace ScreenLock.Services.Tasks
             return result.Errors.Count == 0;
         }
 
+        public static void Save(List<TaskDefinition> tasks)
+        {
+            if (tasks == null) tasks = new List<TaskDefinition>();
+            var dir = ConfigService.DirPath;
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            var sb = new StringBuilder();
+            sb.AppendLine("[");
+            for (int i = 0; i < tasks.Count; i++)
+            {
+                var t = tasks[i];
+                sb.AppendLine("  {");
+                sb.AppendLine("    \"name\": \"" + Escape(t.Name) + "\",");
+                sb.AppendLine("    \"enabled\": " + (t.Enabled ? "true" : "false") + ",");
+                sb.Append("    \"trigger\": ");
+                sb.Append(SerializeTrigger(t.Trigger));
+                sb.AppendLine(",");
+                sb.Append("    \"action\": ");
+                sb.Append(SerializeAction(t.Action));
+                sb.AppendLine(",");
+                sb.Append("    \"options\": ");
+                sb.Append(SerializeOptions(t.Options));
+                if (t.When != null && t.When.HasAny())
+                {
+                    sb.AppendLine(",");
+                    sb.Append("    \"when\": ");
+                    sb.Append(SerializeWhen(t.When));
+                }
+                sb.AppendLine();
+                sb.Append("  }");
+                if (i < tasks.Count - 1) sb.Append(",");
+                sb.AppendLine();
+            }
+            sb.AppendLine("]");
+            File.WriteAllText(FilePath, sb.ToString(), Encoding.UTF8);
+        }
+
+        private static string SerializeTrigger(TaskTrigger tr)
+        {
+            if (tr == null) return "{}";
+            var sb = new StringBuilder();
+            sb.Append("{ \"type\": \"" + Escape(tr.RawType != "" ? tr.RawType : tr.Type.ToString().ToLowerInvariant()) + "\"");
+            switch (tr.Type)
+            {
+                case TaskTriggerType.Startup: sb.Append(", \"delaySec\": " + tr.DelaySec); break;
+                case TaskTriggerType.Interval:
+                    if (!string.IsNullOrWhiteSpace(tr.Every)) sb.Append(", \"every\": \"" + Escape(tr.Every) + "\"");
+                    else sb.Append(", \"everySec\": " + tr.EverySec);
+                    break;
+                case TaskTriggerType.Daily: sb.Append(", \"at\": \"" + Escape(tr.At) + "\""); break;
+                case TaskTriggerType.Cron: sb.Append(", \"expr\": \"" + Escape(tr.Expr) + "\""); break;
+                case TaskTriggerType.Idle: sb.Append(", \"afterMinutes\": " + tr.AfterMinutes); break;
+                case TaskTriggerType.Hotkey: sb.Append(", \"hotkey\": \"" + Escape(tr.Hotkey) + "\""); break;
+                case TaskTriggerType.Watch:
+                    sb.Append(", \"path\": \"" + Escape(tr.WatchPath) + "\"");
+                    if (!string.IsNullOrWhiteSpace(tr.WatchFilter) && tr.WatchFilter != "*.*") sb.Append(", \"filter\": \"" + Escape(tr.WatchFilter) + "\"");
+                    if (!string.IsNullOrWhiteSpace(tr.WatchEvent) && tr.WatchEvent != "created") sb.Append(", \"event\": \"" + Escape(tr.WatchEvent) + "\"");
+                    break;
+            }
+            sb.Append(" }");
+            return sb.ToString();
+        }
+
+        private static string SerializeAction(TaskAction ac)
+        {
+            if (ac == null) return "{}";
+            var sb = new StringBuilder();
+            sb.Append("{ \"file\": \"" + Escape(ac.File ?? "") + "\"");
+            if (!string.IsNullOrWhiteSpace(ac.Args)) sb.Append(", \"args\": \"" + Escape(ac.Args) + "\"");
+            if (!string.IsNullOrWhiteSpace(ac.WorkDir)) sb.Append(", \"workDir\": \"" + Escape(ac.WorkDir) + "\"");
+            sb.Append(" }");
+            return sb.ToString();
+        }
+
+        private static string SerializeOptions(TaskOptions op)
+        {
+            if (op == null) return "{}";
+            var sb = new StringBuilder();
+            sb.Append("{ \"hidden\": " + (op.Hidden ? "true" : "false"));
+            if (op.TimeoutSec != 0) sb.Append(", \"timeoutSec\": " + op.TimeoutSec);
+            if (op.AllowConcurrent) sb.Append(", \"allowConcurrent\": true");
+            if (op.Retry != 0) sb.Append(", \"retry\": " + op.Retry);
+            if (!op.NotifyOnFailure) sb.Append(", \"notifyOnFailure\": false");
+            if (!string.IsNullOrWhiteSpace(op.WorkDir)) sb.Append(", \"workDir\": \"" + Escape(op.WorkDir) + "\"");
+            sb.Append(" }");
+            return sb.ToString();
+        }
+
+        private static string SerializeWhen(TaskCondition w)
+        {
+            if (w == null) return "{}";
+            var sb = new StringBuilder();
+            sb.Append("{");
+            bool first = true;
+            Action<string, string> add = (k, v) => { if (!first) sb.Append(", "); sb.Append("\"" + k + "\": " + v); first = false; };
+            if (w.OnlyIdle) add("onlyIdle", "true");
+            if (w.AcPower) add("acPower", "true");
+            if (w.NetworkAvailable) add("networkAvailable", "true");
+            if (!string.IsNullOrWhiteSpace(w.FileExists)) add("fileExists", "\"" + Escape(w.FileExists) + "\"");
+            if (!string.IsNullOrWhiteSpace(w.FileNotExists)) add("fileNotExists", "\"" + Escape(w.FileNotExists) + "\"");
+            sb.Append(" }");
+            return sb.ToString();
+        }
+
+        private static string Escape(string s)
+        {
+            if (s == null) return "";
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+        }
+
         private static List<TaskDefinition> ParseTasksJson(string json, List<string> errors)
         {
             var list = new List<TaskDefinition>();
@@ -196,6 +305,15 @@ namespace ScreenLock.Services.Tasks
                     if (td.TryGetValue("cron", out tv)) trig.Expr = ToStr(tv);
                     if (td.TryGetValue("afterMinutes", out tv)) trig.AfterMinutes = ToInt(tv, 0);
                     if (td.TryGetValue("after", out tv) && trig.AfterMinutes == 0) trig.AfterMinutes = ToInt(tv, 0);
+                    if (td.TryGetValue("hotkey", out tv)) trig.Hotkey = ToStr(tv);
+                    if (td.TryGetValue("key", out tv) && string.IsNullOrWhiteSpace(trig.Hotkey)) trig.Hotkey = ToStr(tv);
+                    if (td.TryGetValue("path", out tv)) trig.WatchPath = ToStr(tv);
+                    if (td.TryGetValue("watchPath", out tv) && string.IsNullOrWhiteSpace(trig.WatchPath)) trig.WatchPath = ToStr(tv);
+                    if (td.TryGetValue("dir", out tv) && string.IsNullOrWhiteSpace(trig.WatchPath)) trig.WatchPath = ToStr(tv);
+                    if (td.TryGetValue("filter", out tv)) trig.WatchFilter = ToStr(tv);
+                    if (td.TryGetValue("pattern", out tv) && string.IsNullOrWhiteSpace(trig.WatchFilter)) trig.WatchFilter = ToStr(tv);
+                    if (td.TryGetValue("event", out tv)) trig.WatchEvent = ToStr(tv);
+                    if (td.TryGetValue("watchEvent", out tv) && string.IsNullOrWhiteSpace(trig.WatchEvent)) trig.WatchEvent = ToStr(tv);
                     task.Trigger = trig;
                 }
                 else if (dict.TryGetValue("trigger", out v) && v is string)
@@ -244,6 +362,8 @@ namespace ScreenLock.Services.Tasks
                     if (od.TryGetValue("concurrent", out ov) && !opt.AllowConcurrent) opt.AllowConcurrent = ToBool(ov, false);
                     if (od.TryGetValue("retry", out ov)) opt.Retry = ToInt(ov, 0);
                     if (od.TryGetValue("workDir", out ov)) opt.WorkDir = ToStr(ov);
+                    if (od.TryGetValue("notifyOnFailure", out ov)) opt.NotifyOnFailure = ToBool(ov, true);
+                    if (od.TryGetValue("notify", out ov) && ov != null) opt.NotifyOnFailure = ToBool(ov, opt.NotifyOnFailure);
                     task.Options = opt;
                 }
                 // also allow hidden/timeout at top level
@@ -255,6 +375,31 @@ namespace ScreenLock.Services.Tasks
                     task.Options.Hidden = ToBool(hv, task.Options.Hidden);
                 }
                 if (dict.TryGetValue("timeoutSec", out hv)) task.Options.TimeoutSec = ToInt(hv, task.Options.TimeoutSec);
+                // when / condition
+                object wv;
+                if (dict.TryGetValue("when", out wv) && wv is Dictionary<string, object>)
+                {
+                    var wd = (Dictionary<string, object>)wv;
+                    var cond = new TaskCondition();
+                    object cv;
+                    if (wd.TryGetValue("onlyIdle", out cv)) cond.OnlyIdle = ToBool(cv, false);
+                    if (wd.TryGetValue("acPower", out cv)) cond.AcPower = ToBool(cv, false);
+                    if (wd.TryGetValue("fileExists", out cv)) cond.FileExists = ToStr(cv);
+                    if (wd.TryGetValue("fileNotExists", out cv)) cond.FileNotExists = ToStr(cv);
+                    if (wd.TryGetValue("network", out cv)) cond.NetworkAvailable = ToBool(cv, false);
+                    if (wd.TryGetValue("networkAvailable", out cv)) cond.NetworkAvailable = ToBool(cv, cond.NetworkAvailable);
+                    task.When = cond;
+                }
+                else if (dict.TryGetValue("condition", out wv) && wv is Dictionary<string, object>)
+                {
+                    var wd = (Dictionary<string, object>)wv;
+                    var cond = new TaskCondition();
+                    object cv;
+                    if (wd.TryGetValue("onlyIdle", out cv)) cond.OnlyIdle = ToBool(cv, false);
+                    if (wd.TryGetValue("acPower", out cv)) cond.AcPower = ToBool(cv, false);
+                    if (wd.TryGetValue("fileExists", out cv)) cond.FileExists = ToStr(cv);
+                    task.When = cond;
+                }
             }
             catch (Exception ex)
             {
@@ -289,6 +434,16 @@ namespace ScreenLock.Services.Tasks
                 case "unlock": return TaskTriggerType.SessionUnlock;
                 case "session_unlock": return TaskTriggerType.SessionUnlock;
                 case "idle": return TaskTriggerType.Idle;
+                case "manual": return TaskTriggerType.Manual;
+                case "none": return TaskTriggerType.Manual;
+                case "click": return TaskTriggerType.Manual;
+                case "hotkey": return TaskTriggerType.Hotkey;
+                case "key": return TaskTriggerType.Hotkey;
+                case "shortcut": return TaskTriggerType.Hotkey;
+                case "watch": return TaskTriggerType.Watch;
+                case "filewatch": return TaskTriggerType.Watch;
+                case "watcher": return TaskTriggerType.Watch;
+                case "file": return TaskTriggerType.Watch;
                 default: return TaskTriggerType.Startup;
             }
         }
@@ -486,10 +641,12 @@ namespace ScreenLock.Services.Tasks
         private static string BuildSampleJson()
         {
             return @"// ScreenLock AutoRun tasks - place alongside config.json
-// docs: docs/AUTORUN-DESIGN.md
-// Trigger types: startup | interval | daily | cron | sessionLock | sessionUnlock | idle
+// docs: docs/AUTORUN-DESIGN.md / docs/USAGE.md
+// Trigger types: startup | interval | daily | cron | sessionLock | sessionUnlock | idle | manual | hotkey | watch
 // Scripts without path are resolved from: <DirPath>/scripts/  (portable: exe/scripts/, roaming: %AppData%/ScreenLock/scripts/)
 // Supported: .ps1/.bat/.cmd/.vbs (hidden), .js -> node, .py/.pyw -> python (auto from PATH, hidden)
+// Manual tasks appear in tray -> Tasks -> Manual Run (click to execute)
+// Hotkey: Ctrl+Alt+Shift+Win + A-Z/0-9/F1-24 ; Watch: file watcher with debounce 500ms
 [
   // startup: run 10s after login - bare name loads from scripts/
   // {
@@ -500,16 +657,32 @@ namespace ScreenLock.Services.Tasks
   //   ""options"": { ""hidden"": true, ""timeoutSec"": 60 }
   // },
 
+  // manual: click in tray Tasks -> Manual Run (Quick Launcher, replaces AHK tray)
+  // {
+  //   ""name"": ""quick-notepad"",
+  //   ""trigger"": { ""type"": ""manual"" },
+  //   ""action"": { ""file"": ""notepad.exe"" }
+  // },
+
+  // hotkey: global hotkey
+  // {
+  //   ""name"": ""hotkey-sync"",
+  //   ""trigger"": { ""type"": ""hotkey"", ""hotkey"": ""Ctrl+Alt+S"" },
+  //   ""action"": { ""file"": ""sync.py"" }
+  // },
+
+  // watch: file watcher
+  // {
+  //   ""name"": ""watch-downloads"",
+  //   ""trigger"": { ""type"": ""watch"", ""path"": ""%USERPROFILE%/Downloads"", ""filter"": ""*.zip"", ""event"": ""created"" },
+  //   ""action"": { ""file"": ""unzip.js"", ""args"": ""{{task}} {{yyyyMMdd}}"" }
+  // },
+
   // interval: every 60s (or ""1h30m"")
   // {
   //   ""name"": ""heartbeat"",
   //   ""trigger"": { ""type"": ""interval"", ""everySec"": 3600 },
   //   ""action"": { ""file"": ""sync.bat"" }
-  // },
-  // {
-  //   ""name"": ""py-heartbeat"",
-  //   ""trigger"": { ""type"": ""interval"", ""every"": ""1h"" },
-  //   ""action"": { ""file"": ""monitor.py"", ""args"": ""--check"" }
   // },
 
   // daily: at 03:00 every day
@@ -520,30 +693,12 @@ namespace ScreenLock.Services.Tasks
   //   ""options"": { ""timeoutSec"": 600 }
   // },
 
-  // cron: every Monday 09:00  -> ""0 9 * * 1""
+  // with condition and template
   // {
-  //   ""name"": ""weekly-report"",
-  //   ""trigger"": { ""type"": ""cron"", ""expr"": ""0 9 * * 1"" },
-  //   ""action"": { ""file"": ""weekly.js"" }
-  // },
-
-  // session events: run when you Win+L or unlock
-  // {
-  //   ""name"": ""on-lock"",
-  //   ""trigger"": { ""type"": ""sessionLock"" },
-  //   ""action"": { ""file"": ""onLock.cmd"" }
-  // },
-  // {
-  //   ""name"": ""on-unlock"",
-  //   ""trigger"": { ""type"": ""sessionUnlock"" },
-  //   ""action"": { ""file"": ""onUnlock.py"" }
-  // },
-
-  // idle: after 10 minutes idle
-  // {
-  //   ""name"": ""idle-clean"",
-  //   ""trigger"": { ""type"": ""idle"", ""afterMinutes"": 10 },
-  //   ""action"": { ""file"": ""idle.ps1"" }
+  //   ""name"": ""backup-logs"",
+  //   ""trigger"": { ""type"": ""interval"", ""every"": ""1h"" },
+  //   ""action"": { ""file"": ""backup.js"", ""args"": ""--out backup-{{yyyyMMdd}}.zip"" },
+  //   ""when"": { ""onlyIdle"": true, ""acPower"": true }
   // }
 ]
 ";
