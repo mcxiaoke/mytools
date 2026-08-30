@@ -428,8 +428,24 @@ namespace ScreenLock
             taskMenu.DropDownItems.Add(openScriptsItem);
             taskMenu.DropDownItems.Add(openLogsItem);
 
+            var configEditorItem = new ToolStripMenuItem("配置编辑器...");
+            configEditorItem.Click += (s, e) =>
+            {
+                try
+                {
+                    var win = new Views.ConfigEditorWindow();
+                    win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                    win.ShowDialog();
+                    RefreshMenuChecks();
+                    UpdateTrayText();
+                    try { RefreshTaskMenu(); } catch { }
+                }
+                catch (Exception ex) { LogError(ex); }
+            };
+
             menu.Items.Add(reloadItem);
             menu.Items.Add(taskMenu);
+            menu.Items.Add(configEditorItem);
             menu.Items.Add(openDirItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
