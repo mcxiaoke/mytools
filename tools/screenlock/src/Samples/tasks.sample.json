@@ -1,0 +1,64 @@
+// ScreenLock AutoRun tasks - place alongside config.json
+// docs: docs/AUTORUN-DESIGN.md / docs/USAGE.md
+// 放置位置：与 config.json 同目录，重命名为 tasks.json 后生效
+// 首次启动若 tasks.json 不存在，会自动从本样例复制生成
+// 本文件由构建时自动复制到输出目录，仅作参考
+// Trigger types: startup | interval | daily | cron | sessionLock | sessionUnlock | idle | manual | hotkey | watch
+// Scripts without path are resolved from: <DirPath>/scripts/  (portable: exe/scripts/, roaming: %AppData%/ScreenLock/scripts/)
+// Supported: .ps1/.bat/.cmd/.vbs (hidden), .js -> node, .py/.pyw -> python (auto from PATH, hidden)
+// Manual tasks appear in tray -> Tasks -> Manual Run (click to execute)
+// Hotkey: Ctrl+Alt+Shift+Win + A-Z/0-9/F1-24 ; Watch: file watcher with debounce 500ms
+[
+  // startup: run 10s after login - bare name loads from scripts/
+  // {
+  //   "name": "startup-notify",
+  //   "enabled": true,
+  //   "trigger": { "type": "startup", "delaySec": 10 },
+  //   "action": { "file": "hello.js", "args": "--verbose" },
+  //   "options": { "hidden": true, "timeoutSec": 60 }
+  // },
+
+  // manual: click in tray Tasks -> Manual Run (Quick Launcher, replaces AHK tray)
+  // {
+  //   "name": "quick-notepad",
+  //   "trigger": { "type": "manual" },
+  //   "action": { "file": "notepad.exe" }
+  // },
+
+  // hotkey: global hotkey
+  // {
+  //   "name": "hotkey-sync",
+  //   "trigger": { "type": "hotkey", "hotkey": "Ctrl+Alt+S" },
+  //   "action": { "file": "sync.py" }
+  // },
+
+  // watch: file watcher
+  // {
+  //   "name": "watch-downloads",
+  //   "trigger": { "type": "watch", "path": "%USERPROFILE%/Downloads", "filter": "*.zip", "event": "created" },
+  //   "action": { "file": "unzip.js", "args": "{{task}} {{yyyyMMdd}}" }
+  // },
+
+  // interval: every 60s (or "1h30m")
+  // {
+  //   "name": "heartbeat",
+  //   "trigger": { "type": "interval", "everySec": 3600 },
+  //   "action": { "file": "sync.bat" }
+  // },
+
+  // daily: at 03:00 every day
+  // {
+  //   "name": "daily-clean",
+  //   "trigger": { "type": "daily", "at": "03:00" },
+  //   "action": { "file": "clean.ps1" },
+  //   "options": { "timeoutSec": 600 }
+  // },
+
+  // with condition and template
+  // {
+  //   "name": "backup-logs",
+  //   "trigger": { "type": "interval", "every": "1h" },
+  //   "action": { "file": "backup.js", "args": "--out backup-{{yyyyMMdd}}.zip" },
+  //   "when": { "onlyIdle": true, "acPower": true }
+  // }
+]

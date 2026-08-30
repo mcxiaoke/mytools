@@ -19,4 +19,14 @@
     <Resource Include="Assets\Icon.png" />
   </ItemGroup>
 
+  <!-- 样例配置：构建时自动复制到输出目录，不走代码生成 -->
+  <ItemGroup>
+    <None Include="Samples\config.sample.json" Link="config.sample.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Samples\tasks.sample.json" Link="tasks.sample.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,31 @@
+// ScreenLock 主配置示例
+// 放置位置：
+//   便携模式：ScreenLock.exe 同目录下重命名为 config.json
+//   漫游模式：%AppData%\ScreenLock\config.json
+// 首次启动若不存在会自动生成默认配置，可参考本样例修改。
+// 本文件由构建时自动复制到输出目录，仅作参考，不会被程序直接读取。
+{
+  // 空闲多久后锁屏（分钟），0 表示禁用自动锁屏，1-1440
+  "IdleMinutes": 5,
+
+  // 开机自启（写入注册表 Run）
+  "AutoStart": true,
+
+  // 锁屏界面是否显示时钟
+  "ShowClock": true,
+
+  // 锁屏遮罩透明度 0.3 - 1.0
+  "OverlayOpacity": 0.88,
+
+  // PIN 盐与哈希（首次设置 PIN 后自动生成，无需手填）
+  "PinSalt": "",
+  "PinHash": "",
+
+  // 全局任务调度总开关（对应托盘“启用任务调度”）
+  "TasksEnabled": true,
+
+  // 排除进程：列出的进程运行时暂停空闲计时，防止游戏/挂机被锁屏
+  // 支持数组 ["a.exe","b.exe"] 或逗号字符串 "a.exe, b.exe"，大小写不敏感，可含 .exe 或完整路径
+  "ExcludeProcesses": []
+  // 示例：["GenshinImpact.exe", "eldenring", "qbittorrent.exe", "PathOfExile.exe"]
+}

@@ -45,7 +45,8 @@ namespace ScreenLock.Services.Tasks
             {
                 try
                 {
-                    string sample = BuildSampleJson();
+                    // 优先从随 exe 发布的样例文件复制（构建时自动复制到输出目录），不再走代码生成
+                    string sample = TryReadSampleFile() ?? BuildSampleJson();
                     File.WriteAllText(FilePath, sample, Encoding.UTF8);
                     // also write sample file for reference
                     try { File.WriteAllText(SampleFilePath, sample, Encoding.UTF8); } catch { }
@@ -56,6 +57,16 @@ namespace ScreenLock.Services.Tasks
                     result.Errors.Add("failed to create tasks.json: " + ex.Message);
                     return result;
                 }
+            }
+            else if (!File.Exists(SampleFilePath))
+            {
+                // tasks.json 已存在但 sample 缺失，补一份参考文件
+                try
+                {
+                    string sample = TryReadSampleFile() ?? BuildSampleJson();
+                    File.WriteAllText(SampleFilePath, sample, Encoding.UTF8);
+                }
+                catch { }
             }
 
             return Load();
@@ -795,8 +806,32 @@ namespace ScreenLock.Services.Tasks
             return sb.ToString();
         }
 
+        private static string TryReadSampleFile()
+        {
+            // 构建时自动复制到输出目录的样例文件，运行时优先读取
+            string[] candidates = new string[]
+            {
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tasks.sample.json"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Samples", "tasks.sample.json"),
+                Path.Combine(Path.GetDirectoryName(typeof(TaskConfigService).Assembly.Location) ?? "", "tasks.sample.json"),
+            };
+            foreach (var p in candidates)
+            {
+                try
+                {
+                    if (!string.IsNullOrEmpty(p) && File.Exists(p))
+                        return File.ReadAllText(p, Encoding.UTF8);
+                }
+                catch { }
+            }
+            return null;
+        }
+
         private static string BuildSampleJson()
         {
+            // 回退：若随包样例文件缺失（极端情况），仍用硬编码兜底
+            string fromFile = TryReadSampleFile();
+            if (fromFile != null) return fromFile;
             return @"// ScreenLock AutoRun tasks - place alongside config.json
 // docs: docs/AUTORUN-DESIGN.md / docs/USAGE.md
 // Trigger types: startup | interval | daily | cron | sessionLock | sessionUnlock | idle | manual | hotkey | watch

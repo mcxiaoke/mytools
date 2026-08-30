@@ -52,6 +52,11 @@ namespace ScreenLock.Services
             get { return Path.Combine(DirPath, "tasks.enabled"); }
         }
 
+        public static string ConfigSamplePath
+        {
+            get { return Path.Combine(DirPath, "config.sample.json"); }
+        }
+
         public AppSettings Current { get; private set; }
 
         public void LoadOrCreate()
@@ -60,6 +65,7 @@ namespace ScreenLock.Services
             {
                 IsPortableMode = true;
                 Current = ReadFile();
+                EnsureSampleCopied();
                 return;
             }
             if (!Directory.Exists(AppDataDirPath)) Directory.CreateDirectory(AppDataDirPath);
@@ -67,9 +73,34 @@ namespace ScreenLock.Services
             {
                 Current = new AppSettings();
                 Save();
+                EnsureSampleCopied();
                 return;
             }
             Current = ReadFile();
+            EnsureSampleCopied();
+        }
+
+        private static void EnsureSampleCopied()
+        {
+            // 构建时已复制到 exe 目录的 config.sample.json，首次运行时同步一份到 DirPath 供参考
+            try
+            {
+                if (File.Exists(ConfigSamplePath)) return;
+                string[] candidates = new string[]
+                {
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.sample.json"),
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Samples", "config.sample.json"),
+                };
+                foreach (var p in candidates)
+                {
+                    if (File.Exists(p))
+                    {
+                        File.Copy(p, ConfigSamplePath, false);
+                        break;
+                    }
+                }
+            }
+            catch { }
         }
 
         public bool Reload()
