@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -31,6 +33,12 @@ func main() {
 		logger.Fatal("failed to load config: %v", err)
 	}
 
+	// runtime data dir (index cache) — created on startup so persistence
+	// never fails silently
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		logger.Fatal("cannot create dataDir %s: %v", cfg.DataDir, err)
+	}
+
 	// initialize logger from config (file output or stdout, level filtering)
 	l, cleanup, err := initLogger(cfg)
 	if err != nil {
@@ -51,7 +59,7 @@ func main() {
 	srv := NewServer(cfg, idx)
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:           loggingMiddleware(srv.Routes()),
+		Handler:           loggingMiddleware(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -74,7 +82,7 @@ func main() {
 	logger.Info("server stopped")
 }
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 // printStartup prints a startup banner to stdout.
 // This goes to the console regardless of whether log file is configured,
@@ -84,24 +92,74 @@ func printStartup(cfg *Config, configPath string) {
 	fmt.Fprintf(w, "FileList v%s\n\n", version)
 	fmt.Fprintf(w, "Config\t%s\n", configPath)
 	fmt.Fprintf(w, "Listen\thttp://%s:%d\n", cfg.Server.Host, cfg.Server.Port)
+	if cfg.Server.BasePath != "" {
+		fmt.Fprintf(w, "BasePath\t%s (sub-directory deployment)\n", cfg.Server.BasePath)
+	}
 	fmt.Fprintf(w, "DataDir\t%s\n", cfg.DataDir)
 	logDest := cfg.Log.File
 	if logDest == "" {
 		logDest = "stdout"
 	}
 	fmt.Fprintf(w, "Log\t%s (%s)\n", logDest, cfg.Log.Level)
-	fmt.Fprintf(w, "Index\tinterval=%s, persist=%s\n", cfg.Index.Interval, func() string {
-		if cfg.Index.Persist != "" {
-			return cfg.Index.Persist
+	fmt.Fprintf(w, "Index\tinterval=%s, persist=%s, incremental=%v, maxDepth=%s\n",
+		cfg.Index.Interval, func() string {
+			if cfg.Index.Persist != "" {
+				return cfg.Index.Persist
+			}
+			return "auto"
+		}(), cfg.IndexIncremental(), func() string {
+			if cfg.Index.MaxDepth <= 0 {
+				return "unlimited"
+			}
+			return fmt.Sprint(cfg.Index.MaxDepth)
+		}())
+	fmt.Fprintf(w, "Auth\t%s\n", func() string {
+		if cfg.Server.Token != "" {
+			return "token enabled"
 		}
-		return "auto"
+		return "disabled (open access)"
 	}())
+	fmt.Fprintf(w, "Security\tsymlink-escape=%s, inline-html=%s\n",
+		onOff(!cfg.Security.AllowOutsideSymlinks, "blocked", "allowed"),
+		onOff(cfg.InlineHTMLBlocked(), "download-only", "rendered"))
 	fmt.Fprintf(w, "Roots:\n")
 	for _, r := range cfg.Roots {
 		fmt.Fprintf(w, "  %s\t-> %s\n", r.URL, r.Path)
 	}
 	w.Flush()
 	fmt.Println()
+
+	// warn when a root points at the config directory itself — the usual
+	// result of keeping the default "path: ./" in a system location
+	for _, r := range cfg.Roots {
+		if rootInsideConfigDir(r.Path, cfg.configDir) {
+			msg := fmt.Sprintf("root %s -> %s points at the config directory itself; "+
+				"it will be served over HTTP. Set an explicit absolute path.", r.URL, r.Path)
+			fmt.Println("WARNING: " + msg)
+			logger.Warn("config: %s", msg)
+		}
+	}
+}
+
+// onOff renders a boolean as one of two labels.
+func onOff(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+	return no
+}
+
+// rootInsideConfigDir reports whether root is the config dir or below it.
+func rootInsideConfigDir(root, configDir string) bool {
+	if root == "" || configDir == "" {
+		return false
+	}
+	root = filepath.Clean(root)
+	dir := filepath.Clean(configDir)
+	if strings.EqualFold(root, dir) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(root), strings.ToLower(dir)+string(filepath.Separator))
 }
 
 // writeDefaultConfig generates a starter config.yaml with example mappings.
@@ -113,6 +171,8 @@ func writeDefaultConfig(path string) error {
 server:
   host: 0.0.0.0
   port: 8080
+  # basePath: /files      # set when served behind a reverse proxy sub-path
+  # token: my-secret      # optional; enables a simple access token
 
 log:
   level: info              # debug | info | warn | error
@@ -133,6 +193,9 @@ index:
 
 # Path mappings: URL path -> real disk path
 # Use forward slashes in disk paths for cross-platform compatibility.
+# NOTE: a relative path resolves against THIS file's directory. If this config
+# lives in /etc/filelist, "path: ./" would publish /etc itself — use an
+# explicit absolute path for anything shared on a network.
 roots:
   # Linux examples:
   # - url: /data

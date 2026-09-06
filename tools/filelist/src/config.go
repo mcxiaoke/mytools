@@ -18,22 +18,58 @@ type Config struct {
 	} `yaml:"log"`
 	DataDir string `yaml:"dataDir"` // data directory for index files etc.
 	Server  struct {
-		Host string `yaml:"host"`
-		Port int    `yaml:"port"`
+		Host     string `yaml:"host"`     // listen address
+		Port     int    `yaml:"port"`     // listen port
+		BasePath string `yaml:"basePath"` // sub-path prefix when behind a reverse proxy (e.g. /files)
+		Token    string `yaml:"token"`    // optional access token; empty disables auth
 	} `yaml:"server"`
 	Index struct {
-		Interval    string   `yaml:"interval"`    // re-index interval, e.g. "5m"
-		Persist     string   `yaml:"persist"`     // index persistence file path
-		MaxDepth    int      `yaml:"maxDepth"`    // max walk depth (0 = unlimited)
-		ExcludeDirs []string `yaml:"excludeDirs"` // directory names to skip
+		Interval     string   `yaml:"interval"`     // re-index interval, e.g. "5m"
+		Persist      string   `yaml:"persist"`      // index persistence file path
+		MaxDepth     int      `yaml:"maxDepth"`     // max walk depth (0 = unlimited)
+		ExcludeDirs  []string `yaml:"excludeDirs"`  // directory names to skip
+		ExcludeFiles []string `yaml:"excludeFiles"` // file name patterns to skip (glob)
+		Incremental  *bool    `yaml:"incremental"`  // true (default): diff by mtime; false: always full rebuild
 	} `yaml:"index"`
+	Security struct {
+		AllowOutsideSymlinks bool  `yaml:"allowOutsideSymlinks"` // allow /raw to serve symlink targets outside the root
+		BlockInlineHTML      *bool `yaml:"blockInlineHTML"`      // true (default): force html/svg download instead of inline render
+	} `yaml:"security"`
 	Roots []RootMapping `yaml:"roots"`
+
+	// configDir is the directory of the config file, used for resolving
+	// relative paths. Not read from YAML.
+	configDir string
 }
 
 // RootMapping maps a virtual URL path to a real disk path.
 type RootMapping struct {
 	URL  string `yaml:"url"`  // virtual web path, e.g. /data
 	Path string `yaml:"path"` // real disk path, e.g. /mnt/data
+}
+
+// Default exclude patterns, used when index.excludeDirs / index.excludeFiles
+// are not set in the config file.
+var (
+	defaultExcludeDirs = []string{
+		".git", "node_modules", "__pycache__", "$RECYCLE.BIN", "System Volume Information",
+	}
+	defaultExcludeFiles = []string{
+		".env", ".env.*", ".htpasswd", ".htaccess",
+		"id_rsa", "id_rsa.*", "id_ed25519", "id_ed25519.*",
+		"*.pem", "*.key", "*.pfx", "*.p12",
+		".DS_Store", "Thumbs.db",
+	}
+)
+
+// IndexIncremental reports whether incremental indexing is enabled (default true).
+func (c *Config) IndexIncremental() bool {
+	return c.Index.Incremental == nil || *c.Index.Incremental
+}
+
+// InlineHTMLBlocked reports whether inline html/svg rendering is blocked (default true).
+func (c *Config) InlineHTMLBlocked() bool {
+	return c.Security.BlockInlineHTML == nil || *c.Security.BlockInlineHTML
 }
 
 // resolvePath resolves a path to an absolute path.
@@ -59,6 +95,41 @@ func resolvePath(p, baseDir string) string {
 	return filepath.Clean(filepath.Join(baseDir, p))
 }
 
+// normalizeBasePath validates and normalizes a base path for sub-directory
+// deployment. Accepted forms: "" (root), "/files", "/files/", "files".
+// Returns "" when the result equals "/".
+func normalizeBasePath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		// input was "/" — treat as root deployment
+		return "", nil
+	}
+	// reject anything that could escape or inject into the HTML template.
+	// Trim leading/trailing slashes first so "/files" is not seen as an
+	// empty segment; interior empty segments (a//b) are still rejected.
+	segs := strings.Split(strings.Trim(p, "/"), "/")
+	for _, seg := range segs {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("server.basePath %q contains an empty or relative segment", p)
+		}
+		for _, r := range seg {
+			ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+				r == '-' || r == '_' || r == '.' || r == '~'
+			if !ok {
+				return "", fmt.Errorf("server.basePath %q contains unsupported character %q", p, string(r))
+			}
+		}
+	}
+	return p, nil
+}
+
 // LoadConfig reads and parses the YAML config file.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -72,6 +143,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	// baseDir: config file's directory, used to resolve relative paths
 	baseDir, _ := filepath.Abs(filepath.Dir(path))
+	cfg.configDir = baseDir
 
 	// apply defaults
 	if cfg.Log.Level == "" {
@@ -89,6 +161,12 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.Index.Interval == "" {
 		cfg.Index.Interval = "5m"
 	}
+	if cfg.Index.ExcludeDirs == nil {
+		cfg.Index.ExcludeDirs = defaultExcludeDirs
+	}
+	if cfg.Index.ExcludeFiles == nil {
+		cfg.Index.ExcludeFiles = defaultExcludeFiles
+	}
 
 	// resolve relative paths to absolute (relative to config file directory)
 	cfg.DataDir = resolvePath(cfg.DataDir, baseDir)
@@ -100,6 +178,13 @@ func LoadConfig(path string) (*Config, error) {
 	} else {
 		cfg.Index.Persist = resolvePath(cfg.Index.Persist, baseDir)
 	}
+
+	// normalize base path (sub-directory reverse proxy deployment)
+	cfg.Server.BasePath, err = normalizeBasePath(cfg.Server.BasePath)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Server.Token = strings.TrimSpace(cfg.Server.Token)
 
 	// normalize root URLs: ensure leading slash, no trailing slash.
 	// root "/" is NOT allowed — it conflicts with the roots view entry point.

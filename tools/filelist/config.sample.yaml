@@ -11,12 +11,23 @@
 server:
   host: 0.0.0.0          # listen address (0.0.0.0 = all interfaces)
   port: 8080             # HTTP port
+  # basePath: ""         # sub-directory deployment behind a reverse proxy.
+                         #   Example: basePath: /files  -> site lives at
+                         #   https://host/files/ and proxy strips the prefix.
+                         #   Leave empty when served at the domain root.
+  # token: ""            # optional access token. Empty = open access.
+                         #   When set, visitors authenticate once via
+                         #   ?token=xxx (or Authorization: Bearer xxx); a
+                         #   cookie is then set for the session. In a browser
+                         #   just append ?token=xxx to the URL on first visit.
 
 log:
   level: info            # log level: debug | info | warn | error
   file: ""               # log file path (empty = stdout; ~ is expanded to home)
                          #   example: /var/log/filelist.log
                          #   example: ~/filelist.log
+                         #   NOTE: the log file grows without bound; rotate it
+                         #   externally (e.g. logrotate) on long-running hosts.
 
 dataDir: ./data          # runtime data directory (index cache, etc.)
                          #   created automatically on startup
@@ -26,13 +37,52 @@ index:
   interval: 5m           # re-index interval (30s, 5m, 1h, etc.)
   persist: ""            # index cache file (empty = auto: <dataDir>/filelist.idx)
                          #   set explicitly to override; ~ is expanded
-  maxDepth: 0            # max directory walk depth (0 = unlimited)
-  excludeDirs:           # directory names to skip during indexing (case-insensitive)
+  maxDepth: 0            # max directory walk depth (0 = unlimited; 1 = only the
+                         #   entries directly under each root)
+  # incremental: true    # true (default): diff against the previous pass —
+                         #   directories whose mtime/size are unchanged are
+                         #   skipped entirely, so an idle tree costs ~one stat
+                         #   per root. false: always rebuild the full index.
+                         #   Note: content edits that do not change a file's
+                         #   mtime/size are only picked up when its parent
+                         #   directory changes; set false for strict freshness.
+  excludeDirs:           # directory names to skip during indexing and listing
+                         #   (case-insensitive; * and ? wildcards supported)
     - .git
     - node_modules
     - __pycache__
     - $RECYCLE.BIN
     - System Volume Information
+  excludeFiles:          # file name patterns to skip during indexing/listing
+                         #   (case-insensitive glob; empty list disables)
+                         #   Defaults (used when the key is absent):
+    - .env
+    - .env.*
+    - .htpasswd
+    - .htaccess
+    - id_rsa
+    - id_rsa.*
+    - id_ed25519
+    - id_ed25519.*
+    - '*.pem'
+    - '*.key'
+    - '*.pfx'
+    - '*.p12'
+    - .DS_Store
+    - Thumbs.db
+
+# Security knobs. Sensible defaults are shown; for a home LAN you can leave
+# this whole section out.
+security:
+  # allowOutsideSymlinks: false
+  #   false (default): /raw refuses files that resolve through a symlink to a
+  #   location outside the configured root (e.g. a link to /etc or another
+  #   disk). true: allow such links (for setups that intentionally publish
+  #   symlinked content). Symlinks are never followed while indexing.
+  # blockInlineHTML: true
+  #   true (default): .html/.htm/.svg/.xhtml files are always sent as
+  #   downloads instead of rendering inline — a shared HTML file must not run
+  #   scripts in this site's own origin. false: let the browser render them.
 
 # Path mappings: URL path -> real disk path
 # - URL: virtual web path shown in browser (must start with /)
@@ -40,6 +90,9 @@ index:
 # - ~ is expanded to home directory
 # - Root "/" is NOT allowed; all roots must be subpaths like /data, /downloads.
 #   The URL "/" is reserved for the roots listing page.
+# - A relative path resolves against THIS file's directory. If the config sits
+#   in a system location (e.g. /etc/filelist), an explicit absolute path is
+#   required — otherwise you would publish the config directory itself.
 roots:
   # Linux examples:
   # - url: /data

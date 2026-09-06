@@ -135,3 +135,121 @@ server:
 		t.Fatal("expected error for no roots, got nil")
 	}
 }
+
+func TestNormalizeBasePath(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"/", ""},
+		{"files", "/files"},
+		{"/files", "/files"},
+		{"/files/", "/files"},
+		{"  /files  ", "/files"},
+		{"/a/b", "/a/b"},
+	}
+	for _, tt := range tests {
+		got, err := normalizeBasePath(tt.in)
+		if err != nil {
+			t.Errorf("normalizeBasePath(%q): unexpected error: %v", tt.in, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("normalizeBasePath(%q): got %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizeBasePath_RejectsUnsafe(t *testing.T) {
+	bad := []string{"/../etc", "/files/../secret", "/a?b", "/a<b", "/a\"b", "/a\b"}
+	for _, in := range bad {
+		if got, err := normalizeBasePath(in); err == nil {
+			t.Errorf("normalizeBasePath(%q): expected error, got %q", in, got)
+		}
+	}
+}
+
+func TestLoadConfig_BasePathAndToken(t *testing.T) {
+	cfg := `
+server:
+  basePath: /files/
+  token: "  s3cret  "
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.Server.BasePath != "/files" {
+		t.Errorf("basePath: got %q, want /files", c.Server.BasePath)
+	}
+	if c.Server.Token != "s3cret" {
+		t.Errorf("token: got %q, want s3cret", c.Server.Token)
+	}
+}
+
+func TestLoadConfig_Defaults(t *testing.T) {
+	cfg := `
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c.Index.ExcludeDirs) == 0 {
+		t.Error("expected default excludeDirs")
+	}
+	if len(c.Index.ExcludeFiles) == 0 {
+		t.Error("expected default excludeFiles")
+	}
+	if !c.IndexIncremental() {
+		t.Error("incremental should default to true")
+	}
+	if !c.InlineHTMLBlocked() {
+		t.Error("blockInlineHTML should default to true")
+	}
+	if c.Security.AllowOutsideSymlinks {
+		t.Error("allowOutsideSymlinks should default to false")
+	}
+	if c.Server.BasePath != "" {
+		t.Errorf("basePath should default to empty, got %q", c.Server.BasePath)
+	}
+	if c.Server.Token != "" {
+		t.Error("token should default to empty (auth disabled)")
+	}
+}
+
+func TestLoadConfig_OptOutFlags(t *testing.T) {
+	cfg := `
+index:
+  incremental: false
+  excludeFiles: []
+security:
+  blockInlineHTML: false
+  allowOutsideSymlinks: true
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.IndexIncremental() {
+		t.Error("incremental:false should be honoured")
+	}
+	if c.InlineHTMLBlocked() {
+		t.Error("blockInlineHTML:false should be honoured")
+	}
+	if !c.Security.AllowOutsideSymlinks {
+		t.Error("allowOutsideSymlinks:true should be honoured")
+	}
+	if len(c.Index.ExcludeFiles) != 0 {
+		t.Errorf("explicit empty excludeFiles should disable file exclusion, got %v", c.Index.ExcludeFiles)
+	}
+}
