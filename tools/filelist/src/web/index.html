@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FileList</title>
+<style>
+:root {
+  --bg: #f7f8fa;
+  --card: #fff;
+  --border: #e2e5ea;
+  --text: #1a1a2e;
+  --text-dim: #6b7280;
+  --accent: #4f6df5;
+  --accent-hover: #3b5ae0;
+  --dir-color: #ffb340;
+  --hover: #f0f1f5;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a2e;
+    --card: #232342;
+    --border: #2d2d52;
+    --text: #e8e8f0;
+    --text-dim: #9999b0;
+    --accent: #6b8aff;
+    --accent-hover: #8aa0ff;
+    --hover: #2a2a55;
+    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 24px 48px;
+}
+@media (max-width: 768px) {
+  .container { padding: 24px 16px 32px; }
+}
+@media (max-width: 480px) {
+  .container { padding: 16px 12px 24px; }
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+@media (max-width: 768px) {
+  header { margin-bottom: 16px; }
+}
+.search-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 14px;
+  box-shadow: var(--shadow);
+}
+.search-bar input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  padding: 12px 0;
+  outline: none;
+}
+@media (max-width: 768px) {
+  .search-bar input { padding: 11px 0; font-size: 16px; }
+}
+.search-bar input::placeholder { color: var(--text-dim); }
+.search-bar button {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.search-bar button:hover { background: var(--accent-hover); }
+.search-bar button.clear {
+  background: transparent;
+  color: var(--text-dim);
+  padding: 8px 6px;
+}
+.search-bar button.clear:hover { color: var(--text); }
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.breadcrumb a {
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.breadcrumb a:hover { background: var(--hover); }
+.breadcrumb .sep { color: var(--text-dim); margin: 0 2px; }
+.breadcrumb .cur {
+  color: var(--text);
+  font-weight: 500;
+  padding: 4px 8px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.stats { display: flex; align-items: center; gap: 6px; }
+.stats .building {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.table-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  user-select: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+th:hover { color: var(--text); }
+th .arrow { font-size: 10px; margin-left: 2px; }
+th.name-col { width: 50%; }
+th.size-col, th.time-col { width: 25%; }
+td {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--hover); }
+td.name { max-width: 0; }
+td.name a {
+  color: var(--text);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+td.name a:hover { color: var(--accent); }
+td.name .icon { font-size: 16px; flex-shrink: 0; }
+td.size { color: var(--text-dim); text-align: right; font-variant-numeric: tabular-nums; }
+td.time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+td.actions { width: 60px; text-align: center; }
+td.actions a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+td.actions a:hover { background: var(--accent); color: #fff; }
+.empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-dim);
+}
+.empty .big { font-size: 32px; margin-bottom: 8px; }
+.error {
+  text-align: center;
+  padding: 32px 16px;
+  color: #e53e3e;
+}
+.error .big { font-size: 32px; margin-bottom: 8px; }
+.loading {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-dim);
+}
+.loading .spinner {
+  display: inline-block;
+  width: 24px; height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--card);
+  white-space: nowrap;
+}
+.back-link:hover { background: var(--hover); }
+mark {
+  background: rgba(79,109,245,0.2);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* responsive table: hide time/size columns on small screens */
+@media (max-width: 640px) {
+  th.size-col, td.size,
+  th.time-col, td.time { display: none; }
+  th.name-col { width: auto; }
+  td { padding: 10px 12px; }
+  th { padding: 8px 12px; }
+  .search-bar { padding: 0 10px; }
+  .search-bar button { padding: 7px 12px; font-size: 12px; }
+}
+.retry-btn {
+  margin-top: 16px;
+  padding: 8px 24px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s;
+}
+.retry-btn:hover { background: var(--accent-hover); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <a class="back-link" href="/" id="homeLink">&#128193; 根目录</a>
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="搜索文件或目录名..." autocomplete="off">
+      <button id="searchBtn" type="button">搜索</button>
+      <button class="clear" id="clearBtn" type="button" style="display:none;">&#10005;</button>
+    </div>
+  </header>
+
+  <div class="breadcrumb" id="breadcrumb"></div>
+
+  <div class="toolbar">
+    <span id="itemCount"></span>
+    <span class="stats" id="stats"></span>
+  </div>
+
+  <div class="table-wrap" id="tableWrap">
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div>加载中...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+'use strict';
+
+// ---- State ----
+var state = {
+  path: '',          // current virtual path ('' = roots view, '/data' = dir)
+  searchMode: false,
+  searchQuery: '',
+  initialized: false,
+  sortCol: 'name',
+  sortDir: 'asc'
+};
+
+// last failed operation, used for retry button
+var lastAction = null;
+
+// ---- DOM refs ----
+var D = document;
+var searchInput = D.getElementById('searchInput');
+var searchBtn = D.getElementById('searchBtn');
+var clearBtn = D.getElementById('clearBtn');
+var breadcrumbEl = D.getElementById('breadcrumb');
+var tableWrap = D.getElementById('tableWrap');
+var itemCountEl = D.getElementById('itemCount');
+var statsEl = D.getElementById('stats');
+var homeLink = D.getElementById('homeLink');
+var loadingEl = D.getElementById('loading');
+
+// ---- Helpers ----
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtSize(bytes) {
+  if (bytes === undefined || bytes === null) return '-';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+  return (bytes / 1073741824).toFixed(1) + ' GB';
+}
+
+function fmtTime(t) {
+  if (!t || t.startsWith('0001-01-01')) return '-';
+  var d;
+  try { d = new Date(t); } catch(e) { return '-'; }
+  if (isNaN(d.getTime())) return '-';
+  var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+    + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function getFileIcon(name, isDir) {
+  if (isDir) return '\uD83D\uDCC1';
+  var ext = (name.split('.').pop() || '').toLowerCase();
+  var map = {
+    'jpg': '\uD83D\uDDBC', 'jpeg': '\uD83D\uDDBC', 'png': '\uD83D\uDDBC', 'gif': '\uD83D\uDDBC',
+    'svg': '\uD83D\uDDBC', 'webp': '\uD83D\uDDBC', 'bmp': '\uD83D\uDDBC', 'ico': '\uD83D\uDDBC',
+    'mp4': '\uD83C\uDFA5', 'mkv': '\uD83C\uDFA5', 'avi': '\uD83C\uDFA5', 'mov': '\uD83C\uDFA5',
+    'mp3': '\uD83C\uDFA7', 'wav': '\uD83C\uDFA7', 'flac': '\uD83C\uDFA7', 'ogg': '\uD83C\uDFA7',
+    'pdf': '\uD83D\uDCC4', 'doc': '\uD83D\uDCC4', 'docx': '\uD83D\uDCC4',
+    'xls': '\uD83D\uDCC4', 'xlsx': '\uD83D\uDCC4', 'ppt': '\uD83D\uDCC4', 'pptx': '\uD83D\uDCC4',
+    'zip': '\uD83D\uDCE6', 'rar': '\uD83D\uDCE6', '7z': '\uD83D\uDCE6', 'tar': '\uD83D\uDCE6', 'gz': '\uD83D\uDCE6',
+    'txt': '\uD83D\uDCC4', 'md': '\uD83D\uDCC4', 'go': '\uD83D\uDCC4', 'js': '\uD83D\uDCC4',
+    'py': '\uD83D\uDCC4', 'java': '\uD83D\uDCC4', 'c': '\uD83D\uDCC4', 'cpp': '\uD83D\uDCC4',
+    'json': '\uD83D\uDCC4', 'xml': '\uD83D\uDCC4', 'html': '\uD83D\uDCC4', 'css': '\uD83D\uDCC4',
+    'exe': '\u2699\uFE0F', 'msi': '\u2699\uFE0F', 'deb': '\u2699\uFE0F', 'rpm': '\u2699\uFE0F'
+  };
+  return map[ext] || '\uD83D\uDCC4';
+}
+
+function highlight(text, query) {
+  if (!query) return esc(text);
+  var lower = text.toLowerCase();
+  var lq = query.toLowerCase();
+  var idx = lower.indexOf(lq);
+  if (idx < 0) return esc(text);
+  return esc(text.substring(0, idx)) + '<mark>' + esc(text.substring(idx, idx + lq.length)) + '</mark>' + esc(text.substring(idx + lq.length));
+}
+
+// Decode a URL path component safely
+function decodePath(p) {
+  if (!p) return '';
+  try { return decodeURIComponent(p); } catch(e) { return p; }
+}
+
+// ---- Navigation (History API) ----
+function navigate(path, skipState, force) {
+  path = path || '';
+  if (!force && path === state.path && !state.searchMode) return;
+
+  state.path = path;
+  state.searchMode = false;
+  state.searchQuery = '';
+
+  if (!skipState) {
+    var url = path || '/';
+    try {
+      history.pushState({ path: path }, '', url);
+    } catch(e) {
+      try { history.replaceState({ path: path }, '', url); } catch(e2) {}
+    }
+  }
+
+  updateClearBtn();
+  searchInput.value = '';
+  loadDir(path);
+}
+
+function doSearch(query) {
+  query = (query || '').trim();
+  if (!query) {
+    navigate(state.path, true, true);
+    return;
+  }
+
+  state.searchMode = true;
+  state.searchQuery = query;
+  updateClearBtn();
+
+  tableWrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>搜索中...</div></div>';
+  breadcrumbEl.innerHTML = '<span class="cur">搜索: ' + esc(query) + '</span>';
+
+  lastAction = function() { doSearch(query); };
+
+  var url = '/api/search?q=' + encodeURIComponent(query);
+  fetch(url)
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(items) {
+      renderTable(items, query);
+    })
+    .catch(function(err) {
+      renderError('搜索失败: ' + err.message);
+    });
+}
+
+function loadDir(path) {
+  lastAction = function() { loadDir(path); };
+  tableWrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>加载中...</div></div>';
+  renderBreadcrumb(path);
+
+  var url;
+  if (!path) {
+    url = '/api/roots';
+  } else {
+    url = '/api/list?path=' + encodeURIComponent(path);
+  }
+
+  fetch(url)
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(items) {
+      if (!Array.isArray(items)) items = [];
+      renderTable(items, '');
+    })
+    .catch(function(err) {
+      renderError('加载失败: ' + err.message);
+    });
+}
+
+// ---- Rendering ----
+function renderBreadcrumb(path) {
+  if (!path) {
+    breadcrumbEl.innerHTML = '<span class="cur">根目录</span>';
+    return;
+  }
+
+  var html = '<a href="/">根目录</a>';
+  var parts = path.split('/').filter(function(p) { return p; });
+  var cum = '';
+
+  for (var i = 0; i < parts.length; i++) {
+    cum += '/' + parts[i];
+    html += '<span class="sep">/</span>';
+    if (i === parts.length - 1) {
+      html += '<span class="cur">' + esc(parts[i]) + '</span>';
+    } else {
+      html += '<a href="' + encodeURI(cum) + '">' + esc(parts[i]) + '</a>';
+    }
+  }
+
+  breadcrumbEl.innerHTML = html;
+}
+
+function renderTable(items, searchQuery) {
+  if (!items || items.length === 0) {
+    var msg = searchQuery ? '没有找到匹配的文件' : '此目录为空';
+    tableWrap.innerHTML = '<div class="empty"><div class="big">\uD83D\uDD0D</div>' + msg + '</div>';
+    itemCountEl.textContent = '';
+    return;
+  }
+
+  var sorted = sortItems(items.slice());
+
+  var html = '<table><thead><tr>';
+  html += '<th class="name-col" data-col="name">名称<span class="arrow">' + (state.sortCol === 'name' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
+  html += '<th class="size-col" data-col="size">大小<span class="arrow">' + (state.sortCol === 'size' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
+  html += '<th class="time-col" data-col="time">修改时间<span class="arrow">' + (state.sortCol === 'time' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
+  html += '<th style="width:60px;text-align:center;">操作</th>';
+  html += '</tr></thead><tbody>';
+
+  for (var i = 0; i < sorted.length; i++) {
+    var e = sorted[i];
+    var icon = getFileIcon(e.name, e.isDir);
+    var nameHtml = searchQuery ? highlight(e.name, searchQuery) : esc(e.name);
+    var sizeStr = e.isDir ? '-' : fmtSize(e.size);
+    var timeStr = fmtTime(e.modTime);
+
+    html += '<tr>';
+    html += '<td class="name">';
+    if (e.isDir) {
+      html += '<a href="' + encodeURI(e.path) + '"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+    } else {
+      html += '<a href="/raw' + esc(e.path) + '" target="_blank"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+    }
+    html += '</td>';
+    html += '<td class="size">' + sizeStr + '</td>';
+    html += '<td class="time">' + timeStr + '</td>';
+    html += '<td class="actions">';
+    if (!e.isDir) {
+      html += '<a href="/raw' + esc(e.path) + '?download=1" title="下载">\u2B07</a>';
+    }
+    html += '</td>';
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  tableWrap.innerHTML = html;
+  itemCountEl.textContent = items.length + ' 项';
+
+  var ths = tableWrap.querySelectorAll('th[data-col]');
+  for (var j = 0; j < ths.length; j++) {
+    ths[j].addEventListener('click', function() {
+      var col = this.getAttribute('data-col');
+      if (state.sortCol === col) {
+        state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sortCol = col;
+        state.sortDir = 'asc';
+      }
+      if (state.searchMode) {
+        renderTable(sorted, state.searchQuery);
+      } else {
+        renderTable(items, '');
+      }
+    });
+  }
+}
+
+function sortItems(items) {
+  var col = state.sortCol;
+  var dir = state.sortDir === 'asc' ? 1 : -1;
+
+  items.sort(function(a, b) {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    var av, bv;
+    if (col === 'name') {
+      av = (a.name || '').toLowerCase();
+      bv = (b.name || '').toLowerCase();
+    } else if (col === 'size') {
+      av = a.size || 0;
+      bv = b.size || 0;
+    } else if (col === 'time') {
+      av = a.modTime || '';
+      bv = b.modTime || '';
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+
+  return items;
+}
+
+function renderError(msg) {
+  var html = '<div class="error"><div class="big">\u26A0\uFE0F</div>' + esc(msg);
+  if (lastAction) {
+    html += '<br><button class="retry-btn" id="retryBtn">重试</button>';
+  }
+  html += '</div>';
+  tableWrap.innerHTML = html;
+  itemCountEl.textContent = '';
+  var retryBtn = D.getElementById('retryBtn');
+  if (retryBtn && lastAction) {
+    retryBtn.addEventListener('click', function() {
+      if (lastAction) lastAction();
+    });
+  }
+}
+
+function updateClearBtn() {
+  clearBtn.style.display = state.searchMode ? 'inline-block' : 'none';
+}
+
+// ---- Stats ----
+function loadStats() {
+  fetch('/api/stats')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var html = '';
+      if (d.building) {
+        html = '<span class="building"></span> 索引构建中... (' + (d.indexed || 0) + ' 项)';
+      } else if (d.indexed !== undefined) {
+        html = d.indexed + ' 项已索引';
+      }
+      statsEl.innerHTML = html;
+    })
+    .catch(function() {});
+}
+
+// ---- Event wiring ----
+searchBtn.addEventListener('click', function() {
+  doSearch(searchInput.value);
+});
+
+searchInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    doSearch(searchInput.value);
+  }
+});
+
+clearBtn.addEventListener('click', function() {
+  searchInput.value = '';
+  navigate(state.path, true, true);
+});
+
+// popstate: handle browser back/forward
+window.addEventListener('popstate', function(e) {
+  var path = '';
+  if (e.state && e.state.path !== undefined) {
+    path = e.state.path;
+  } else {
+    path = decodePath(location.pathname);
+    if (path === '/') path = '';
+    else if (path.length > 1 && path.charAt(path.length - 1) === '/') {
+      path = path.slice(0, -1);
+    }
+  }
+  navigate(path, true, true);
+});
+
+// Global click handler: intercept internal links, use pushState instead of reload
+D.addEventListener('click', function(e) {
+  var a = e.target.closest('a');
+  if (!a) return;
+  // file links open in new tab
+  if (a.getAttribute('target') === '_blank') return;
+  // download links
+  if (a.href.indexOf('?download=1') > -1) return;
+  var href = a.getAttribute('href');
+  if (!href || href.charAt(0) !== '/') return;
+  // raw file paths
+  if (href.indexOf('/raw/') === 0) return;
+  e.preventDefault();
+  var p = (href === '/') ? '' : decodePath(href);
+  navigate(p, false, false);
+});
+
+// ---- Init: read path from location.pathname ----
+var initPath = decodePath(location.pathname);
+if (initPath === '/' || initPath === '') {
+  initPath = '';
+} else if (initPath.length > 1 && initPath.charAt(initPath.length - 1) === '/') {
+  initPath = initPath.slice(0, -1);
+}
+
+// set initial state so popstate works correctly
+try {
+  history.replaceState({ path: initPath }, '', location.pathname);
+} catch(e) {}
+
+state.initialized = true;
+navigate(initPath, true, true);
+loadStats();
+setInterval(loadStats, 5000);
+searchInput.focus();
+
+})();
+</script>
+</body>
+</html>

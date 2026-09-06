@@ -1,0 +1,21 @@
+[Unit]
+Description=FileList - File Directory Index & Search Service (root, no hardening)
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/lib/filelist
+ExecStart=/usr/local/bin/filelist -config /etc/filelist/config.yaml
+WorkingDirectory=/var/lib/filelist
+Restart=on-failure
+RestartSec=5
+
+# Point dataDir and log.file to /var/lib/filelist in config.yaml
+# Example config:
+#   dataDir: /var/lib/filelist
+#   log:
+#     level: info
+#     file: /var/lib/filelist/filelist.log
+
+[Install]
+WantedBy=multi-user.target

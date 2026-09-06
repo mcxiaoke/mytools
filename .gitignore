@@ -99,3 +99,6 @@ build-linux/
 *.cfg
 *.log
 temp*
+.dumate/
+workbuddy/
+.trae/

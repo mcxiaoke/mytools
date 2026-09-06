@@ -1,0 +1,59 @@
+# FileList Configuration Sample
+# Copy this file to config.yaml and edit as needed.
+# All fields below show their default values.
+#
+# ── File Locations ──────────────────────────────────────────────
+# dataDir       Runtime data directory (index cache, etc.)
+# log.file      Log file path (empty = stdout)
+# index.persist Index cache file (empty = auto: <dataDir>/filelist.idx)
+# ───────────────────────────────────────────────────────────────
+
+server:
+  host: 0.0.0.0          # listen address (0.0.0.0 = all interfaces)
+  port: 8080             # HTTP port
+
+log:
+  level: info            # log level: debug | info | warn | error
+  file: ""               # log file path (empty = stdout; ~ is expanded to home)
+                         #   example: /var/log/filelist.log
+                         #   example: ~/filelist.log
+
+dataDir: ./data          # runtime data directory (index cache, etc.)
+                         #   created automatically on startup
+                         #   ~ is expanded to home directory
+
+index:
+  interval: 5m           # re-index interval (30s, 5m, 1h, etc.)
+  persist: ""            # index cache file (empty = auto: <dataDir>/filelist.idx)
+                         #   set explicitly to override; ~ is expanded
+  maxDepth: 0            # max directory walk depth (0 = unlimited)
+  excludeDirs:           # directory names to skip during indexing (case-insensitive)
+    - .git
+    - node_modules
+    - __pycache__
+    - $RECYCLE.BIN
+    - System Volume Information
+
+# Path mappings: URL path -> real disk path
+# - URL: virtual web path shown in browser (must start with /)
+# - Path: real disk path (use forward slashes for cross-platform)
+# - ~ is expanded to home directory
+# - Root "/" is NOT allowed; all roots must be subpaths like /data, /downloads.
+#   The URL "/" is reserved for the roots listing page.
+roots:
+  # Linux examples:
+  # - url: /data
+  #   path: /mnt/data
+  # - url: /media
+  #   path: /media
+  # - url: /usb
+  #   path: /mnt/usb
+
+  # Windows examples:
+  # - url: /c
+  #   path: C:/
+  # - url: /downloads
+  #   path: C:/Users/username/Downloads
+
+  - url: /files
+    path: ./
