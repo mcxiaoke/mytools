@@ -1,0 +1,32 @@
+[Unit]
+Description=FileList - File Directory Index & Search Service (hardened, dedicated user)
+After=network.target
+
+[Service]
+Type=simple
+# Set to the actual binary path and config path
+ExecStart=/usr/local/bin/filelist -config /etc/filelist/config.yaml
+# Run as a dedicated user for security
+User=filelist
+Group=filelist
+# Working directory for index persistence
+WorkingDirectory=/var/lib/filelist
+# Point dataDir and log.file to /var/lib/filelist in config.yaml
+# Example config for systemd:
+#   dataDir: /var/lib/filelist
+#   log:
+#     level: info
+#     file: /var/lib/filelist/filelist.log
+# Restart on failure
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/filelist
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

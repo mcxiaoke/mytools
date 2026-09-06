@@ -1,0 +1,22 @@
+# build artifacts
+build/
+
+# runtime data (index, logs)
+data/
+logs/
+*.idx
+*.log
+
+# actual config (keep sample)
+config.yaml
+
+# ide
+.vscode/
+.idea/
+
+# temp
+temp/
+
+# os
+.DS_Store
+Thumbs.db
