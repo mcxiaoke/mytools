@@ -1,6 +1,6 @@
 # FileList 实现方案设计文档
 
-> **版本**: v2.0 | **更新**: 2026-09-06 | **状态**: 设计评审中
+> **版本**: v2.1 | **更新**: 2026-09-06 | **状态**: 已实现
 
 ## 1. 概述
 
@@ -73,10 +73,14 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 ```
 main()
   ├── LoadConfig(path)                    // YAML → Config
-  │     ├── 校验 roots 非空、path 非空
+  │     ├── 校验 roots 非空、url/path 非空
+  │     ├── 拒绝 url: "/"（返回错误，要求使用子路径）
   │     ├── 规范化 URL（确保 / 前缀，去尾部 /）
   │     ├── 规范化磁盘路径（展开 ~，统一为 OS 路径）
+  │     ├── 按 URL 长度降序排序（最长前缀优先匹配）
   │     └── 填充默认值（host=0.0.0.0, port=8080, interval=5m）
+  ├── initLogger(cfg)                     // 配置日志输出（文件或 stdout）
+  ├── printStartup(cfg, configPath)       // 启动横幅输出到 stdout（不受 log.file 影响）
   ├── NewIndexer(cfg)
   │     ├── 尝试从 persist 文件加载已有索引（快速启动）
   │     └── 解析 re-index interval
@@ -139,116 +143,79 @@ main()
 ```
 Indexer.Start() goroutine:
   │
-  ├── 初始全量索引 BuildIndex()
+  ├── 初始全量索引 BuildIndex()        // 索引为空 → full pass
   │     ├── 遍历所有 roots
-  │     ├── 每个 root: filepath.WalkDir 递归遍历
-  │     ├── 构建 []Entry（virtual path）
-  │     └── 持久化 → gob file
+  │     ├── 每个 root: 手动 ReadDir 递归（不跟随目录软链接）
+  │     ├── 记录 目录 signature {mtime, size} → dirStamp map
+  │     └── 持久化 → gob file（versioned，临时文件 + rename 落盘）
   │
   ├── ticker ← interval (默认 5m)
-  │     └── BuildIndex()  // 重建全量索引
+  │     └── BuildIndex()   // 增量 diff，见下
   │
   └── <-stopCh → return  // 优雅退出
 
-注意：当前实现为全量重建，非真正的增量 diff。
-对于 18 万+ 文件的场景，5 分钟重建一次约需 10 秒。
-后续优化方向见 §5.2。
+增量 BuildIndex（incremental=true 且索引非空时）:
+  ├── 对每个 root: stat 根目录
+  │     └── dirStamp[root] 相同 → 整棵 root 跳过（retained），O(1)
+  ├── 变化的 root：递归遍历
+  │     ├── 子目录 dirStamp 相同 → 整棵子树跳过（retained），
+  │     │     不 ReadDir、不 stat 子树内任何文件
+  │     ├── 文件 (mtime,size) 未变 → 复用旧条目（不重建对象）
+  │     └── 变化 → 记录 updates（新增/更新 diff）
+  ├── GC 阶段（写锁，O(n) 内存操作）:
+  │     删除 gen 过期且无 retained 祖先的条目 / dirStamp
+  └── 有差异才写盘（tmp + rename）
+
+扫描阶段持读锁（搜索不阻塞），仅在最终 merge 短暂持写锁。
+无变化时一次 pass 成本 ≈ 每 root 一次 stat。
 ```
 
-## 3. 已发现问题诊断
+> 权衡：子树跳过依赖目录 mtime/大小。文件增删改名会更新父目录 mtime，能被及时捕获；
+> 仅改写文件内容（mtime/size 不变）不会被捕获，直到其父目录变化——浏览始终实时（ListDir 读盘），
+> 只有搜索结果里的 size/时间可能滞后。需要强一致时配置 `incremental: false` 强制每次全量。
+> 索引过程不跟随目录符号链接（避免循环与逃逸）；`/raw` 下载另有 symlink 越界拦截（见 §5.4）。
 
-### 3.1 P0 - 前端空白页（CRITICAL）
+## 3. 已修复问题记录
+
+### 3.1 P0 - 前端空白页（已修复）
 
 **现象**: 用户启动服务后浏览器打开页面，不显示任何内容，无报错。
 
 **根因**: `navigate()` 函数的早期返回守卫在初始化时误触发。
 
-```js
-// web/index.html line 129-137
-function navigate(path, skipHash){
-  path = path || '';
-  if(path === state.path && !state.searchMode) return;  // BUG!
-  // state.path 初始值为 ''，initPath 也是 '' → 直接 return
-```
+**修复**: 初始化时绕过守卫检查，强制首次加载。
 
-初始化时 `state.path = ''`，页面无 hash 时 `initPath = ''`，调用 `navigate('', true)` 时 `'' === ''` 为 true → **直接返回，不加载任何数据**。
+### 3.2 P0 - /api/roots 与前端数据结构不匹配（已修复）
 
-**修复方案**: 初始化时不走守卫检查，或增加 `force` 参数绕过。
+**现象**: 根目录页面崩溃，`renderTable()` 中 `a.name.toLowerCase()` → `undefined.toLowerCase()` → TypeError。
 
-### 3.2 P0 - /api/roots 与前端数据结构不匹配（CRITICAL）
+**根因**: `/api/roots` 返回 `{url, path}` 结构，前端期望 `Entry` 结构。
 
-**现象**: 即使修好 P0-3.1，根目录页面仍会崩溃。
+**修复**: `/api/roots` 改为返回与 `/api/list` 相同的 `Entry` 结构，把 root 当作目录条目返回。显示名使用 URL 路径段（如 `/data` → `data`），而非磁盘目录名。
 
-**根因**: API 返回结构与前端期望的结构不一致。
+### 3.3 P1 - 根 URL `/` 路由冲突（已修复）
 
-```json
-// /api/roots 返回：
-[{"url":"/data","path":"数据库"}]
+**现象**: 配置 `url: /` 时，URL `/` 既是 roots 视图入口又是根目录内容路径，前端循环无法进入目录浏览。
 
-// 前端 renderTable() 期望：
-[{"name":"data","path":"/data","isDir":true,"size":0,"modTime":"..."}]
-```
+**修复**: 不支持配置 `url: /`，在 `LoadConfig` 中直接拒绝并报错提示使用子路径。URL `/` 保留给 roots 视图。`MapVirtualToReal` 移除了 root "/" catch-all 逻辑，简化为纯前缀匹配。roots 按 URL 长度降序排序，确保最长前缀优先（如 `/data/archive` 优先于 `/data`）。
 
-`renderTable()` 中 `items.sort()` 调用 `a.name.toLowerCase()` → `undefined.toLowerCase()` → **TypeError**。
-
-**修复方案**: `/api/roots` 改为返回与 `/api/list` 相同的 `Entry` 结构，把 root 当作目录条目返回。
-
-### 3.3 P1 - 根 URL `/` 的子路径路由失败
-
-**现象**: 配置 `url: /` 时，访问 `/subdir` 无法匹配到该 root。
-
-**根因**: `MapVirtualToReal` 中子路径匹配逻辑：
-
-```go
-// indexer.go line 71
-rel := strings.TrimPrefix(vpath, r.URL+"/")
-// 当 r.URL = "/" 时, r.URL+"/" = "//"
-// strings.TrimPrefix("/subdir", "//") = "/subdir" → 不匹配
-```
-
-**修复方案**: 特殊处理 `r.URL == "/"` 的情况，或改用 `strings.HasPrefix` + 长度前缀匹配。
-
-### 3.4 P1 - 非 ASCII 文件名下载头编码缺失
+### 3.4 P1 - 非 ASCII 文件名下载头编码（已修复）
 
 **现象**: 下载 `数据库.zip` 等中文文件名时，`Content-Disposition` header 可能乱码。
 
-**根因**:
+**修复**: 使用 RFC 5987 编码 `filename*=UTF-8''...`。
 
-```go
-// server.go line 121-122
-w.Header().Set("Content-Disposition",
-    fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(realPath)))
-```
+### 3.5 P2 - 启动时控制台完全静默（已修复）
 
-直接将 UTF-8 文件名放入 header，未使用 RFC 5987 编码。
+**现象**: 配置了 `log.file` 后，所有日志只写文件，控制台无任何输出。
 
-**修复方案**: 使用 `filename*=UTF-8''...` 编码。
+**修复**: 新增 `printStartup()` 函数，用 `tabwriter` 将版本、监听地址、配置路径、DataDir、日志去向、索引配置和根映射始终输出到 stdout，不受 `log.file` 配置影响。
 
-### 3.5 P2 - 索引重建为全量重建，非真正增量
+### 3.6 P3 - 配置文件首次运行无引导（已修复）
 
-**现象**: 18 万文件每 5 分钟全量重建，约 10 秒，期间索引数据被替换。
+**现象**: 首次运行无 `config.yaml` 时直接 `log.Fatal`。
 
-**根因**: `BuildIndex()` 每次从头 `filepath.WalkDir`，不检查文件是否有变化。
-
-**影响**: 功能正常但效率低，后续可优化。
-
-### 3.6 P2 - 索引构建期间前端无反馈
-
-**现象**: 首次启动时索引需要 10 秒，期间搜索返回空结果，用户无感知。
-
-**修复方案**: `/api/stats` 增加 `building` 状态字段；前端显示索引中提示。
-
-### 3.7 P2 - favicon.ico 404 日志噪音
-
-**现象**: 每次页面加载产生 `GET /favicon.ico → 404` 日志。
-
-**修复方案**: 内嵌一个 favicon 或对 `/favicon.ico` 返回 204。
-
-### 3.8 P3 - 配置文件首次运行无引导
-
-**现象**: 首次运行无 `config.yaml` 时直接 `log.Fatal`，用户不知所措。
-
-**修复方案**: 检测无配置文件时，生成默认配置并提示用户编辑。
+**修复**: 检测无配置文件时，生成默认配置并提示用户编辑后重启。
 
 ## 4. 详细设计
 
@@ -268,7 +235,7 @@ index:
   excludeDirs: []       # 排除目录名 (如 [".git", "node_modules", "$RECYCLE.BIN"])
 
 roots:
-  - url: /data          # 虚拟 URL 路径
+  - url: /data          # 虚拟 URL 路径（必须为子路径，不允许 /）
     path: /mnt/data     # 实际磁盘路径
   - url: /media
     path: /media
@@ -284,14 +251,14 @@ roots:
 | roots 为空 | 报错退出 |
 | root.url 为空 | 报错退出 |
 | root.path 为空 | 报错退出 |
+| root.url 为 `/`（或 `//` 等归一化后为 `/`） | **报错退出**，提示使用子路径 |
 | root.path 不存在 | 警告但继续（可能后续挂载） |
 | root.path 不是目录 | 警告但继续 |
-| URL 前缀冲突（如 `/data` 和 `/data/sub`） | 警告，按最长前缀优先匹配 |
-| URL `/` 与其他 root 共存 | 警告（`/` 会捕获所有未匹配路径） |
+| URL 前缀重叠（如 `/data` 和 `/data/sub`） | 允许，按最长前缀优先匹配（roots 按 URL 长度降序排序） |
 
 #### 4.1.3 路径规范化
 
-- URL：确保以 `/` 开头，去除尾部 `/`（除根 `/` 外）
+- URL：确保以 `/` 开头，去除尾部 `/`；root `/` 不被允许，必须使用子路径
 - 磁盘路径：展开 `~` 为用户主目录；保持原始格式，由 `filepath.Join` 处理分隔符
 - 交叉平台路径：配置中统一用 `/`，代码中 `filepath.FromSlash` 转换
 
@@ -303,13 +270,12 @@ roots:
 输入: vpath (如 "/data/subdir/file.txt")
 
 1. 清洗: vpath = path.Clean("/" + vpath)  // 防 /../ 遍历
-2. 遍历 roots，找最长前缀匹配:
+2. 遍历 roots（已按 URL 长度降序排序），找前缀匹配:
    - 精确匹配: vpath == r.URL → return r.Path
    - 前缀匹配: vpath 以 r.URL+"/" 开头 → return filepath.Join(r.Path, rel)
-3. 特殊处理 r.URL == "/":
-   - 任何 vpath 都匹配，rel = vpath 去掉前导 /
-   - 但优先级最低（放在 roots 最后，且其他 root 先匹配）
-4. 无匹配 → 返回 ("", false)
+3. 无匹配 → 返回 ("", false)
+
+注意: root "/" 不被允许（LoadConfig 阶段拒绝），不存在 catch-all 逻辑。
 ```
 
 #### 4.2.2 Real → Virtual 映射规则
@@ -476,26 +442,24 @@ load():
 | 索引正在构建中搜索 | 200 | `[]`（空结果，非错误） |
 | 非 API/raw 路径 | 200 | 返回 index.html（SPA fallback） |
 
-#### 4.4.4 /api/roots 修复设计
+#### 4.4.4 /api/roots 实现
 
-**问题**: 当前返回 `{url, path}`，前端期望 `Entry` 结构。
-
-**修复**: 返回与 `/api/list` 相同的 `Entry` 结构，把每个 root 当作目录条目：
+每个 root 作为目录条目返回，显示名使用 URL 路径段（如 `/data` → `data`），而非磁盘目录名：
 
 ```go
 func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) {
     entries := make([]Entry, len(s.cfg.Roots))
     for i, root := range s.cfg.Roots {
-        info, err := os.Stat(root.Path)
-        entries[i] = Entry{
-            Name:  filepath.Base(root.Path), // 显示磁盘目录名
-            Path:  root.URL,                 // 虚拟路径
+        e := Entry{
+            Name:  strings.TrimPrefix(root.URL, "/"), // URL 路径段作为显示名
+            Path:  root.URL,                           // 虚拟路径
             IsDir: true,
         }
-        if err == nil {
-            entries[i].Size = info.Size()
-            entries[i].ModTime = info.ModTime()
+        if info, err := os.Stat(root.Path); err == nil {
+            e.Size = info.Size()
+            e.ModTime = info.ModTime()
         }
+        entries[i] = e
     }
     writeJSON(w, entries)
 }
@@ -681,18 +645,18 @@ sudo systemctl enable --now filelist
 
 ### 5.1 搜索性能优化
 
-当前全量遍历 O(n) 对 18 万条目约 50ms，可接受。如果未来索引量到百万级：
+当前全量遍历 O(n) 对 18 万条目约 50ms，可接受。已做的廉价优化：Entry 预存小写 name/path（lname/lpath），搜索时不再重复 ToLower。如果未来索引量到百万级：
 
 - 构建 name → entries 的 map 倒排索引（前缀树/哈希表）
 - 搜索时先查倒排索引，再打分排序
 
 ### 5.2 真正的增量索引
 
-当前为定时全量重建。可优化为：
+已在 v0.2.0 实现（见 §2.3.4）：目录 signature（mtime+size）未变则整棵子树跳过 + generation 标记 GC + 差异写盘。无变化时单次 pass 近零成本。
 
-- 基于文件 ModTime 的增量检测：遍历时比对上次索引的 ModTime，仅更新变化的条目
+可选后续演进：
 - 基于 fsnotify 的实时监听：监听文件系统事件，实时更新索引（Linux inotify / Windows ReadDirectoryChangesW）
-- 但 fsnotify 对大目录树的 watch 资源消耗大，需要权衡
+- 但 fsnotify 对大目录树的 watch 资源消耗大，且目录级 diff 已覆盖 99% 场景，非必要
 
 ### 5.3 其他
 
@@ -703,14 +667,31 @@ sudo systemctl enable --now filelist
 - WebSocket 推送索引状态
 - 配置热重载
 
-## 6. 修复计划
+## 5.4 安全模型（v0.2.0）
 
-基于以上诊断和设计，需要修改的文件和具体改动：
+家庭内网默认开箱即用（无鉴权），安全项全部可配置、默认取安全值：
 
-| 文件 | 改动 | 优先级 |
+| 项 | 默认 | 说明 |
+|----|------|------|
+| 目录软链接越界 | 拦截 | 索引不跟随目录 symlink（防循环/逃逸）；`/raw` 下载先 `EvalSymlinks` 再校验仍在 root 内，否则 403。`security.allowOutsideSymlinks: true` 放行 |
+| html/svg 内联 | 强制下载 | `.html/.htm/.xhtml/.svg/.svgz/.mhtml` 一律 `Content-Disposition: attachment`；配合全局 `X-Content-Type-Options: nosniff`，阻止同源 stored XSS。`security.blockInlineHTML: false` 关闭 |
+| 敏感文件 | 默认排除 | `index.excludeFiles`（.env、*.key、id_rsa 等），浏览与搜索同时生效 |
+| 鉴权 | 关闭 | `server.token` 开启后：`?token=` 或 `Authorization: Bearer` 首次校验 → Set-Cookie（HttpOnly、SameSite=Lax、Path=basePath）会话，`subtle.ConstantTimeCompare` 防时序 |
+| 路径穿越 | 已挡 | `path.Clean` + 最长前缀匹配（单测覆盖 `..` 与编码变体） |
+| 未知路径 | 200 SPA | 未注册路径返回 index.html（SPA 深链接需要），非数据泄漏 |
+
+## 6. 实现状态
+
+所有核心功能已实现并通过测试：
+
+| 文件 | 已实现功能 | 状态 |
 |------|------|--------|
-| web/index.html | 修复 navigate 初始化守卫；统一 roots/list 数据处理；增加索引构建中提示；favicon 处理；样式微调 | P0 |
-| server.go | /api/roots 返回 Entry 结构；增加 /favicon.ico 处理；Content-Disposition RFC 5987 编码 | P0/P1 |
-| indexer.go | MapVirtualToReal 修复 `/` root 子路径匹配；building 状态字段；excludeDirs 支持 | P1 |
-| config.go | 增加 excludeDirs/maxDepth 配置项；URL 冲突检测 | P2 |
-| main.go | 首次运行生成默认配置；日志格式优化 | P3 |
+| web/index.html | SPA 前端：目录浏览、搜索、面包屑、排序、下载、暗色模式；BASE 注入支持 basePath；文件名 `#`/`?` 编码修复 | ✅ |
+| server.go | basePath 剥离中间件；token 鉴权（query/Bearer/Cookie）；symlink 越界 403；html 强制下载；nosniff 头；RFC 5987 下载头；403/404 区分 | ✅ |
+| indexer.go | 真增量索引（目录 signature 跳过 + generation GC）；maxDepth；excludeDirs/excludeFiles（浏览与搜索一致）；持久化 v2（map + dirStamp，tmp+rename） | ✅ |
+| config.go | 拒绝 url: /；URL 长度降序排序；basePath 归一化与字符校验；token；security 段；*bool 默认值处理 | ✅ |
+| main.go | 首次运行生成默认配置；printStartup 启动横幅；dataDir 自动创建；root 指向配置目录时 WARN | ✅ |
+
+测试覆盖（`go test ./... -v`，全部通过）：
+- `config_test.go`: 配置校验 + basePath 归一化/非法拒绝 + 默认值/显式 opt-out
+- `indexer_test.go`: 路由映射（5）+ 增量正确性（无变化跳过/新增/删除）+ maxDepth + excludeFiles/excludeDirs 一致性 + 目录软链接不跟随 + pathWithin + 持久化 save/load 往返

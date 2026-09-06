@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="__FILELIST_BASE__/favicon.ico">
 <title>FileList</title>
 <style>
 :root {
@@ -276,7 +277,7 @@ mark {
 <body>
 <div class="container">
   <header>
-    <a class="back-link" href="/" id="homeLink">&#128193; 根目录</a>
+    <a class="back-link" href="__FILELIST_BASE__/" id="homeLink">&#128193; 根目录</a>
     <div class="search-bar">
       <input type="text" id="searchInput" placeholder="搜索文件或目录名..." autocomplete="off">
       <button id="searchBtn" type="button">搜索</button>
@@ -302,6 +303,9 @@ mark {
 <script>
 (function() {
 'use strict';
+
+// Base path injected by the server (empty when deployed at the domain root).
+var BASE = "__FILELIST_BASE__";
 
 // ---- State ----
 var state = {
@@ -387,6 +391,29 @@ function decodePath(p) {
   try { return decodeURIComponent(p); } catch(e) { return p; }
 }
 
+// Encode a virtual path for use inside an href.
+// encodeURI leaves "#" and "?" intact, which would truncate the URL.
+function encodePath(p) {
+  return encodeURI(p).replace(/#/g, '%23').replace(/\?/g, '%3F');
+}
+
+// Absolute href for a directory and for a raw file, base path included.
+function dirHref(p) {
+  return BASE + encodePath(p);
+}
+function fileHref(p, download) {
+  return BASE + '/raw' + encodePath(p) + (download ? '?download=1' : '');
+}
+
+// Read the current virtual path from the browser location, base path removed.
+function pathFromLocation() {
+  var p = decodePath(location.pathname);
+  if (BASE && p.indexOf(BASE) === 0) p = p.slice(BASE.length);
+  if (p === '/' || p === '') return '';
+  if (p.length > 1 && p.charAt(p.length - 1) === '/') p = p.slice(0, -1);
+  return p;
+}
+
 // ---- Navigation (History API) ----
 function navigate(path, skipState, force) {
   path = path || '';
@@ -397,7 +424,7 @@ function navigate(path, skipState, force) {
   state.searchQuery = '';
 
   if (!skipState) {
-    var url = path || '/';
+    var url = BASE + (path || '/');
     try {
       history.pushState({ path: path }, '', url);
     } catch(e) {
@@ -426,7 +453,7 @@ function doSearch(query) {
 
   lastAction = function() { doSearch(query); };
 
-  var url = '/api/search?q=' + encodeURIComponent(query);
+  var url = BASE + '/api/search?q=' + encodeURIComponent(query);
   fetch(url)
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -447,9 +474,9 @@ function loadDir(path) {
 
   var url;
   if (!path) {
-    url = '/api/roots';
+    url = BASE + '/api/roots';
   } else {
-    url = '/api/list?path=' + encodeURIComponent(path);
+    url = BASE + '/api/list?path=' + encodeURIComponent(path);
   }
 
   fetch(url)
@@ -473,7 +500,7 @@ function renderBreadcrumb(path) {
     return;
   }
 
-  var html = '<a href="/">根目录</a>';
+  var html = '<a href="' + esc(BASE) + '/">根目录</a>';
   var parts = path.split('/').filter(function(p) { return p; });
   var cum = '';
 
@@ -483,7 +510,7 @@ function renderBreadcrumb(path) {
     if (i === parts.length - 1) {
       html += '<span class="cur">' + esc(parts[i]) + '</span>';
     } else {
-      html += '<a href="' + encodeURI(cum) + '">' + esc(parts[i]) + '</a>';
+      html += '<a href="' + esc(dirHref(cum)) + '">' + esc(parts[i]) + '</a>';
     }
   }
 
@@ -517,16 +544,16 @@ function renderTable(items, searchQuery) {
     html += '<tr>';
     html += '<td class="name">';
     if (e.isDir) {
-      html += '<a href="' + encodeURI(e.path) + '"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+      html += '<a href="' + esc(dirHref(e.path)) + '"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
     } else {
-      html += '<a href="/raw' + esc(e.path) + '" target="_blank"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+      html += '<a href="' + esc(fileHref(e.path, false)) + '" target="_blank"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
     }
     html += '</td>';
     html += '<td class="size">' + sizeStr + '</td>';
     html += '<td class="time">' + timeStr + '</td>';
     html += '<td class="actions">';
     if (!e.isDir) {
-      html += '<a href="/raw' + esc(e.path) + '?download=1" title="下载">\u2B07</a>';
+      html += '<a href="' + esc(fileHref(e.path, true)) + '" title="下载">\u2B07</a>';
     }
     html += '</td>';
     html += '</tr>';
@@ -602,7 +629,7 @@ function updateClearBtn() {
 
 // ---- Stats ----
 function loadStats() {
-  fetch('/api/stats')
+  fetch(BASE + '/api/stats')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var html = '';
@@ -639,11 +666,7 @@ window.addEventListener('popstate', function(e) {
   if (e.state && e.state.path !== undefined) {
     path = e.state.path;
   } else {
-    path = decodePath(location.pathname);
-    if (path === '/') path = '';
-    else if (path.length > 1 && path.charAt(path.length - 1) === '/') {
-      path = path.slice(0, -1);
-    }
+    path = pathFromLocation();
   }
   navigate(path, true, true);
 });
@@ -657,7 +680,13 @@ D.addEventListener('click', function(e) {
   // download links
   if (a.href.indexOf('?download=1') > -1) return;
   var href = a.getAttribute('href');
-  if (!href || href.charAt(0) !== '/') return;
+  if (!href) return;
+  // strip the base path before deciding whether this is an in-app link
+  if (BASE) {
+    if (href.indexOf(BASE + '/') !== 0) return;
+    href = href.slice(BASE.length);
+  }
+  if (href.charAt(0) !== '/') return;
   // raw file paths
   if (href.indexOf('/raw/') === 0) return;
   e.preventDefault();
@@ -666,12 +695,7 @@ D.addEventListener('click', function(e) {
 });
 
 // ---- Init: read path from location.pathname ----
-var initPath = decodePath(location.pathname);
-if (initPath === '/' || initPath === '') {
-  initPath = '';
-} else if (initPath.length > 1 && initPath.charAt(initPath.length - 1) === '/') {
-  initPath = initPath.slice(0, -1);
-}
+var initPath = pathFromLocation();
 
 // set initial state so popstate works correctly
 try {

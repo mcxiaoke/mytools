@@ -6,10 +6,11 @@
 
 - **目录浏览** - 网页访问，列出配置的目录，可点击进入子目录
 - **文件搜索** - 基于内存索引的文件名/目录名搜索，不实时遍历磁盘
-- **增量索引** - 启动时全量索引，后台定期增量更新，支持磁盘持久化
+- **真增量索引** - 目录未变化时整棵子树跳过（空闲时近零开销），变化只做差异更新，支持磁盘持久化
 - **路径映射** - URL 路径与磁盘路径可不同，如 `/data -> /mnt/data`
+- **子目录部署** - 支持 `basePath`，可挂到反代（Caddy/Nginx）的任意子路径下
 - **文件下载/预览** - 点击文件在线预览或下载
-- **全部只读** - 不支持上传，无需登录或权限系统
+- **全部只读** - 不支持上传；可选 token 鉴权，默认无鉴权开箱即用
 - **跨平台** - 单二进制，支持 Windows 和 Linux
 - **零依赖运行** - 编译为单个可执行文件，无运行时依赖
 
@@ -48,16 +49,35 @@ cp config.sample.yaml config.yaml
 |------|--------|------|
 | `server.host` | `0.0.0.0` | 监听地址 |
 | `server.port` | `8080` | HTTP 端口 |
+| `server.basePath` | `""` | 反代子目录前缀（如 `/files`），根路径部署留空 |
+| `server.token` | `""` | 可选访问令牌，空 = 无鉴权 |
 | `log.level` | `info` | 日志级别：`debug` / `info` / `warn` / `error` |
 | `log.file` | `""` (stdout) | 日志文件路径，空则输出到终端 |
 | `dataDir` | `./data` | 运行时数据目录（索引缓存等），自动创建 |
-| `index.interval` | `5m` | 重建索引间隔 |
+| `index.interval` | `5m` | 索引更新间隔 |
 | `index.persist` | `""` (auto) | 索引缓存文件，空则自动用 `dataDir/filelist.idx` |
-| `index.maxDepth` | `0` | 目录遍历深度限制（0 = 无限） |
-| `index.excludeDirs` | 5 项 | 索引时跳过的目录名 |
+| `index.maxDepth` | `0` | 目录遍历深度限制（0 = 无限，1 = 仅根目录下第一层） |
+| `index.incremental` | `true` | 增量索引：目录 mtime/大小未变则整棵跳过；`false` = 每次全量重建 |
+| `index.excludeDirs` | 内置 5 项 | 跳过的目录名（大小写不敏感，支持 `*?`） |
+| `index.excludeFiles` | 内置敏感文件 | 跳过的文件名（glob，如 `.env`、`*.key`） |
+| `security.allowOutsideSymlinks` | `false` | 是否允许下载指向 root 之外的软链接目标 |
+| `security.blockInlineHTML` | `true` | html/svg 文件是否强制下载而非内联渲染 |
 | `roots` | — | 路径映射列表 |
 
-> **路径展开**：`log.file`、`dataDir`、`index.persist`、`roots[].path` 中的 `~` 会展开为用户主目录。
+> 路径展开：`log.file`、`dataDir`、`index.persist`、`roots[].path` 中的 `~` 会展开为用户主目录。
+
+## 安全（全部可选，默认开箱即用）
+
+以下能力默认都是关闭或采取安全默认值，家庭内网可不配置直接运行；需要时可逐步开启：
+
+| 能力 | 配置 | 说明 |
+|------|------|------|
+| **token 鉴权** | `server.token: 我的密码` | 开启后浏览器首次访问在地址后加 `?token=密码` 即可，服务端下发 Cookie 保持会话；脚本可用 `Authorization: Bearer 密码`。 |
+| **软链接越界拦截** | `security.allowOutsideSymlinks: true` | 默认拦截通过软链接读取 root 之外的文件（如指向 `/etc` 的链接）；内网需要发布软链接内容时再开启。索引过程从不跟随目录软链接。 |
+| **html/svg 防内联 XSS** | `security.blockInlineHTML: false` | 默认 `.html`/`.svg` 等一律强制下载，不在站点同源渲染（防止共享的 html 窃取本服务数据）；需要在线预览网页时关闭。 |
+| **敏感文件默认排除** | `index.excludeFiles` | 默认排除 `.env`、`.htpasswd`、`*.key`、`id_rsa` 等敏感文件；显式写空列表 `excludeFiles: []` 可取消。搜索和目录浏览同时生效。 |
+
+> 目录浏览（实时读盘）与索引搜索共享同一套排除规则，行为一致；默认的 root 排除项（`.git`、`node_modules` 等）也同时作用于两者。
 
 ### 文件位置说明
 
@@ -120,19 +140,25 @@ dataDir: /var/lib/filelist
 ### 方案一：root 直接运行（内网快速部署）
 
 ```bash
-# 1. 安装二进制和配置
+# 1. 安装二进制和配置（Windows 上交叉编译出的 Linux 文件默认无执行权限，务必 chmod +x）
 sudo cp build/filelist-linux-amd64 /usr/local/bin/filelist
+sudo chmod +x /usr/local/bin/filelist
 sudo mkdir -p /etc/filelist
 sudo cp config.yaml /etc/filelist/
 
 # 2. 安装 service 文件
 sudo cp deploy/filelist-root.service /etc/systemd/system/
 
-# 3. 编辑配置，确保 dataDir 和 log.file 指向 /var/lib/filelist
+# 3. 编辑配置：确保 dataDir 和 log.file 指向 /var/lib/filelist，
+#    并把 roots 改为真实要共享的绝对路径（配置放在 /etc/filelist 时，
+#    沿用默认 "path: ./" 会把 /etc 本身发布到网上！）
 #    dataDir: /var/lib/filelist
 #    log:
 #      level: info
 #      file: /var/lib/filelist/filelist.log
+#    roots:
+#      - url: /data
+#        path: /mnt/data
 
 # 4. 启用并启动（/var/lib/filelist 由 ExecStartPre 自动创建）
 sudo systemctl daemon-reload
@@ -148,19 +174,25 @@ tail -f /var/lib/filelist/filelist.log
 ### 方案二：专用用户 + 安全加固
 
 ```bash
-# 1. 安装二进制和配置
+# 1. 安装二进制和配置（Windows 上交叉编译出的 Linux 文件默认无执行权限，务必 chmod +x）
 sudo cp build/filelist-linux-amd64 /usr/local/bin/filelist
+sudo chmod +x /usr/local/bin/filelist
 sudo mkdir -p /etc/filelist /var/lib/filelist
 sudo cp config.yaml /etc/filelist/
 
 # 2. 安装 service 文件
 sudo cp deploy/filelist.service /etc/systemd/system/
 
-# 3. 编辑配置，确保 dataDir 和 log.file 指向 /var/lib/filelist
+# 3. 编辑配置：确保 dataDir 和 log.file 指向 /var/lib/filelist，
+#    并把 roots 改为真实要共享的绝对路径（配置放在 /etc/filelist 时，
+#    沿用默认 "path: ./" 会把 /etc 本身发布到网上！）
 #    dataDir: /var/lib/filelist
 #    log:
 #      level: info
 #      file: /var/lib/filelist/filelist.log
+#    roots:
+#      - url: /data
+#        path: /mnt/data
 
 # 4. 创建运行用户
 sudo useradd -r -s /usr/sbin/nologin -d /var/lib/filelist filelist
@@ -186,39 +218,17 @@ tail -f /var/lib/filelist/filelist.log
 
 ## 反向代理
 
-FileList 可通过 Caddy 或 Nginx 反代。以下配置已在 Caddy v2.11.1、Nginx 1.18.0 上验证。
+FileList 可通过 Caddy 或 Nginx 反代，支持根路径与子目录两种挂载方式。
 
-### Caddy
+### 方式一：根路径反代（独立域名/端口）
 
-根目录反代（独立域名/端口）：
+后端 `config.yaml` 不设 `basePath`：
 
 ```caddy
 filelist.example.com {
     reverse_proxy 127.0.0.1:8080
 }
 ```
-
-子目录反代（挂到 `/files/` 下，去掉前缀）：
-
-```caddy
-example.com {
-    handle /files/* {
-        reverse_proxy 127.0.0.1:8080 {
-            rewrite * /{path.1:}
-        }
-    }
-    handle {
-        # 其他站点
-        reverse_proxy 127.0.0.1:3000
-    }
-}
-```
-
-> `rewrite * /{path.1:}` 去掉 `/files/` 前缀，让后端收到原始路径。FileList 按 URL 路径映射 roots，**建议去前缀**保持路径干净。
-
-### Nginx
-
-根目录反代：
 
 ```nginx
 server {
@@ -235,30 +245,51 @@ server {
 }
 ```
 
-子目录反代（挂到 `/files/`，去掉前缀）：
+### 方式二：子目录反代（推荐，配置 `basePath`）
+
+后端 `config.yaml` 设置 `basePath: /files`，服务自身认识 `/files` 前缀，**反代无需任何 rewrite**，原样转发即可：
+
+```yaml
+server:
+  basePath: /files   # 页面、API、下载链接都会自动带上前缀
+```
+
+**Caddy**（与同域其他站点并存）：
+
+```caddy
+example.com {
+    handle /files/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        # 其他站点
+        reverse_proxy 127.0.0.1:3000
+    }
+}
+```
+
+**Nginx**（`proxy_pass` 末尾不要加 `/`，保持前缀转发）：
 
 ```nginx
 server {
     listen 80;
     server_name example.com;
 
-    # /files/ -> 后端 /，去掉前缀
     location /files/ {
-        proxy_pass http://127.0.0.1:8080/;
+        proxy_pass http://127.0.0.1:8080;   # 无末尾斜杠：保留 /files 前缀
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 其他站点
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3000;   # 其他站点
     }
 }
 ```
 
-> `proxy_pass` 末尾的 **`/`** 决定 Nginx 自动去掉 `/files/` 前缀：`/files/data/sub` → 后端收到 `/data/sub`。没有 `/` 则后端收到 `/files/data/sub`，路径映射会不匹配。
+> 反向兼容：若反代层已自行剥掉前缀（如 `rewrite` 或 `proxy_pass` 末尾 `/`），后端保持 `basePath` 为空即可，两种方案不要混用。
 
 ### 注意事项
 
