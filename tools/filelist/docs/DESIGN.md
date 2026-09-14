@@ -1,6 +1,6 @@
 # FileList 实现方案设计文档
 
-> **版本**: v2.1 | **更新**: 2026-09-06 | **状态**: 已实现
+> **版本**: v2.2 | **更新**: 2026-09-14 | **状态**: 已实现
 
 ## 1. 概述
 
@@ -11,13 +11,13 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 - HTTP 服务，网页浏览配置的目录（类似 caddy filebrowser / nginx autoindex）
 - 基于增量索引的文件名/目录名搜索（非实时遍历磁盘）
 - 路径映射（URL 路径与磁盘实际路径解耦）
-- 全部只读，无上传，无登录/权限系统
+- 默认只读，支持可选的文件流式上传与同名冲突自动编号
 - 跨平台：Windows + Linux，Linux 支持 systemd 开机启动
 
 ### 1.2 非目标
 
-- 不做多用户/权限/登录
-- 不支持文件上传/编辑/删除
+- 不做多用户/权限/复杂登录系统
+- 不支持文件编辑/删除（本服务定位为索引浏览、内容分发与局域网文件接收）
 - 不支持文件内容全文搜索（仅文件名/目录名匹配）
 - 不做分布式/集群部署
 
@@ -63,8 +63,9 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 | 入口 | main.go | 解析 flag，加载配置，启动 indexer 和 HTTP server，信号处理与优雅关闭 |
 | 配置 | config.go | YAML 解析，路径映射规范化，默认值填充，校验 |
 | 索引引擎 | indexer.go | 内存索引构建/加载/持久化，路径映射（virtual↔real），目录列表，搜索，后台增量更新 |
-| HTTP 服务 | server.go | 路由注册，请求处理，JSON 响应，静态文件服务 |
-| 前端 | web/index.html | 单页应用：目录浏览、搜索、面包屑、排序、下载 |
+| HTTP 服务 | server.go | 路由注册，请求处理，中间件，流式文件上传调度，静态文件服务 |
+| 工具函数 | utils.go | 纯函数与通用辅助：路径越界校验、JSON 响应、跨平台文件名安全清理、UTF-8 边界截断、同名编号 |
+| 前端 | web/index.html | 单页应用：目录浏览、搜索、面包屑、排序、下载、文件拖拽与进度上传 |
 
 ### 2.3 关键数据流
 
@@ -175,6 +176,39 @@ Indexer.Start() goroutine:
 > 只有搜索结果里的 size/时间可能滞后。需要强一致时配置 `incremental: false` 强制每次全量。
 > 索引过程不跟随目录符号链接（避免循环与逃逸）；`/raw` 下载另有 symlink 越界拦截（见 §5.4）。
 
+#### 2.3.5 文件上传流程
+
+```
+用户在目录页点击“上传”选择文件 / 拖拽文件到窗口
+  │
+  ├── 前端 uploadFiles(files)
+  │     ├── 校验非空、非搜索模式、处于具体子目录中
+  │     ├── 构建 FormData，绑定 XMLHttpRequest
+  │     ├── xhr.upload.onprogress 实时计算并显示上传百分比
+  │     └── 发送 POST /api/upload?path=/data/sub
+  │
+  └── 服务端 server.handleUpload()
+        ├── 校验 upload.enabled（未开启返回 403 Forbidden）
+        ├── 校验目标路径非根视图 /（根视图返回 400 Bad Request）
+        ├── MapVirtualToReal(vpath) 解析目标磁盘目录并验证 isDir
+        ├── withinRoot 校验防越界（软链接逃逸检测）
+        ├── r.MultipartReader() 流式迭代数据流（无 OOM 风险）:
+        │     ├── 取 filename 并调用 sanitizeFilename():
+        │     │     ├── 剥离 / 与 \ 跨平台路径前缀
+        │     │     ├── 非法字符 (<>:"/\|?*) 与控制字符替换为 _
+        │     │     ├── 裁剪首尾多余空格及尾部点
+        │     │     ├── 规避 Windows 保留设备名 (CON, AUX 等前缀 _)
+        │     │     └── truncateUTF8: 截断至 240 字节并保留扩展名
+        │     ├── 过滤 index.excludeFiles 敏感文件
+        │     ├── availableFilename() 冲突检测（自动递增数字后缀）
+        │     └── os.OpenFile + io.Copy(dst, part) 落盘（失败自动清理碎片）
+        └── 返回 JSON {"success": true, "uploaded": [...]}
+  │
+前端 onload 接收成功响应:
+  ├── 显示成功提示（3秒后自动淡出）
+  └── loadDir(state.path) 立即刷新当前列表
+```
+
 ## 3. 已修复问题记录
 
 ### 3.1 P0 - 前端空白页（已修复）
@@ -242,6 +276,9 @@ roots:
   # Windows:
   # - url: /c
   #   path: C:/
+
+upload:
+  enabled: false       # 允许上传文件 (默认 false)
 ```
 
 #### 4.1.2 配置校验规则
@@ -408,6 +445,7 @@ load():
 | GET | `/api/stats` | 返回索引状态 | JSON: Stats |
 | GET | `/raw/{url}/{path}` | 文件预览/下载 | 原始文件 |
 | GET | `/raw/{url}/{path}?download=1` | 强制下载 | 原始文件 + Content-Disposition |
+| POST | `/api/upload?path={vpath}` | 上传文件到指定目录（multipart/form-data） | JSON: UploadResult |
 
 #### 4.4.2 统一响应结构
 
@@ -480,15 +518,41 @@ func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) {
      - 支持 Last-Modified / If-Modified-Since（304 缓存）
 ```
 
+#### 4.4.6 /api/upload 端点设计
+
+```
+请求: POST /api/upload?path=/data/subdir
+Header: Content-Type: multipart/form-data; boundary=...
+Body: form-data 包含一个或多个文件部件
+
+处理流程:
+  1. Method 检查: 仅接受 POST（其它返回 405 Method Not Allowed）
+  2. 开关检查: upload.enabled 必须为 true（否则返回 403 Forbidden）
+  3. 参数检查: path 不能为空或 "/"（根目录视图禁止上传，返回 400 Bad Request）
+  4. 路径映射: MapVirtualToReal(vpath) 获得目标磁盘目录 realDir
+  5. 目录有效性: os.Stat 确认目标存在且为目录，若开启 symlink 保护执行 withinRoot 校验
+  6. 流式处理: r.MultipartReader() 遍历所有 part:
+     - 获取原始文件名 part.FileName()
+     - sanitizeFilename() 清洗文件名（剥离跨平台路径分隔符、非法字符与控制字符替换为 _、规避 Windows 保留设备名、清除尾部空格和点）
+     - truncateUTF8() 在有效字符边界将文件名截断至 240 字节上限，保留扩展名并预留数字冲突空间
+     - 过滤 index.excludeFiles 敏感文件规则（命中则跳过）
+     - availableFilename() 探测同名冲突，自动递增数字后缀（如 `doc (1).txt`）
+     - os.OpenFile(dstPath, O_CREATE|O_WRONLY|O_EXCL, 0644) + io.Copy(dst, part) 流式落盘
+     - 若传输中途异常，立即 os.Remove 清理未完成碎片
+  7. 返回结果: writeJSON(w, {"success": true, "uploaded": ["doc.txt", "photo (1).png"]})
+```
+
 ### 4.5 前端设计
 
 #### 4.5.1 页面结构
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ [📁 FileList]  [____ 搜索框 ____]      [188267项已索引] │  ← sticky header
+│ [📁 根目录]  [____ 搜索文件或目录名... ____] [搜索]   │  ← header
 ├──────────────────────────────────────────────────────┤
 │  根目录 / data / subdir                              │  ← 面包屑
+├──────────────────────────────────────────────────────┤
+│  5 项  [📤 上传] [上传进度提示]          188267项已索引 │  ← toolbar (目录内显示上传)
 ├──────────────────────────────────────────────────────┤
 │  名称          │ 大小     │ 修改时间     │            │  ← 表头(可排序)
 ├──────────────────────────────────────────────────────┤
@@ -497,7 +561,7 @@ func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) {
 │  📄 file.txt   │ 1.2 KB   │ 10:30       │  ⬇下载    │
 │  📄 file2.log  │ 4.5 MB   │ 2026-09-05 │  ⬇下载    │
 ├──────────────────────────────────────────────────────┤
-│              索引构建中... / 已索引 188267 项           │  ← 底部状态栏(可选)
+│              索引构建中... / 已索引 188267 项           │  ← 状态栏
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -543,6 +607,22 @@ var state = {
 4. 重新渲染（不重新请求 API，前端排序）
 ```
 
+**文件上传**:
+```
+1. 页面加载时读取 window.__FILELIST_UPLOAD__ 标记（由服务端 pageHTML 动态注入）
+2. 若开启上传且当前处于具体目录（state.path 非空），工具栏显示「📤 上传」按钮
+3. 用户触发方式：
+   - 点击「📤 上传」按钮 → 调起隐藏文件选择框（支持多选）
+   - 拖拽文件到表格区域 → 监听 dragover/dragleave/drop 事件，展示半透明虚线高亮视觉反馈
+4. 选择或释放文件后：
+   - 组装 FormData，逐个追加选中的文件对象
+   - 工具栏进度文本显示实时上传状态与百分比（监听 xhr.upload.onprogress）
+   - 发送 POST /api/upload?path={encodeURIComponent(state.path)}
+5. 上传完成响应：
+   - 成功：提示上传成功条数，延时 1.5 秒后自动调用 loadDir(state.path) 静默刷新列表
+   - 失败：显示错误原因并红字提示（如未启用上传、根目录禁止上传、目录不存在等）
+```
+
 #### 4.5.4 前端错误处理
 
 | 场景 | 处理 |
@@ -565,10 +645,16 @@ var state = {
 
 | 威胁 | 防护措施 |
 |------|----------|
-| 路径遍历 (`/../../../etc/passwd`) | `path.Clean` 清洗 + root 边界检查 |
+| 路径遍历 (`/../../../etc/passwd`) | `path.Clean` 清洗 + root 边界检查 (`withinRoot` / `pathWithin`) |
 | 目录列览 via /raw/ | `os.Stat` 拒绝目录，仅服务文件 |
-| 敏感文件泄露 | 配置只读，无写入能力；不解析/执行脚本 |
-| 大文件 DoS | `http.ServeFile` 支持 Range，流式传输 |
+| 敏感文件泄露/覆盖 | `index.excludeFiles`（如 `.env`、`*.key`、`id_rsa`）在浏览、搜索及上传过滤中同步生效 |
+| 大文件 / 慢速 DoS | 下载使用 `http.ServeFile` 支持 Range 流式传输；上传采用 `r.MultipartReader()` 边收边写，禁止内存缓存整包 |
+| 上传未授权 / 任意写 | 默认只读（`upload.enabled` 默认为 false）；根目录禁止上传；仅允许写入已挂载的合法物理目录 |
+| 上传恶意文件名 / 逃逸 | `sanitizeFilename` 剥离任何路径分隔符，将 Windows/Linux 非法字符与控制字符替换为 `_` |
+| Windows 保留设备名畸形注入 | 校验 `CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9` 等前缀，自动追加 `_` 前缀；清除尾部空格与点 |
+| 超长文件名溢出 | `truncateUTF8` 在有效 UTF-8 字符边界截断至 240 字节上限，保留扩展名并预留同名冲突编号空间 |
+| 同名文件意外覆盖 | `availableFilename` 自动探测同名冲突并追加递增后缀 ` (1)`, ` (2)`，原子排他创建 (`O_EXCL`) |
+| 上传中途网络中断 | 捕获 I/O 错误，立即 `os.Remove` 清理未完成的临时残留文件 |
 | 配置注入 | YAML 解析有类型安全，路径校验 |
 | 并发竞争 | `sync.RWMutex` 保护索引读写 |
 
@@ -679,6 +765,7 @@ sudo systemctl enable --now filelist
 | 鉴权 | 关闭 | `server.token` 开启后：`?token=` 或 `Authorization: Bearer` 首次校验 → Set-Cookie（HttpOnly、SameSite=Lax、Path=basePath）会话，`subtle.ConstantTimeCompare` 防时序 |
 | 路径穿越 | 已挡 | `path.Clean` + 最长前缀匹配（单测覆盖 `..` 与编码变体） |
 | 未知路径 | 200 SPA | 未注册路径返回 index.html（SPA 深链接需要），非数据泄漏 |
+| 文件上传与写入安全 | 默认关闭 | `upload.enabled` 明确开启才可用；根目录只读；仅支持已挂载的有效子目录；严格跨平台文件名清洗与 UTF-8 字符边界截断；Windows 保留设备名规避；同名文件递增后缀防覆盖；流式落盘防 OOM；中断即时清理碎片 |
 
 ## 6. 实现状态
 
@@ -686,12 +773,26 @@ sudo systemctl enable --now filelist
 
 | 文件 | 已实现功能 | 状态 |
 |------|------|--------|
-| web/index.html | SPA 前端：目录浏览、搜索、面包屑、排序、下载、暗色模式；BASE 注入支持 basePath；文件名 `#`/`?` 编码修复 | ✅ |
-| server.go | basePath 剥离中间件；token 鉴权（query/Bearer/Cookie）；symlink 越界 403；html 强制下载；nosniff 头；RFC 5987 下载头；403/404 区分 | ✅ |
+| web/index.html | SPA 前端：目录浏览、搜索、面包屑、排序、下载、暗色模式；BASE 注入支持 basePath；文件名 `#`/`?` 编码修复；文件选择与拖拽上传（带实时进度与自动刷新） | ✅ |
+| server.go | basePath 剥离中间件；token 鉴权（query/Bearer/Cookie）；symlink 越界 403；html 强制下载；nosniff 头；RFC 5987 下载头；403/404 区分；/api/upload 流式上传处理与权限校验 | ✅ |
+| utils.go | 独立纯函数与通用工具：安全路径判断（pathWithin/withinRoot）、HTTP JSON/下载头处理（writeJSON/contentDisposition/constEqual/isInlineRisk）、跨平台安全文件名处理（sanitizeFilename/truncateUTF8/splitNameExt/availableFilename） | ✅ |
 | indexer.go | 真增量索引（目录 signature 跳过 + generation GC）；maxDepth；excludeDirs/excludeFiles（浏览与搜索一致）；持久化 v2（map + dirStamp，tmp+rename） | ✅ |
-| config.go | 拒绝 url: /；URL 长度降序排序；basePath 归一化与字符校验；token；security 段；*bool 默认值处理 | ✅ |
+| config.go | 拒绝 url: /；URL 长度降序排序；basePath 归一化与字符校验；token；security 段；upload.enabled 配置项；*bool 默认值处理 | ✅ |
 | main.go | 首次运行生成默认配置；printStartup 启动横幅；dataDir 自动创建；root 指向配置目录时 WARN | ✅ |
 
 测试覆盖（`go test ./... -v`，全部通过）：
 - `config_test.go`: 配置校验 + basePath 归一化/非法拒绝 + 默认值/显式 opt-out
-- `indexer_test.go`: 路由映射（5）+ 增量正确性（无变化跳过/新增/删除）+ maxDepth + excludeFiles/excludeDirs 一致性 + 目录软链接不跟随 + pathWithin + 持久化 save/load 往返
+- `indexer_test.go`: 路由映射（5）+ 增量正确性（无变化跳过/新增/删除）+ maxDepth + excludeFiles/excludeDirs 一致性 + 目录软链接不跟随 + pathWithin + 持持久化 save/load 往返
+- `utils_test.go`: 文件名分割与同名冲突后缀递增（splitNameExt / availableFilename）+ UTF-8 边界安全截断（truncateUTF8）+ 跨平台与 Windows 保留设备名清洗测试（sanitizeFilename）
+- `server_test.go`: HTTP 端点测试，覆盖上传开关权限拦截（403/400）、敏感文件排除拦截、流式多文件落盘与同名冲突自动后缀递增验证
+
+端到端测试（E2E Browser Automation，`.\tests\run-e2e.ps1`，全部通过）：
+- **测试框架**：Playwright + 本机 Microsoft Edge (Chromium) 无头模式，隔离于 `tests/e2e/`。
+- **服务生命周期**：`test-server.js` 动态分配端口并拉起 `filelist.exe` 测试实例，完成全量夹具准备与销毁。
+- **覆盖场景（20 项用例）**：
+  - `navigation.spec.js`: 挂载点首屏展示、目录进入、HTML5 History 路由、面包屑返回上级/根目录、空目录状态提示。
+  - `sorting.spec.js`: 名称升降序切换（保持目录置顶）、大小与修改时间列排序。
+  - `search.spec.js`: 跨目录全量防抖搜索、`<mark>` 关键字高亮、无结果提示、清空恢复原目录、点击搜索结果跳转至目标目录。
+  - `upload.spec.js`: 上传按钮动态显隐、`<input type="file">` 上传后自动刷新展示、同名文件冲突自动递增编号 `(1)`、敏感文件规则拦截、拖拽上传（Drag & Drop）与 `.drop-active` 样式触发。
+  - `download.spec.js`: 操作列文件下载触发与数据流校验、直接 Raw 预览地址验证。
+  - `auth.spec.js`: 未鉴权拦截（HTML 401 与 API JSON 401）、`?token=` 首次验证并写入 `filelist_token` Cookie 会话保活、后续免 token 无缝通行。

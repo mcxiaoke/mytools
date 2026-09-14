@@ -133,6 +133,52 @@ header {
   font-size: 12px;
   color: var(--text-dim);
 }
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.upload-btn {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.upload-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.upload-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.upload-status {
+  font-size: 12px;
+  color: var(--accent);
+}
+.upload-status.error {
+  color: #e53e3e;
+}
+.upload-status.success {
+  color: #2e7d32;
+}
+@media (prefers-color-scheme: dark) {
+  .upload-status.success { color: #66bb6a; }
+}
+.drop-active {
+  outline: 2px dashed var(--accent) !important;
+  outline-offset: -4px;
+}
 .stats { display: flex; align-items: center; gap: 6px; }
 .stats .building {
   display: inline-block;
@@ -288,7 +334,12 @@ mark {
   <div class="breadcrumb" id="breadcrumb"></div>
 
   <div class="toolbar">
-    <span id="itemCount"></span>
+    <div class="toolbar-left">
+      <span id="itemCount"></span>
+      <button id="uploadBtn" class="upload-btn" type="button" style="display:none;" title="上传文件到当前目录">&#8679; 上传</button>
+      <input type="file" id="uploadInput" multiple style="display:none;">
+      <span id="uploadStatus" class="upload-status"></span>
+    </div>
     <span class="stats" id="stats"></span>
   </div>
 
@@ -306,6 +357,7 @@ mark {
 
 // Base path injected by the server (empty when deployed at the domain root).
 var BASE = "__FILELIST_BASE__";
+var UPLOAD_ENABLED = __FILELIST_UPLOAD__;
 
 // ---- State ----
 var state = {
@@ -331,6 +383,9 @@ var itemCountEl = D.getElementById('itemCount');
 var statsEl = D.getElementById('stats');
 var homeLink = D.getElementById('homeLink');
 var loadingEl = D.getElementById('loading');
+var uploadBtn = D.getElementById('uploadBtn');
+var uploadInput = D.getElementById('uploadInput');
+var uploadStatus = D.getElementById('uploadStatus');
 
 // ---- Helpers ----
 function esc(s) {
@@ -433,6 +488,7 @@ function navigate(path, skipState, force) {
   }
 
   updateClearBtn();
+  updateUploadBtn();
   searchInput.value = '';
   loadDir(path);
 }
@@ -447,6 +503,7 @@ function doSearch(query) {
   state.searchMode = true;
   state.searchQuery = query;
   updateClearBtn();
+  updateUploadBtn();
 
   tableWrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>搜索中...</div></div>';
   breadcrumbEl.innerHTML = '<span class="cur">搜索: ' + esc(query) + '</span>';
@@ -471,6 +528,7 @@ function loadDir(path) {
   lastAction = function() { loadDir(path); };
   tableWrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>加载中...</div></div>';
   renderBreadcrumb(path);
+  updateUploadBtn();
 
   var url;
   if (!path) {
@@ -627,6 +685,77 @@ function updateClearBtn() {
   clearBtn.style.display = state.searchMode ? 'inline-block' : 'none';
 }
 
+function updateUploadBtn() {
+  if (!UPLOAD_ENABLED || state.searchMode || !state.path) {
+    uploadBtn.style.display = 'none';
+  } else {
+    uploadBtn.style.display = 'inline-flex';
+  }
+}
+
+// ---- Upload ----
+var uploading = false;
+
+function setUploadStatus(msg, type) {
+  uploadStatus.textContent = msg || '';
+  uploadStatus.className = 'upload-status' + (type ? ' ' + type : '');
+}
+
+function uploadFiles(files) {
+  if (!UPLOAD_ENABLED || !files || files.length === 0) return;
+  if (!state.path) {
+    alert('请先进入具体目录后再上传文件');
+    return;
+  }
+  if (uploading) return;
+
+  uploading = true;
+  uploadBtn.disabled = true;
+  setUploadStatus('准备上传...', '');
+
+  var formData = new FormData();
+  for (var i = 0; i < files.length; i++) {
+    formData.append('files', files[i]);
+  }
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', BASE + '/api/upload?path=' + encodeURIComponent(state.path));
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      var pct = Math.round((e.loaded / e.total) * 100);
+      setUploadStatus('上传中 ' + pct + '%...', '');
+    }
+  };
+
+  xhr.onload = function() {
+    uploading = false;
+    uploadBtn.disabled = false;
+    if (xhr.status === 200) {
+      try {
+        var resp = JSON.parse(xhr.responseText);
+        var count = (resp.uploaded && resp.uploaded.length) || files.length;
+        setUploadStatus('成功上传 ' + count + ' 个文件', 'success');
+      } catch(e) {
+        setUploadStatus('上传完成', 'success');
+      }
+      setTimeout(function() { setUploadStatus('', ''); }, 3000);
+      loadDir(state.path);
+    } else {
+      var err = xhr.responseText || ('HTTP ' + xhr.status);
+      setUploadStatus('上传失败: ' + err, 'error');
+    }
+  };
+
+  xhr.onerror = function() {
+    uploading = false;
+    uploadBtn.disabled = false;
+    setUploadStatus('网络错误，上传失败', 'error');
+  };
+
+  xhr.send(formData);
+}
+
 // ---- Stats ----
 function loadStats() {
   fetch(BASE + '/api/stats')
@@ -658,6 +787,38 @@ searchInput.addEventListener('keydown', function(e) {
 clearBtn.addEventListener('click', function() {
   searchInput.value = '';
   navigate(state.path, true, true);
+});
+
+uploadBtn.addEventListener('click', function() {
+  uploadInput.value = '';
+  uploadInput.click();
+});
+
+uploadInput.addEventListener('change', function() {
+  if (uploadInput.files && uploadInput.files.length > 0) {
+    uploadFiles(uploadInput.files);
+  }
+});
+
+window.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  if (UPLOAD_ENABLED && state.path && !state.searchMode) {
+    tableWrap.classList.add('drop-active');
+  }
+});
+
+window.addEventListener('dragleave', function(e) {
+  if (!e.relatedTarget || e.relatedTarget === document.documentElement) {
+    tableWrap.classList.remove('drop-active');
+  }
+});
+
+window.addEventListener('drop', function(e) {
+  e.preventDefault();
+  tableWrap.classList.remove('drop-active');
+  if (UPLOAD_ENABLED && state.path && !state.searchMode && e.dataTransfer && e.dataTransfer.files.length > 0) {
+    uploadFiles(e.dataTransfer.files);
+  }
 });
 
 // popstate: handle browser back/forward

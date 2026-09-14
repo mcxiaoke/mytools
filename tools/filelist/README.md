@@ -10,7 +10,8 @@
 - **路径映射** - URL 路径与磁盘路径可不同，如 `/data -> /mnt/data`
 - **子目录部署** - 支持 `basePath`，可挂到反代（Caddy/Nginx）的任意子路径下
 - **文件下载/预览** - 点击文件在线预览或下载
-- **全部只读** - 不支持上传；可选 token 鉴权，默认无鉴权开箱即用
+- **文件上传（可选）** - 支持网页按钮与拖拽流式上传，大文件低内存占用，同名冲突自动后缀编号；默认只读
+- **访问控制** - 可选 token 鉴权，默认无鉴权开箱即用
 - **跨平台** - 单二进制，支持 Windows 和 Linux
 - **零依赖运行** - 编译为单个可执行文件，无运行时依赖
 
@@ -62,6 +63,7 @@ cp config.sample.yaml config.yaml
 | `index.excludeFiles` | 内置敏感文件 | 跳过的文件名（glob，如 `.env`、`*.key`） |
 | `security.allowOutsideSymlinks` | `false` | 是否允许下载指向 root 之外的软链接目标 |
 | `security.blockInlineHTML` | `true` | html/svg 文件是否强制下载而非内联渲染 |
+| `upload.enabled` | `false` | 是否允许上传文件（需进入具体目录，同名冲突自动后缀编号） |
 | `roots` | — | 路径映射列表 |
 
 > 路径展开：`log.file`、`dataDir`、`index.persist`、`roots[].path` 中的 `~` 会展开为用户主目录。
@@ -76,8 +78,27 @@ cp config.sample.yaml config.yaml
 | **软链接越界拦截** | `security.allowOutsideSymlinks: true` | 默认拦截通过软链接读取 root 之外的文件（如指向 `/etc` 的链接）；内网需要发布软链接内容时再开启。索引过程从不跟随目录软链接。 |
 | **html/svg 防内联 XSS** | `security.blockInlineHTML: false` | 默认 `.html`/`.svg` 等一律强制下载，不在站点同源渲染（防止共享的 html 窃取本服务数据）；需要在线预览网页时关闭。 |
 | **敏感文件默认排除** | `index.excludeFiles` | 默认排除 `.env`、`.htpasswd`、`*.key`、`id_rsa` 等敏感文件；显式写空列表 `excludeFiles: []` 可取消。搜索和目录浏览同时生效。 |
+| **文件上传安全防护** | `upload.enabled: false`（默认） | 默认只读；开启后强制限制非根目录上传；自动清洗非法字符与控制字符、规避 Windows 保留设备名、UTF-8 字符边界截断、同名自动追加 `(1)` 编号防覆盖、敏感文件拦截、流式落盘防 OOM。 |
 
 > 目录浏览（实时读盘）与索引搜索共享同一套排除规则，行为一致；默认的 root 排除项（`.git`、`node_modules` 等）也同时作用于两者。
+
+## 文件上传（可选能力）
+
+默认处于关闭状态（只读模式）。如需开启上传功能，在配置文件中启用：
+
+```yaml
+upload:
+  enabled: true
+```
+
+- **使用方式**：进入具体子目录后，点击工具栏中的“上传”按钮或直接将文件拖拽至网页内。
+- **实时进度**：支持大文件上传进度百分比展示，上传完成后自动刷新文件列表。
+- **流式写入**：服务端使用流式传输直接落盘，有效降低传输大文件时的内存开销。
+- **同名防覆盖**：当目录中已存在同名文件时，自动按数字编号生成新文件名（例如 `file (1).txt`、`file (2).txt`），保障原文件不被意外覆盖。
+- **跨平台文件名安全**：自动过滤或转换不同操作系统下的非法字符（如 `<>:"/\|?*` 及 ASCII 控制字符替换为 `_`），规避 Windows 保留设备名称（`CON`、`PRN`、`AUX`、`NUL`、`COM1-9` 等自动前缀 `_`），并清理尾部非法空格和点。
+- **超长文件名截断**：适配主流文件系统的 255 字节单文件名限制，超长文件名会在合法 UTF-8 字符边界对主干进行截断，保留完整后缀扩展名并预留数字冲突编号空间。
+- **目录限制**：根路径 `/` 仅展示各个挂载点（Roots），无法直接上传；必须进入具体的目录后才能上传。
+- **敏感文件防护**：与目录索引一致，命中的敏感文件（如 `.env` 等）会被禁止上传。
 
 ### 文件位置说明
 
@@ -297,9 +318,36 @@ server {
 |------|------|
 | 文件下载 | FileList 用 `Content-Disposition` 和 `/raw/` 路径处理下载，反代不影响 |
 | WebSocket | 不需要，FileList 是纯 HTTP |
-| 超时 | 大文件下载可能超时，Nginx 加 `proxy_read_timeout 600s;` |
-| 请求体 | 只读服务无需调 `client_max_body_size` |
+| 超时 | 大文件下载/上传可能耗时较长，Nginx 建议配置 `proxy_read_timeout 600s; proxy_send_timeout 600s;` |
+| 请求体 / 上传 | 默认只读模式无需调整；若开启文件上传且需传输大文件，Nginx 建议配置 `client_max_body_size 0;`（或按需设为如 `10G`） |
 | 编码 | API 返回 JSON 已带 `charset=utf-8`，反代不影响 |
+
+## 测试
+
+### 单元测试与接口测试（Go）
+
+```bash
+cd src
+go test -v ./...
+```
+
+### 端到端测试（E2E 浏览器自动化）
+
+项目采用 Playwright 驱动本机 Microsoft Edge (Chromium) 浏览器运行全流程自动化测试。自动分配测试端口并启动 `filelist.exe`、准备临时目录与配置夹具、执行真实浏览器交互断言并在测试完成后自动清理。
+
+```powershell
+# 一键运行全部 E2E 测试（无头模式）
+.\tests\run-e2e.ps1
+
+# 调试模式（带浏览器界面交互）
+.\tests\run-e2e.ps1 --headed
+
+# 交互式 Playwright UI 运行器
+.\tests\run-e2e.ps1 --ui
+
+# 运行单个测试用例集（如上传测试）
+.\tests\run-e2e.ps1 specs/upload.spec.js
+```
 
 ## API
 
@@ -312,6 +360,7 @@ server {
 | `GET /api/stats` | 索引统计 |
 | `GET /raw/data/file.txt` | 文件预览/下载 |
 | `GET /raw/data/file.txt?download=1` | 强制下载 |
+| `POST /api/upload?path=/data` | 上传文件到指定目录（multipart/form-data，需开启 `upload.enabled`） |
 
 ## 项目结构
 
@@ -321,11 +370,16 @@ filelist/
 │   ├── main.go           # 入口：配置加载、日志初始化、服务启动、优雅关闭
 │   ├── config.go         # 配置解析（YAML）与路径映射
 │   ├── indexer.go        # 增量索引引擎（内存索引+持久化+后台更新）
-│   ├── server.go         # HTTP 路由与处理器
+│   ├── server.go         # HTTP 路由与处理器（含流式文件上传）
+│   ├── utils.go          # 纯函数与通用工具（文件名安全清洗、UTF-8边界截断、同名编号、越界检测等）
 │   ├── log.go            # 日志（级别过滤+文件输出）
-│   ├── web/index.html    # 嵌入式 Web UI（单页应用）
+│   ├── web/index.html    # 嵌入式 Web UI（单页应用，支持浏览与拖拽上传）
+│   ├── *_test.go         # 单元测试与接口集成测试
 │   ├── go.mod
 │   └── go.sum
+├── tests/                # 测试套件
+│   ├── run-e2e.ps1       # 一键运行 E2E 浏览器自动化测试脚本
+│   └── e2e/              # Playwright E2E 测试工程（配置、夹具、测试用例）
 ├── build/                # 编译产物输出目录
 ├── data/                 # 运行时数据目录（索引缓存等，运行时生成）
 ├── config.sample.yaml    # 示例配置（含全部默认值和注释）
@@ -334,7 +388,8 @@ filelist/
 │   ├── filelist.service        # systemd 服务（专用用户 + 安全加固）
 │   └── filelist-root.service   # systemd 服务（root 直接运行，简化版）
 ├── docs/
-│   └── DESIGN.md         # 实现方案设计文档
+│   ├── DESIGN.md         # 实现方案设计文档
+│   └── CHANGES-*.md      # 重点变更记录
 ├── build.ps1             # PowerShell 构建脚本
 └── Makefile              # Make 构建脚本
 ```
