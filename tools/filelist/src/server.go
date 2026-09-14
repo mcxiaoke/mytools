@@ -2,9 +2,10 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
+	"embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,8 +13,8 @@ import (
 	"time"
 )
 
-//go:embed web/index.html
-var indexHTML []byte
+//go:embed web/*
+var webFS embed.FS
 
 // basePlaceholder is replaced at request time with the configured base path.
 const basePlaceholder = "__FILELIST_BASE__"
@@ -50,8 +51,22 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
+	mux.Handle("/static/", s.handleStatic())
 	mux.HandleFunc("/", s.handleIndex)
 	return mux
+}
+
+// handleStatic serves static assets from embedded web/static directory.
+func (s *Server) handleStatic() http.Handler {
+	sub, err := fs.Sub(webFS, "web/static")
+	if err != nil {
+		panic(err)
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		fileServer.ServeHTTP(w, r)
+	}))
 }
 
 // Handler returns the full middleware chain: security headers, base-path
@@ -62,7 +77,7 @@ func (s *Server) Handler() http.Handler {
 
 // handleIndex serves the embedded SPA for all non-API, non-raw paths.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/raw/") {
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/raw/") || strings.HasPrefix(r.URL.Path, "/static/") {
 		http.NotFound(w, r)
 		return
 	}
@@ -73,7 +88,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // pageHTML returns the embedded SPA with the base path and upload enabled injected.
 func (s *Server) pageHTML() []byte {
-	out := bytes.ReplaceAll(indexHTML, []byte(basePlaceholder), []byte(s.cfg.Server.BasePath))
+	tmpl, err := webFS.ReadFile("web/index.html")
+	if err != nil {
+		return []byte("internal error: template missing")
+	}
+	out := bytes.ReplaceAll(tmpl, []byte(basePlaceholder), []byte(s.cfg.Server.BasePath))
 	uploadVal := []byte("false")
 	if s.cfg.Upload.Enabled {
 		uploadVal = []byte("true")
