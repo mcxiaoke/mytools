@@ -84,6 +84,13 @@ security:
   #   downloads instead of rendering inline — a shared HTML file must not run
   #   scripts in this site's own origin. false: let the browser render them.
 
+# Upload settings. Disabled by default for read-only safety.
+upload:
+  enabled: false         # true: allow uploading files to directories
+                         # Uploading is only permitted inside concrete subdirectories
+                         # (not the root catalog view). Filename conflicts are
+                         # automatically suffixed with numbers, e.g. file (1).txt.
+
 # Path mappings: URL path -> real disk path
 # - URL: virtual web path shown in browser (must start with /)
 # - Path: real disk path (use forward slashes for cross-platform)

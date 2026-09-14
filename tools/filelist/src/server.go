@@ -2,12 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto/subtle"
 	_ "embed"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +17,9 @@ var indexHTML []byte
 
 // basePlaceholder is replaced at request time with the configured base path.
 const basePlaceholder = "__FILELIST_BASE__"
+
+// uploadPlaceholder is replaced at request time with true/false indicating if upload is enabled.
+const uploadPlaceholder = "__FILELIST_UPLOAD__"
 
 // tokenCookieName holds the access token once a visitor has authenticated.
 const tokenCookieName = "filelist_token"
@@ -46,6 +47,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/list", s.handleList)
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/", s.handleIndex)
@@ -69,9 +71,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(s.pageHTML())
 }
 
-// pageHTML returns the embedded SPA with the base path injected.
+// pageHTML returns the embedded SPA with the base path and upload enabled injected.
 func (s *Server) pageHTML() []byte {
-	return bytes.ReplaceAll(indexHTML, []byte(basePlaceholder), []byte(s.cfg.Server.BasePath))
+	out := bytes.ReplaceAll(indexHTML, []byte(basePlaceholder), []byte(s.cfg.Server.BasePath))
+	uploadVal := []byte("false")
+	if s.cfg.Upload.Enabled {
+		uploadVal = []byte("true")
+	}
+	return bytes.ReplaceAll(out, []byte(uploadPlaceholder), uploadVal)
 }
 
 // handleFavicon serves a simple SVG favicon to avoid 404 noise.
@@ -190,62 +197,6 @@ func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, realPath)
 }
 
-// isInlineRisk reports whether a file could execute script when rendered
-// inline by the browser.
-func isInlineRisk(name string) bool {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".html", ".htm", ".xhtml", ".svg", ".svgz", ".mhtml":
-		return true
-	}
-	return false
-}
-
-// withinRoot reports whether realPath (after resolving symlinks) still lives
-// inside rootPath.
-func withinRoot(realPath, rootPath string) bool {
-	resolved, err := filepath.EvalSymlinks(realPath)
-	if err != nil {
-		// cannot resolve (missing file, permission) — fall through to the
-		// lexical check below; os.Stat later decides the response.
-		resolved = realPath
-	}
-	rootResolved, err := filepath.EvalSymlinks(rootPath)
-	if err != nil {
-		rootResolved = rootPath
-	}
-	return pathWithin(resolved, rootResolved)
-}
-
-// pathWithin reports whether child is parent or lives under it.
-func pathWithin(child, parent string) bool {
-	rel, err := filepath.Rel(parent, child)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return true
-	}
-	// case-insensitive fallback: Windows drive letters, 8.3 names, mounts
-	c := strings.ToLower(filepath.Clean(child))
-	p := strings.ToLower(filepath.Clean(parent))
-	if c == p {
-		return true
-	}
-	return strings.HasPrefix(c, p+string(filepath.Separator))
-}
-
-// contentDisposition builds a Content-Disposition header value with
-// RFC 5987 encoding for non-ASCII filenames.
-func contentDisposition(filename string) string {
-	encoded := url.PathEscape(filename)
-	return fmt.Sprintf(`attachment; filename*=UTF-8''%s`, encoded)
-}
-
-// writeJSON encodes v as JSON and writes it to the response.
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		logger.Error("server: json encode: %v", err)
-	}
-}
-
 // securityHeaders adds hardening headers to every response. nosniff matters
 // most: without it a shared .html file would render in the site's origin.
 func securityHeaders(next http.Handler) http.Handler {
@@ -317,11 +268,6 @@ func (s *Server) tokenOK(r *http.Request, token string) bool {
 	return false
 }
 
-// constEqual compares two strings without leaking length/timing.
-func constEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
 // setTokenCookie stores the token so subsequent requests are authenticated
 // without carrying it in the URL.
 func (s *Server) setTokenCookie(w http.ResponseWriter, token string) {
@@ -369,3 +315,117 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		logger.Debug("%s %s %s %v", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
 	})
 }
+
+// handleUpload processes file uploads to a directory via multipart/form-data.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.cfg.Upload.Enabled {
+		http.Error(w, "upload disabled", http.StatusForbidden)
+		return
+	}
+
+	vpath := r.URL.Query().Get("path")
+	if vpath == "" || vpath == "/" {
+		http.Error(w, "cannot upload to root view, please select a directory", http.StatusBadRequest)
+		return
+	}
+
+	realDir, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		http.Error(w, "destination path not found", http.StatusNotFound)
+		return
+	}
+
+	info, err := os.Stat(realDir)
+	if err != nil || !info.IsDir() {
+		http.Error(w, "destination is not a valid directory", http.StatusBadRequest)
+		return
+	}
+
+	if !s.cfg.Security.AllowOutsideSymlinks {
+		if root, ok := s.indexer.RootFor(vpath); ok && !withinRoot(realDir, root.Path) {
+			logger.Warn("server: upload blocked outside root: %s", vpath)
+			http.Error(w, "forbidden: target outside root", http.StatusForbidden)
+			return
+		}
+	}
+
+	reader, err := r.MultipartReader()
+	if err != nil {
+		logger.Warn("server: upload multipart error: %v", err)
+		http.Error(w, "invalid multipart request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var uploaded []string
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			logger.Error("server: upload read part: %v", err)
+			http.Error(w, "error reading upload: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		filename := part.FileName()
+		if filename == "" {
+			part.Close()
+			continue
+		}
+
+		// Prevent directory traversal attacks and ensure safe filename across OS
+		cleanName := sanitizeFilename(filename)
+		if cleanName == "" {
+			part.Close()
+			continue
+		}
+
+		// Exclude sensitive or configured files
+		if s.indexer.Excluded(cleanName, false) {
+			logger.Warn("server: upload blocked excluded file: %s", cleanName)
+			part.Close()
+			continue
+		}
+
+		finalName := availableFilename(realDir, cleanName)
+		dstPath := filepath.Join(realDir, finalName)
+
+		dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+		if err != nil {
+			// In case of concurrent creation, retry availableFilename
+			finalName = availableFilename(realDir, cleanName)
+			dstPath = filepath.Join(realDir, finalName)
+			dst, err = os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+			if err != nil {
+				part.Close()
+				logger.Error("server: failed creating file %s: %v", dstPath, err)
+				http.Error(w, fmt.Sprintf("cannot create file %s: %v", finalName, err), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		_, copyErr := io.Copy(dst, part)
+		dst.Close()
+		part.Close()
+		if copyErr != nil {
+			logger.Error("server: failed writing file %s: %v", dstPath, copyErr)
+			os.Remove(dstPath)
+			http.Error(w, fmt.Sprintf("failed writing file %s: %v", finalName, copyErr), http.StatusInternalServerError)
+			return
+		}
+
+		uploaded = append(uploaded, finalName)
+	}
+
+	logger.Info("server: uploaded %d file(s) to %s: %v", len(uploaded), vpath, uploaded)
+	writeJSON(w, map[string]any{
+		"success":  true,
+		"uploaded": uploaded,
+	})
+}
+

@@ -35,6 +35,9 @@ type Config struct {
 		AllowOutsideSymlinks bool  `yaml:"allowOutsideSymlinks"` // allow /raw to serve symlink targets outside the root
 		BlockInlineHTML      *bool `yaml:"blockInlineHTML"`      // true (default): force html/svg download instead of inline render
 	} `yaml:"security"`
+	Upload struct {
+		Enabled bool `yaml:"enabled"` // allow uploading files
+	} `yaml:"upload"`
 	Roots []RootMapping `yaml:"roots"`
 
 	// configDir is the directory of the config file, used for resolving
