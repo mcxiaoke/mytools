@@ -174,7 +174,11 @@ fn full_update_flow_with_manifest() {
     let up = target.join(".updater");
     assert!(up.join("state").exists(), "state must be written");
     assert!(!up.join("journal").exists());
-    assert!(!up.join("lock").exists());
+    // 看门狗会在 Worker 退出后醒来取锁自检（无 Journal 即退出），锁短暂存在属正常；轮询等待释放
+    assert!(
+        wait_for(|| !up.join("lock").exists(), Duration::from_secs(15)),
+        "lock must be released after worker and watchdog exit"
+    );
     let prev = fs::read_dir(up.join("previous")).unwrap().count();
     assert_eq!(prev, 1, "previous generation retained");
     // state 版本正确
@@ -400,4 +404,176 @@ fn debug_read_cmd() {
         Ok(v) => assert!(v.len() > 1000, "cmd.exe too small: {}", v.len()),
         Err(e) => panic!("cmd.exe read failed: {}", e),
     }
+}
+
+/// 启动一个长驻“假 Worker”（ping 自身，System32 真 PE），返回 pid。
+fn spawn_fake_worker() -> (u32, String, std::process::Child) {
+    let img = r"C:\Windows\System32\ping.exe".to_string();
+    let child = Command::new(&img).args(["-n", "30", "127.0.0.1"]).spawn().expect("spawn ping");
+    (child.id(), img, child)
+}
+
+fn kill_pid(pid: u32) {
+    let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
+}
+
+fn wait_journal_gone(target: &Path, timeout: Duration) -> bool {
+    wait_for(|| !target.join(".updater\\journal").exists(), timeout)
+}
+
+/// 看门狗在 Worker 退出后接管：COMMITTED 现场收尾（state 补写 + previous 转移 + 删 Journal + 拉起）。
+#[test]
+fn watchdog_finalizes_committed() {
+    let tmp = TempDir::new("wd-commit");
+    let target = tmp.path().join("target");
+    make_target(&target);
+    let up = target.join(".updater");
+    let gen = "20260914T140000-3";
+    let backup = up.join("backup").join(gen);
+    write_bin(&backup.join("app.exe"), b"old version bytes");
+    write_bin(&target.join("app.exe"), &new_app_bytes()); // 已提交：新版就位
+    let tmpdir = up.join("tmp").join(gen);
+    fs::create_dir_all(&tmpdir).unwrap();
+    fs::write(
+        up.join("journal"),
+        format!(
+            "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nSTAGE:APPLYING\nMOVED:app.exe\nSTAGE:COMMITTED\n",
+            gen,
+            target.canonicalize().unwrap().to_string_lossy(),
+            backup.canonicalize().unwrap().to_string_lossy(),
+            tmpdir.canonicalize().unwrap().to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let (worker_pid, worker_image, mut worker) = spawn_fake_worker();
+    let mut st = Command::new(exe_path())
+        .args([
+            "--watchdog",
+            "--target",
+            target.to_str().unwrap(),
+            "--watch-pid",
+            &worker_pid.to_string(),
+            "--watch-image",
+            &worker_image,
+            "--launch",
+            "app.exe",
+        ])
+        .spawn()
+        .expect("spawn watchdog");
+    std::thread::sleep(Duration::from_millis(800)); // 让看门狗进入等待
+    kill_pid(worker_pid);
+    let _ = worker.wait();
+    let _ = st.wait();
+
+    assert!(wait_journal_gone(&target, Duration::from_secs(30)), "watchdog must finalize the journal");
+    let s = read(&up.join("state"));
+    assert!(s.contains("VERSION:1.5.0"), "state repaired from TOVER");
+    assert!(up.join("previous").join(gen).exists(), "backup moved to previous");
+    assert_eq!(fs::read(target.join("app.exe")).unwrap(), new_app_bytes(), "committed dir must not be touched");
+    assert!(!up.join("lock").exists(), "lock removed via DELETE_ON_CLOSE");
+}
+
+/// 看门狗在 Worker 退出后接管：APPLYING 现场回滚（旧版还原 + 新增删除）。
+#[test]
+fn watchdog_rolls_back_applying() {
+    let tmp = TempDir::new("wd-apply");
+    let target = tmp.path().join("target");
+    make_target(&target);
+    let up = target.join(".updater");
+    let gen = "20260914T150000-4";
+    let backup = up.join("backup").join(gen);
+    write_bin(&backup.join("app.exe"), &old_app_bytes());
+    write_bin(&target.join("app.exe"), &new_app_bytes()); // 已替换
+    write(&target.join("new.dll"), "new dll"); // 已新增
+    let tmpdir = up.join("tmp").join(gen);
+    fs::create_dir_all(&tmpdir).unwrap();
+    fs::write(
+        up.join("journal"),
+        format!(
+            "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nNEW:new.dll\nDIR:newdir\nSTAGE:APPLYING\n",
+            gen,
+            target.canonicalize().unwrap().to_string_lossy(),
+            backup.canonicalize().unwrap().to_string_lossy(),
+            tmpdir.canonicalize().unwrap().to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let (worker_pid, worker_image, mut worker) = spawn_fake_worker();
+    let mut st = Command::new(exe_path())
+        .args([
+            "--watchdog",
+            "--target",
+            target.to_str().unwrap(),
+            "--watch-pid",
+            &worker_pid.to_string(),
+            "--watch-image",
+            &worker_image,
+            "--launch",
+            "app.exe",
+        ])
+        .spawn()
+        .expect("spawn watchdog");
+    std::thread::sleep(Duration::from_millis(800));
+    kill_pid(worker_pid);
+    let _ = worker.wait();
+    let _ = st.wait();
+
+    assert!(wait_journal_gone(&target, Duration::from_secs(30)), "watchdog must finish the rollback");
+    assert_file_is(&target.join("app.exe"), &old_app_bytes());
+    assert!(!target.join("new.dll").exists(), "added file removed on rollback");
+}
+
+/// --rollback-previous：用保留代还原上一版本（ADDED 文件被删除、state 回退、可再回退）。
+#[test]
+fn rollback_previous_reverts_to_retained_generation() {
+    let tmp = TempDir::new("rbprev");
+    let target = tmp.path().join("target");
+    make_target(&target);
+    let up = target.join(".updater");
+    let gen = "20260914T160000-5";
+    let prev = up.join("previous").join(gen);
+    // 上一版本内容：app.exe = 旧 PE；data/f.txt = 旧数据
+    write_bin(&prev.join("app.exe"), &old_app_bytes());
+    write(&prev.join("data\\f.txt"), "old data");
+    fs::write(
+        prev.join("_meta.txt"),
+        "VERSION:1.0.0\nTSA:2026-09-14T10:00:00\nADDED:data\\new_only.txt\n",
+    )
+    .unwrap();
+    // 当前（新版）状态：v1.0.1 已安装，含“新版独有”文件
+    write_bin(&target.join("app.exe"), &new_app_bytes());
+    write(&target.join("data\\f.txt"), "new data");
+    write(&target.join("data\\new_only.txt"), "added by new version");
+    fs::write(up.join("state"), "STATE:1\nVERSION:1.0.1\nGEN:g0\nINSTALLED_AT:x\n").unwrap();
+
+    let code = run_updater(&target, &["--rollback-previous", "--launch", "app.exe"]);
+    assert_eq!(code, 0, "rollback-previous must succeed");
+    assert_file_is(&target.join("app.exe"), &old_app_bytes());
+    assert_eq!(read(&target.join("data\\f.txt")), "old data");
+    assert!(!target.join("data\\new_only.txt").exists(), "ADDED file must be removed on revert");
+    let s = read(&up.join("state"));
+    assert!(s.contains("VERSION:1.0.0"), "state rolled back");
+    // 可再回退：本次回退事务的 backup（= 回退前的 v1.0.1）作为最新代保留（旧来源代按规格清理）
+    assert!(
+        wait_for(
+            || {
+                let prev_dir = up.join("previous");
+                match fs::read_dir(&prev_dir) {
+                    Ok(rd) => {
+                        let gens: Vec<_> = rd.flatten().collect();
+                        gens.len() == 1
+                            && fs::read_to_string(gens[0].path().join("_meta.txt"))
+                                .map(|t| t.contains("VERSION:1.0.1"))
+                                .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                }
+            },
+            Duration::from_secs(5),
+        ),
+        "revert transaction must retain the pre-revert version as a new generation"
+    );
+    assert!(!up.join("journal").exists());
 }

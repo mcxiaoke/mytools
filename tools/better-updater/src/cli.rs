@@ -12,6 +12,10 @@ pub enum Mode {
     Normal,
     DryRun,
     Recover,
+    /// 恢复看门狗（内部）：监视 Worker，退出后接管收尾/回滚。
+    Watchdog,
+    /// 版本回退：用保留的上一版本还原 target。
+    RollbackPrevious,
 }
 
 #[derive(Debug, Clone)]
@@ -268,20 +272,30 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
         return Err(format!("unknown arguments: {}", names.join(", ")));
     }
 
-    // 首发未实现的模式：明确拒绝（CONTRACT §2.1）
-    if watchdog {
-        return Err("--watchdog is not implemented in this build (recovery is covered by L3 cold-start self-heal and --recover)".to_string());
-    }
-    if rollback_previous {
-        return Err("--rollback-previous is deferred in this release; fallback: re-download the old package and run with --allow-downgrade".to_string());
-    }
-
+    // 模式矩阵（CONTRACT §2.3）；watchdog 与 rollback-previous 均已实现
     let target = match target {
         Some(t) => abs_cwd(&t),
         None => return Err("missing required --target".to_string()),
     };
 
-    let mut mode = if recover {
+    // 模式矩阵（CONTRACT §2.3）
+    let mut mode = if watchdog {
+        if watch_pid == 0 || watch_image.is_empty() {
+            return Err("--watchdog requires --watch-pid and --watch-image".to_string());
+        }
+        if recover || rollback_previous {
+            return Err("--watchdog cannot be combined with --recover/--rollback-previous".to_string());
+        }
+        Mode::Watchdog
+    } else if rollback_previous {
+        if zip.is_some() {
+            ignored_warnings.push("--zip is not used in --rollback-previous mode, ignored".to_string());
+        }
+        if sig.is_some() {
+            ignored_warnings.push("--sig is not used in --rollback-previous mode, ignored".to_string());
+        }
+        Mode::RollbackPrevious
+    } else if recover {
         if zip.is_some() {
             ignored_warnings.push("--zip is not used in --recover mode, ignored".to_string());
         }
@@ -314,6 +328,8 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
     if recover && (worker || elevated_worker) {
         mode = Mode::Recover;
     }
+    // watchdog 是内部派生标记，不再与一次性标记冲突
+    let _ = (worker, elevated_worker);
 
     Ok(Startup::Run(Box::new(Args {
         mode,
