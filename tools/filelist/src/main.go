@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -15,8 +16,15 @@ import (
 )
 
 func main() {
+	versionFlag := flag.Bool("version", false, "print version and exit")
+	vFlag := flag.Bool("v", false, "print version and exit (shorthand)")
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	flag.Parse()
+
+	if *versionFlag || *vFlag {
+		fmt.Printf("FileList v%s (%s, built %s)\n", version, gitCommit, buildTime)
+		os.Exit(0)
+	}
 
 	// generate default config if not found
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
@@ -47,6 +55,8 @@ func main() {
 	}
 	logger = l
 	defer cleanup()
+
+	logger.Info("starting FileList v%s (%s, built %s)", version, gitCommit, buildTime)
 
 	// startup banner — always printed to stdout regardless of log file config
 	printStartup(cfg, *configPath)
@@ -82,14 +92,63 @@ func main() {
 	logger.Info("server stopped")
 }
 
-const version = "0.2.0"
+var (
+	version   = "0.2.0"
+	gitCommit = ""
+	buildTime = ""
+)
+
+func init() {
+	initBuildInfo()
+}
+
+func initBuildInfo() {
+	if gitCommit == "" || buildTime == "" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			var rev, t, modified string
+			for _, s := range info.Settings {
+				switch s.Key {
+				case "vcs.revision":
+					rev = s.Value
+				case "vcs.time":
+					t = s.Value
+				case "vcs.modified":
+					modified = s.Value
+				}
+			}
+			if gitCommit == "" && rev != "" {
+				if len(rev) > 7 {
+					gitCommit = rev[:7]
+				} else {
+					gitCommit = rev
+				}
+				if modified == "true" {
+					gitCommit += "-dirty"
+				}
+			}
+			if buildTime == "" && t != "" {
+				if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+					buildTime = parsed.Local().Format("2006-01-02 15:04:05")
+				} else {
+					buildTime = t
+				}
+			}
+		}
+	}
+	if gitCommit == "" {
+		gitCommit = "dev"
+	}
+	if buildTime == "" {
+		buildTime = time.Now().Format("2006-01-02 15:04:05")
+	}
+}
 
 // printStartup prints a startup banner to stdout.
 // This goes to the console regardless of whether log file is configured,
 // so the user always sees basic info on launch.
 func printStartup(cfg *Config, configPath string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "FileList v%s\n\n", version)
+	fmt.Fprintf(w, "FileList v%s (%s, built %s)\n\n", version, gitCommit, buildTime)
 	fmt.Fprintf(w, "Config\t%s\n", configPath)
 	fmt.Fprintf(w, "Listen\thttp://%s:%d\n", cfg.Server.Host, cfg.Server.Port)
 	if cfg.Server.BasePath != "" {

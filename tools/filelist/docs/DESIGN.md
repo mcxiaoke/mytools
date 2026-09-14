@@ -1,6 +1,6 @@
 # FileList 实现方案设计文档
 
-> **版本**: v2.2 | **更新**: 2026-09-14 | **状态**: 已实现
+> **版本**: v2.3 | **更新**: 2026-09-14 | **状态**: 已实现
 
 ## 1. 概述
 
@@ -11,8 +11,11 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 - HTTP 服务，网页浏览配置的目录（类似 caddy filebrowser / nginx autoindex）
 - 基于增量索引的文件名/目录名搜索（非实时遍历磁盘）
 - 路径映射（URL 路径与磁盘实际路径解耦）
+- 经典表格列表与图片网格（Grid）双视图无缝切换与持久化，全屏沉浸式 Lightbox 大图预览
+- 响应式适配移动端视口（400x840），内置无级字号调节（100% ~ 150%）
 - 默认只读，支持可选的文件流式上传与同名冲突自动编号
 - 跨平台：Windows + Linux，Linux 支持 systemd 开机启动
+- 服务端构建元信息动态暴露与日志记录（版本号、Git Hash、构建时间、-version 参数）
 
 ### 1.2 非目标
 
@@ -27,7 +30,7 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 |------|------|------|
 | 语言 | Go | 单二进制跨平台编译，标准库覆盖 HTTP/embed，无运行时依赖 |
 | 配置 | YAML (gopkg.in/yaml.v3) | 可读性好，支持注释，唯一外部依赖 |
-| 前端 | 原生 HTML+CSS+JS（嵌入式单文件） | go:embed 内嵌，零构建工具链，无外部 CDN 依赖 |
+| 前端 | Pico.css v2 + Alpine.js v3（//go:embed 静态资源目录） | 声明式响应式 + 纯语义化 CSS，免编译工具链，无外部 CDN 依赖，支持暗色模式自适应 |
 | 索引持久化 | gob 编码二进制文件 | Go 原生支持，序列化/反序列化快，无需额外依赖 |
 | 路由 | 标准库 http.ServeMux | 简单够用，无需引入第三方路由库 |
 
@@ -46,7 +49,7 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 │               ┌─────┴──────┐   ┌─────┴──────┐  │
 │               │ Background │   │ Web UI     │  │
 │               │ Re-indexer │   │ (embed)    │  │
-│               │ (goroutine)│   │ index.html │  │
+│               │ (goroutine)│   │ web/       │  │
 │               └────────────┘   └────────────┘  │
 │                     │                           │
 │               ┌─────┴──────┐                    │
@@ -60,12 +63,12 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| 入口 | main.go | 解析 flag，加载配置，启动 indexer 和 HTTP server，信号处理与优雅关闭 |
+| 入口 | main.go | 解析 flag（-config, -version, -v），加载配置，初始化构建元数据与日志，启动 indexer 和 HTTP server，信号处理与优雅关闭 |
 | 配置 | config.go | YAML 解析，路径映射规范化，默认值填充，校验 |
 | 索引引擎 | indexer.go | 内存索引构建/加载/持久化，路径映射（virtual↔real），目录列表，搜索，后台增量更新 |
-| HTTP 服务 | server.go | 路由注册，请求处理，中间件，流式文件上传调度，静态文件服务 |
+| HTTP 服务 | server.go | 路由注册，请求处理，中间件，流式文件上传调度，静态文件服务（/static/），构建元数据动态注入（/api/stats, HTML 模板） |
 | 工具函数 | utils.go | 纯函数与通用辅助：路径越界校验、JSON 响应、跨平台文件名安全清理、UTF-8 边界截断、同名编号 |
-| 前端 | web/index.html | 单页应用：目录浏览、搜索、面包屑、排序、下载、文件拖拽与进度上传 |
+| 前端 | web/ | 嵌入式单页应用：语义化模板（index.html）、组件逻辑（static/app.js）、样式（static/app.css）、三方库（pico.min.css, alpine.min.js） |
 
 ### 2.3 关键数据流
 
@@ -544,102 +547,110 @@ Body: form-data 包含一个或多个文件部件
 
 ### 4.5 前端设计
 
-#### 4.5.1 页面结构
+#### 4.5.1 架构演进与技术栈
+- **Pico.css v2**：纯语义化 CSS 框架，轻量零构建，自带现代卡片感与自适应暗色模式（跟随系统或显式 `data-theme` 属性）。
+- **Alpine.js v3**：声明式微前端框架，替代早期 500+ 行手写 DOM 拼接（`innerHTML`），实现清晰的声明式数据绑定（`x-data`、`x-for`、`x-show`、`x-model`）。
+- **嵌入分发与缓存机制**：通过 Go 1.16+ `//go:embed web/*` 将静态资源完整打包入二进制；后端开辟 `/static/` 高速缓存路由，并通过版本号与 Git Hash 实现强缓存破坏（Cache Busting）。
+
+#### 4.5.2 页面结构与响应式布局
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ [📁 根目录]  [____ 搜索文件或目录名... ____] [搜索]   │  ← header
-├──────────────────────────────────────────────────────┤
-│  根目录 / data / subdir                              │  ← 面包屑
-├──────────────────────────────────────────────────────┤
-│  5 项  [📤 上传] [上传进度提示]          188267项已索引 │  ← toolbar (目录内显示上传)
-├──────────────────────────────────────────────────────┤
-│  名称          │ 大小     │ 修改时间     │            │  ← 表头(可排序)
-├──────────────────────────────────────────────────────┤
-│  📁 dir1       │ -        │ 2026-09-06  │            │
-│  📁 dir2       │ -        │ 2026-09-06  │            │
-│  📄 file.txt   │ 1.2 KB   │ 10:30       │  ⬇下载    │
-│  📄 file2.log  │ 4.5 MB   │ 2026-09-05 │  ⬇下载    │
-├──────────────────────────────────────────────────────┤
-│              索引构建中... / 已索引 188267 项           │  ← 状态栏
-└──────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ [📁 根目录]    [____ 搜索文件或目录名... ____] [搜索]    [A- 100% A+]   │  ← header (含字号控制器)
+├────────────────────────────────────────────────────────────────────────┤
+│  根目录 / data / images                                                │  ← 面包屑导航
+├────────────────────────────────────────────────────────────────────────┤
+│  5 项  [📤 上传] [上传进度]         [ ☰ 列表 | ⊞ 网格 ]  188267项已索引 │  ← toolbar (双视图切换)
+├────────────────────────────────────────────────────────────────────────┤
+│ [模式 A: 列表模式]                                                     │
+│  名称              │ 大小       │ 修改时间       │ 操作                │  ← 表头(可排序)
+│  📁 subfolder      │ -          │ 2026-09-06     │                     │
+│  🖼 photo.png      │ 2.4 MB     │ 2026-09-14     │ ⬇下载 ↗原图         │
+│                                                                        │
+│ [模式 B: 图片网格模式 (Grid)]                                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐                │
+│  │  缩略图  │  │  缩略图  │  │ 📁 目录  │  │  缩略图  │   ...          │
+│  │ photo.png│  │ art.jpg  │  │subfolder │  │ cute.png │                │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘                │
+├────────────────────────────────────────────────────────────────────────┤
+│          FileList v0.2.0 · 2aa7cd1 · 构建于 2026-09-14 11:44:19         │  ← site-footer (构建元信息)
+└────────────────────────────────────────────────────────────────────────┘
+
+[全屏大图预览 Lightbox Modal (点击网格图片唤起)]
+┌────────────────────────────────────────────────────────────────────────┐
+│ [photo.png  1 / 12]                                [⬇下载] [↗原图] [✕] │  ← 顶部操作栏
+│                                                                        │
+│   [◀]                        [   大图居中展示   ]                 [▶]  │  ← 左右导航与自适应大图
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 4.5.2 状态管理
+- **移动端视口重排（<= 640px，如 400x840）**：
+  - Header 采用 Flexbox `order` 重构为双行：第一行左侧为「📁 根目录」按钮，右侧靠齐「字号控制器」；第二行独占展示搜索框，避免横向挤压换行。
+  - 表格隐藏大小与修改时间列，仅保留名称与操作列。
+  - 网格模式自适应收缩为 3 列，图片与卡片无横向溢出。
+
+#### 4.5.3 Alpine.js 状态管理 (`filelistApp`)
 
 ```js
-var state = {
-  path: '',           // 当前浏览路径
-  sortKey: 'name',    // 排序字段: name | size | time
-  sortDir: 'asc',     // 排序方向: asc | desc
-  searchMode: false,  // 是否在搜索模式
-  searchQuery: '',    // 当前搜索词
-  initialized: false  // 是否已完成首次加载 ← 新增，解决初始化守卫问题
-};
+function filelistApp() {
+  return {
+    path: '',                  // 当前浏览路径
+    items: [],                 // 目录内条目列表
+    roots: [],                 // 根挂载点列表
+    sortKey: 'name',           // 排序键: name | size | time
+    sortDir: 'asc',            // 排序方向: asc | desc
+    searchMode: false,         // 搜索模式标记
+    searchQuery: '',           // 搜索关键字
+    viewMode: 'list',          // 视图模式: 'list' | 'grid' (持久化至 localStorage)
+    activeImg: null,           // Lightbox 当前激活大图对象
+    activeImgIndex: 0,         // 当前激活大图在图片集中的索引
+    zoomScale: 1.0,            // 字号缩放比例 (0.8 ~ 1.5, 持久化至 localStorage)
+    uploadEnabled: false,      // 服务端上传开关标记
+    uploading: false,          // 当前是否处于上传状态
+    uploadStatus: '',          // 上传进度/结果提示文本
+    // 关键动作: navigate, doSearch, setSort, toggleView, openLightbox, nextImg, prevImg, incZoom, decZoom, triggerUpload
+  };
+}
 ```
 
-#### 4.5.3 关键交互流程
+#### 4.5.4 关键交互流程
 
-**初始化加载**:
+**双视图切换与网格懒加载**:
 ```
-1. DOMContentLoaded
-2. loadStats() → /api/stats → 显示索引状态
-3. 读取 location.hash → initPath
-4. navigate(initPath, force=true) ← 强制首次加载
-5. 后续 hashchange → navigate(path) ← 正常守卫
-```
-
-**搜索**:
-```
-1. input 事件 → 250ms 防抖
-2. 非空 → doSearch(query)
-3. 进入搜索模式: searchMode=true
-4. /api/search?q=... → renderSearchResults
-5. 点击结果路径 → exitSearchMode + navigate(dirPath)
-6. Esc / 清除按钮 → exitSearchMode + 恢复原目录
+1. 初始化读取 localStorage.getItem('filelist_view_mode') || 'list'
+2. 工具栏点击切换按钮 → 更新 viewMode，并同步写回 localStorage
+3. 网格模式下：
+   - 图片卡片使用浏览器原生 <img loading="lazy" :src="rawHref(item.path)">，仅视口内触发网络拉取
+   - 复用 /raw/... 直链并利用 304 协商缓存
+   - 文件夹与普通文件优雅降级为大分类图标，文件夹支持点击下钻
 ```
 
-**排序**:
+**全屏 Lightbox 图片大图交互**:
 ```
-1. 点击表头 → setSort(key)
-2. 同列: 切换 asc/desc
-3. 不同列: 新列 asc
-4. 重新渲染（不重新请求 API，前端排序）
-```
-
-**文件上传**:
-```
-1. 页面加载时读取 window.__FILELIST_UPLOAD__ 标记（由服务端 pageHTML 动态注入）
-2. 若开启上传且当前处于具体目录（state.path 非空），工具栏显示「📤 上传」按钮
-3. 用户触发方式：
-   - 点击「📤 上传」按钮 → 调起隐藏文件选择框（支持多选）
-   - 拖拽文件到表格区域 → 监听 dragover/dragleave/drop 事件，展示半透明虚线高亮视觉反馈
-4. 选择或释放文件后：
-   - 组装 FormData，逐个追加选中的文件对象
-   - 工具栏进度文本显示实时上传状态与百分比（监听 xhr.upload.onprogress）
-   - 发送 POST /api/upload?path={encodeURIComponent(state.path)}
-5. 上传完成响应：
-   - 成功：提示上传成功条数，延时 1.5 秒后自动调用 loadDir(state.path) 静默刷新列表
-   - 失败：显示错误原因并红字提示（如未启用上传、根目录禁止上传、目录不存在等）
+1. 点击网格中图片缩略图 → openLightbox(imgItem)
+2. 收集当前目录所有图片生成 currentImages 列表，定位当前 activeImgIndex
+3. 弹出全屏深色毛玻璃遮罩（backdrop-filter: blur(8px)），居中自适应展示原图
+4. 快捷操作支持：
+   - 键盘 Esc 键 / 点击任意遮罩空白背景 / 点击右上角 ✕ 按钮 → 关闭 Lightbox
+   - 键盘 ← / → 左右方向键 / 点击两侧导航箭头 → 循环无缝切换上一张 / 下一张图片
+   - 顶部提供下载原图与新标签页直接查看直链
 ```
 
-#### 4.5.4 前端错误处理
+**字号无级缩放与持久化**:
+```
+1. 页面加载读取 localStorage.getItem('filelist_font_zoom') || '1.0'
+2. 点击 A+ / A- 步进 ±10%（范围 80% ~ 150%），点击中间百分比直接恢复 100%
+3. 动态应用至 document.body.style.zoom，并持久化到本地存储
+```
 
-| 场景 | 处理 |
-|------|------|
-| API 返回非 200 | 显示错误占位符 `⚠ 加载失败: {message}` |
-| API 返回空数组 | 显示 `📁 空目录` |
-| 搜索无结果 | 显示 `🔍 未找到匹配 "{q}" 的文件` |
-| 索引构建中 | 搜索结果为空时显示 `索引构建中，请稍候...` |
-| 网络错误 | 显示 `⚠ 网络错误` |
-
-#### 4.5.5 样式原则
-
-- 简洁现代：浅色背景 + 白色卡片 + 圆角 + 微阴影
-- 系统字体栈：`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
-- CSS 变量定义主题色，方便后续切换暗色模式
-- 响应式：移动端隐藏时间列，缩小路径列
-- 图标用 Unicode emoji（📁📄⬇⚠🔍），无外部图标库依赖
+**页脚构建元信息渲染**:
+```
+1. 后端编译期注入或运行时自动探测 gitCommit、buildTime
+2. pageHTML 注入 index.html 占位符与 window.__FILELIST_CONFIG__
+3. 页面底部呈现 FileList v{version} · {commit} · 构建于 {buildTime}
+4. 移动端自适应折行与等宽徽章高亮
+```
 
 ### 4.6 安全设计
 
@@ -771,28 +782,30 @@ sudo systemctl enable --now filelist
 
 所有核心功能已实现并通过测试：
 
-| 文件 | 已实现功能 | 状态 |
+| 文件 / 模块 | 已实现功能 | 状态 |
 |------|------|--------|
-| web/index.html | SPA 前端：目录浏览、搜索、面包屑、排序、下载、暗色模式；BASE 注入支持 basePath；文件名 `#`/`?` 编码修复；文件选择与拖拽上传（带实时进度与自动刷新） | ✅ |
-| server.go | basePath 剥离中间件；token 鉴权（query/Bearer/Cookie）；symlink 越界 403；html 强制下载；nosniff 头；RFC 5987 下载头；403/404 区分；/api/upload 流式上传处理与权限校验 | ✅ |
+| web/ | Pico.css v2 + Alpine.js 极简免编译嵌入前端：目录浏览、搜索高亮、面包屑导航、多列排序、直接预览与下载、暗色模式自适应；列表/网格（Grid）双视图切换与持久化；全屏沉浸式 Lightbox 大图预览（Esc/左右方向键切图）；移动端（<=640px）两行式重排自适应；无级字号调节（100%~150%）；文件选择与拖拽上传（带实时进度与自动刷新）；页脚展示版本号、Git Hash 与构建时间 | ✅ |
+| server.go | basePath 剥离中间件；token 鉴权（query/Bearer/Cookie）；symlink 越界 403；html 强制下载；nosniff 头；RFC 5987 下载头；403/404 区分；/api/upload 流式上传处理与权限校验；/static/ 静态资源服务；HTML 动态注入与 /api/stats 构建元数据输出 | ✅ |
 | utils.go | 独立纯函数与通用工具：安全路径判断（pathWithin/withinRoot）、HTTP JSON/下载头处理（writeJSON/contentDisposition/constEqual/isInlineRisk）、跨平台安全文件名处理（sanitizeFilename/truncateUTF8/splitNameExt/availableFilename） | ✅ |
 | indexer.go | 真增量索引（目录 signature 跳过 + generation GC）；maxDepth；excludeDirs/excludeFiles（浏览与搜索一致）；持久化 v2（map + dirStamp，tmp+rename） | ✅ |
 | config.go | 拒绝 url: /；URL 长度降序排序；basePath 归一化与字符校验；token；security 段；upload.enabled 配置项；*bool 默认值处理 | ✅ |
-| main.go | 首次运行生成默认配置；printStartup 启动横幅；dataDir 自动创建；root 指向配置目录时 WARN | ✅ |
+| main.go | 首次运行生成默认配置；-version / -v 命令行参数；启动日志输出版本与时间；printStartup 启动横幅；debug.ReadBuildInfo() 自动提取 Git VCS 元数据；dataDir 自动创建；root 指向配置目录时 WARN | ✅ |
+| build.ps1 / deploy.ps1 | 自动提取 Git Commit Hash（含 -dirty）与本地时间并通过 -ldflags 注入编译；支持自动化 SCP 热更新远程 Linux systemd 服务 | ✅ |
 
 测试覆盖（`go test ./... -v`，全部通过）：
 - `config_test.go`: 配置校验 + basePath 归一化/非法拒绝 + 默认值/显式 opt-out
-- `indexer_test.go`: 路由映射（5）+ 增量正确性（无变化跳过/新增/删除）+ maxDepth + excludeFiles/excludeDirs 一致性 + 目录软链接不跟随 + pathWithin + 持持久化 save/load 往返
+- `indexer_test.go`: 路由映射（5）+ 增量正确性（无变化跳过/新增/删除）+ maxDepth + excludeFiles/excludeDirs 一致性 + 目录软链接不跟随 + pathWithin + 持久化 save/load 往返
 - `utils_test.go`: 文件名分割与同名冲突后缀递增（splitNameExt / availableFilename）+ UTF-8 边界安全截断（truncateUTF8）+ 跨平台与 Windows 保留设备名清洗测试（sanitizeFilename）
-- `server_test.go`: HTTP 端点测试，覆盖上传开关权限拦截（403/400）、敏感文件排除拦截、流式多文件落盘与同名冲突自动后缀递增验证
+- `server_test.go`: HTTP 端点测试，覆盖上传开关权限拦截（403/400）、敏感文件排除拦截、流式多文件落盘与同名冲突自动后缀递增验证、pageHTML 与 handleStats 构建信息注入验证
 
 端到端测试（E2E Browser Automation，`.\tests\run-e2e.ps1`，全部通过）：
 - **测试框架**：Playwright + 本机 Microsoft Edge (Chromium) 无头模式，隔离于 `tests/e2e/`。
 - **服务生命周期**：`test-server.js` 动态分配端口并拉起 `filelist.exe` 测试实例，完成全量夹具准备与销毁。
-- **覆盖场景（20 项用例）**：
-  - `navigation.spec.js`: 挂载点首屏展示、目录进入、HTML5 History 路由、面包屑返回上级/根目录、空目录状态提示。
+- **覆盖场景（全量 27 项用例）**：
+  - `navigation.spec.js`: 挂载点首屏展示、目录进入、HTML5 History 路由、面包屑返回上级/根目录、空目录状态提示、字号无级调节持久化、移动端 400x840 视口适配无溢出、页脚版本号与构建时间展示。
   - `sorting.spec.js`: 名称升降序切换（保持目录置顶）、大小与修改时间列排序。
   - `search.spec.js`: 跨目录全量防抖搜索、`<mark>` 关键字高亮、无结果提示、清空恢复原目录、点击搜索结果跳转至目标目录。
+  - `grid.spec.js`: 双视图切换与 localStorage 持久化、缩略图卡片与原生懒加载、全屏沉浸式 Lightbox 预览及键盘 Esc / 左右切图交互、移动端 400x840 网格自适应无溢出。
   - `upload.spec.js`: 上传按钮动态显隐、`<input type="file">` 上传后自动刷新展示、同名文件冲突自动递增编号 `(1)`、敏感文件规则拦截、拖拽上传（Drag & Drop）与 `.drop-active` 样式触发。
   - `download.spec.js`: 操作列文件下载触发与数据流校验、直接 Raw 预览地址验证。
   - `auth.spec.js`: 未鉴权拦截（HTML 401 与 API JSON 401）、`?token=` 首次验证并写入 `filelist_token` Cookie 会话保活、后续免 token 无缝通行。

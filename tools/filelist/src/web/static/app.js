@@ -22,14 +22,34 @@ document.addEventListener('alpine:init', () => {
     isDragOver: false,
     zoomScale: 1.0,
     fontScales: [0.85, 1.0, 1.15, 1.3, 1.45, 1.6, 1.8, 2.0],
+    viewMode: 'list',
+    activeImg: null,
 
     // Lifecycle
     init() {
+      this.initViewMode();
       this.initZoom();
       this.initHistory();
       this.initDragAndDrop();
       var initialPath = this.pathFromLocation();
       this.navigate(initialPath, true, true);
+    },
+
+    initViewMode() {
+      try {
+        var saved = localStorage.getItem('filelist_view_mode');
+        if (saved === 'list' || saved === 'grid') {
+          this.viewMode = saved;
+        }
+      } catch (e) {}
+    },
+
+    setViewMode(mode) {
+      if (mode !== 'list' && mode !== 'grid') return;
+      this.viewMode = mode;
+      try {
+        localStorage.setItem('filelist_view_mode', mode);
+      } catch (e) {}
     },
 
     initDragAndDrop() {
@@ -67,6 +87,12 @@ document.addEventListener('alpine:init', () => {
       if (!p || p === '/') return this.base + '/';
       var path = p.charAt(0) === '/' ? p : '/' + p;
       return this.base + this.encodePath(path);
+    },
+
+    rawHref(p) {
+      if (!p) return '';
+      var path = p.charAt(0) === '/' ? p : '/' + p;
+      return this.base + '/raw' + this.encodePath(path);
     },
 
     fileHref(p, download) {
@@ -131,6 +157,7 @@ document.addEventListener('alpine:init', () => {
       this.searchQuery = '';
       this.uploadStatus = '';
       this.uploadStatusClass = '';
+      this.activeImg = null;
 
       if (!skipState) {
         var url = this.base + (path || '/');
@@ -464,6 +491,56 @@ document.addEventListener('alpine:init', () => {
       var match = name.slice(idx, idx + q.length);
       var after = name.slice(idx + q.length);
       return this.escapeHtml(before) + '<mark>' + this.escapeHtml(match) + '</mark>' + this.highlight(after);
+    },
+
+    // ---- Image & Lightbox ----
+    isImage(item) {
+      if (!item || item.isDir) return false;
+      var name = item.name || '';
+      return /\.(jpe?g|png|gif|webp|bmp|svg|avif|ico)$/i.test(name);
+    },
+
+    get currentImages() {
+      return this.sortedItems.filter((item) => this.isImage(item));
+    },
+
+    get activeImgIndex() {
+      if (!this.activeImg) return -1;
+      return this.currentImages.findIndex((i) => i.path === this.activeImg.path);
+    },
+
+    openLightbox(item) {
+      if (this.isImage(item)) {
+        this.activeImg = item;
+      }
+    },
+
+    closeLightbox() {
+      this.activeImg = null;
+    },
+
+    prevImg() {
+      if (!this.activeImg) return;
+      var imgs = this.currentImages;
+      if (imgs.length === 0) return;
+      var idx = imgs.findIndex((i) => i.path === this.activeImg.path);
+      if (idx > 0) {
+        this.activeImg = imgs[idx - 1];
+      } else {
+        this.activeImg = imgs[imgs.length - 1];
+      }
+    },
+
+    nextImg() {
+      if (!this.activeImg) return;
+      var imgs = this.currentImages;
+      if (imgs.length === 0) return;
+      var idx = imgs.findIndex((i) => i.path === this.activeImg.path);
+      if (idx >= 0 && idx < imgs.length - 1) {
+        this.activeImg = imgs[idx + 1];
+      } else {
+        this.activeImg = imgs[0];
+      }
     }
   }));
 });

@@ -22,6 +22,15 @@ const basePlaceholder = "__FILELIST_BASE__"
 // uploadPlaceholder is replaced at request time with true/false indicating if upload is enabled.
 const uploadPlaceholder = "__FILELIST_UPLOAD__"
 
+// versionPlaceholder is replaced at request time with current build version for cache busting.
+const versionPlaceholder = "__FILELIST_VERSION__"
+
+// gitCommitPlaceholder is replaced at request time with git commit hash.
+const gitCommitPlaceholder = "__FILELIST_GIT_COMMIT__"
+
+// buildTimePlaceholder is replaced at request time with binary build timestamp.
+const buildTimePlaceholder = "__FILELIST_BUILD_TIME__"
+
 // tokenCookieName holds the access token once a visitor has authenticated.
 const tokenCookieName = "filelist_token"
 
@@ -64,7 +73,7 @@ func (s *Server) handleStatic() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(sub))
 	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Cache-Control", "no-cache")
 		fileServer.ServeHTTP(w, r)
 	}))
 }
@@ -97,7 +106,10 @@ func (s *Server) pageHTML() []byte {
 	if s.cfg.Upload.Enabled {
 		uploadVal = []byte("true")
 	}
-	return bytes.ReplaceAll(out, []byte(uploadPlaceholder), uploadVal)
+	out = bytes.ReplaceAll(out, []byte(uploadPlaceholder), uploadVal)
+	out = bytes.ReplaceAll(out, []byte(versionPlaceholder), []byte(version+"-"+gitCommit))
+	out = bytes.ReplaceAll(out, []byte(gitCommitPlaceholder), []byte(gitCommit))
+	return bytes.ReplaceAll(out, []byte(buildTimePlaceholder), []byte(buildTime))
 }
 
 // handleFavicon serves a simple SVG favicon to avoid 404 noise.
@@ -168,6 +180,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	stats := s.indexer.Stats()
 	stats["version"] = version
+	stats["gitCommit"] = gitCommit
+	stats["buildTime"] = buildTime
 	writeJSON(w, stats)
 }
 
