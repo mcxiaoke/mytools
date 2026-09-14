@@ -27,12 +27,22 @@ Write-Host "=== FileList E2E Browser Testing ===" -ForegroundColor Cyan
 Write-Host "Project Root: $projectRoot"
 Write-Host "E2E Dir:      $e2eDir"
 
-# 1. 检查并编译 filelist.exe
+# 1. 检查并编译 filelist.exe (若源码更新则自动重新编译)
+$rebuild = $false
 if (-not (Test-Path $buildExe)) {
-  Write-Host "[1/3] Compiling filelist.exe..." -ForegroundColor Yellow
+  $rebuild = $true
+} else {
+  $latestSrc = Get-ChildItem -Path (Join-Path $projectRoot 'src') -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($latestSrc -and $latestSrc.LastWriteTime -gt (Get-Item $buildExe).LastWriteTime) {
+    $rebuild = $true
+  }
+}
+
+if ($rebuild) {
+  Write-Host "[1/3] Recompiling filelist.exe (sources updated)..." -ForegroundColor Yellow
   & (Join-Path $projectRoot 'build.ps1')
 } else {
-  Write-Host "[1/3] Using existing binary: $buildExe" -ForegroundColor Green
+  Write-Host "[1/3] Using up-to-date binary: $buildExe" -ForegroundColor Green
 }
 
 # 2. 检查 node_modules

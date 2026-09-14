@@ -89,4 +89,102 @@ test.describe('Navigation & Directory Browsing', () => {
     await expect(page.locator('.empty')).toBeVisible();
     await expect(page.locator('.empty')).toContainText('此目录为空');
   });
+
+  test('should adjust font size scale and persist in localStorage', async ({ appPage }) => {
+    const { page } = appPage;
+
+    const fontVal = page.locator('#fontReset');
+    const incBtn = page.locator('#fontInc');
+    const decBtn = page.locator('#fontDec');
+
+    await expect(fontVal).toBeVisible();
+    await expect(fontVal).toHaveText('100%');
+
+    // Click A+ twice to step from 100% -> 115% -> 130%
+    await incBtn.click();
+    await expect(fontVal).toHaveText('115%');
+    await incBtn.click();
+    await expect(fontVal).toHaveText('130%');
+
+    // Check zoom and localStorage
+    const saved = await page.evaluate(() => ({
+      zoom: document.body.style.zoom,
+      ls: localStorage.getItem('filelist_zoom')
+    }));
+    expect(saved.zoom).toBe('1.3');
+    expect(saved.ls).toBe('1.3');
+
+    // Reload page to verify persistence
+    await page.reload();
+    await expect(page.locator('#fontReset')).toHaveText('130%');
+    const reloadedZoom = await page.evaluate(() => document.body.style.zoom);
+    expect(reloadedZoom).toBe('1.3');
+
+    // Click middle button to reset to 100%
+    await page.locator('#fontReset').click();
+    await expect(page.locator('#fontReset')).toHaveText('100%');
+    const resetZoom = await page.evaluate(() => document.body.style.zoom);
+    expect(resetZoom).toBe('1');
+  });
+
+  test('should adapt layout cleanly to mobile viewport (400x840) without overflow', async ({ appPage }) => {
+    const { page } = appPage;
+
+    // Set mobile viewport 400x840 (user phone screen)
+    await page.setViewportSize({ width: 400, height: 840 });
+
+    const homeLink = page.locator('#homeLink');
+    const fontCtrl = page.locator('.font-ctrl');
+    const searchBar = page.locator('.search-bar');
+    const searchInput = page.locator('#searchInput');
+    const searchBtn = page.locator('#searchBtn');
+
+    await expect(homeLink).toBeVisible();
+    await expect(fontCtrl).toBeVisible();
+    await expect(searchBar).toBeVisible();
+    await expect(searchInput).toBeVisible();
+    await expect(searchBtn).toBeVisible();
+
+    // Verify Row 1: homeLink and fontCtrl are on the first row (same top offset range)
+    const homeBox = await homeLink.boundingBox();
+    const fontBox = await fontCtrl.boundingBox();
+    const searchBox = await searchBar.boundingBox();
+
+    expect(homeBox).not.toBeNull();
+    expect(fontBox).not.toBeNull();
+    expect(searchBox).not.toBeNull();
+
+    // homeLink and fontCtrl should be on row 1 (roughly same Y position)
+    expect(Math.abs(homeBox.y - fontBox.y)).toBeLessThan(10);
+
+    // searchBar should be below row 1 (y position is greater than row 1 y + height)
+    expect(searchBox.y).toBeGreaterThanOrEqual(homeBox.y + homeBox.height - 5);
+
+    // Check no horizontal scrollbar on root document (scrollWidth <= clientWidth)
+    const overflowCheck = await page.evaluate(() => {
+      const root = document.documentElement;
+      return {
+        scrollWidth: root.scrollWidth,
+        clientWidth: root.clientWidth,
+        hasOverflow: root.scrollWidth > root.clientWidth
+      };
+    });
+    expect(overflowCheck.hasOverflow).toBe(false);
+
+    // Test font magnification on mobile (zoom to 130%)
+    await page.locator('#fontInc').click();
+    await page.locator('#fontInc').click();
+    await expect(page.locator('#fontReset')).toHaveText('130%');
+
+    // Verify still no horizontal overflow under 130% zoom
+    const zoomedOverflow = await page.evaluate(() => {
+      const root = document.documentElement;
+      return root.scrollWidth > root.clientWidth;
+    });
+    expect(zoomedOverflow).toBe(false);
+
+    // Reset zoom
+    await page.locator('#fontReset').click();
+    await expect(page.locator('#fontReset')).toHaveText('100%');
+  });
 });
