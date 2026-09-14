@@ -206,3 +206,61 @@ func TestHandleUpload_Sanitize(t *testing.T) {
 		t.Errorf("_CON.txt not found: %v", err)
 	}
 }
+
+func TestPageHTML_BuildInfo(t *testing.T) {
+	gitCommit = "abc1234"
+	buildTime = "2026-09-14 11:30:00"
+	defer func() {
+		gitCommit = ""
+		buildTime = ""
+	}()
+
+	cfg := &Config{}
+	srv := NewServer(cfg, &Indexer{cfg: cfg})
+
+	html := srv.pageHTML()
+	if !bytes.Contains([]byte(html), []byte("abc1234")) {
+		t.Errorf("expected pageHTML to contain gitCommit abc1234")
+	}
+	if !bytes.Contains([]byte(html), []byte("2026-09-14 11:30:00")) {
+		t.Errorf("expected pageHTML to contain buildTime 2026-09-14 11:30:00")
+	}
+	if bytes.Contains([]byte(html), []byte("__FILELIST_GIT_COMMIT__")) {
+		t.Errorf("placeholder __FILELIST_GIT_COMMIT__ was not replaced")
+	}
+	if bytes.Contains([]byte(html), []byte("__FILELIST_BUILD_TIME__")) {
+		t.Errorf("placeholder __FILELIST_BUILD_TIME__ was not replaced")
+	}
+}
+
+func TestHandleStats_BuildInfo(t *testing.T) {
+	gitCommit = "testcommit789"
+	buildTime = "2026-09-14 12:00:00"
+	defer func() {
+		gitCommit = ""
+		buildTime = ""
+	}()
+
+	cfg := &Config{}
+	srv := NewServer(cfg, &Indexer{cfg: cfg})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.handleStats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal stats error: %v", err)
+	}
+
+	if data["gitCommit"] != "testcommit789" {
+		t.Errorf("expected gitCommit 'testcommit789', got %v", data["gitCommit"])
+	}
+	if data["buildTime"] != "2026-09-14 12:00:00" {
+		t.Errorf("expected buildTime '2026-09-14 12:00:00', got %v", data["buildTime"])
+	}
+}

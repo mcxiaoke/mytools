@@ -54,22 +54,28 @@ if (-not (Test-Path (Join-Path $SrcDir "go.mod"))) {
     exit 1
 }
 
-# --- Version tag from git ---
-$Version = "dev"
+# --- Version and build info from git ---
+$Version = "0.2.0"
+$GitCommit = ""
+$BuildTime = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 try {
-    $gitDesc = git -C $ScriptDir describe --tags --always --dirty 2>$null
-    if ($LASTEXITCODE -eq 0 -and $gitDesc) {
-        $Version = $gitDesc.Trim()
+    $commit = git -C $ScriptDir rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $commit) {
+        $GitCommit = $commit.Trim()
+        $dirty = git -C $ScriptDir status --porcelain 2>$null
+        if ($dirty) { $GitCommit += "-dirty" }
     }
 } catch {
-    # git not available, use default
+    # git not available
 }
 
-$LdFlags = "-s -w"
+$LdFlags = "-s -w -X main.gitCommit=$GitCommit -X `"main.buildTime=$BuildTime`""
 Write-Host "FileList build" -ForegroundColor Cyan
 Write-Host "  Source:  $SrcDir"
 Write-Host "  Output:  $BuildDir"
 Write-Host "  Version: $Version"
+Write-Host "  Commit:  $GitCommit"
+Write-Host "  Time:    $BuildTime"
 Write-Host "  Target:  $Target"
 Write-Host ""
 

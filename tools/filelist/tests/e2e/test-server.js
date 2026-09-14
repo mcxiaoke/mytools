@@ -18,8 +18,28 @@ function getFreePort() {
 }
 
 function ensureBinary() {
-  if (!fs.existsSync(BUILD_EXE)) {
-    console.log('[E2E] filelist.exe not found, building...');
+  let needBuild = !fs.existsSync(BUILD_EXE);
+  if (!needBuild) {
+    const binMtime = fs.statSync(BUILD_EXE).mtimeMs;
+    const checkDir = (dir) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          checkDir(full);
+        } else if (ent.isFile()) {
+          if (fs.statSync(full).mtimeMs > binMtime) {
+            needBuild = true;
+            return;
+          }
+        }
+      }
+    };
+    checkDir(path.join(PROJECT_ROOT, 'src'));
+  }
+
+  if (needBuild) {
+    console.log('[E2E] Building latest filelist.exe...');
     execSync('go build -o ../build/filelist.exe .', {
       cwd: path.join(PROJECT_ROOT, 'src'),
       stdio: 'inherit'
@@ -44,6 +64,19 @@ function setupFixtures(testDir) {
   fs.writeFileSync(path.join(root1, '.env'), 'SECRET_KEY=123456\n', 'utf-8'); // excluded sensitive file
   fs.writeFileSync(path.join(root1, 'subfolder', 'nested.txt'), 'Nested content\n', 'utf-8');
   fs.writeFileSync(path.join(root1, 'subfolder', 'deep', 'deep.log'), 'Deep log content\n', 'utf-8');
+
+  // Root1 images folder
+  const imgDir = path.join(root1, 'images');
+  fs.mkdirSync(imgDir, { recursive: true });
+  const sampleSrcDir = 'C:\\Home\\Temp\\Jigsaw_Organized\\Animals';
+  if (fs.existsSync(sampleSrcDir)) {
+    const files = fs.readdirSync(sampleSrcDir).filter(f => f.endsWith('.png')).slice(0, 4);
+    for (const f of files) {
+      fs.copyFileSync(path.join(sampleSrcDir, f), path.join(imgDir, f));
+    }
+  } else {
+    fs.writeFileSync(path.join(imgDir, 'sample.png'), Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082', 'hex'));
+  }
 
   // Root2 files
   fs.writeFileSync(path.join(root2, 'guide.md'), '# FileList Guide\n', 'utf-8');

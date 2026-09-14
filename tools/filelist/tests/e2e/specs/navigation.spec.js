@@ -187,4 +187,15 @@ test.describe('Navigation & Directory Browsing', () => {
     await page.locator('#fontReset').click();
     await expect(page.locator('#fontReset')).toHaveText('100%');
   });
+
+  test('should display server version, git commit hash, and build time in footer', async ({ appPage }) => {
+    const { page } = appPage;
+    const footer = page.locator('.site-footer');
+    await expect(footer).toBeVisible();
+    await expect(footer).toContainText('FileList v0.2.0');
+    await expect(footer.locator('.commit')).toBeVisible();
+    const commitText = await footer.locator('.commit').innerText();
+    expect(commitText.length).toBeGreaterThan(0);
+    await expect(footer.locator('.build-time')).toContainText('构建于');
+  });
 });

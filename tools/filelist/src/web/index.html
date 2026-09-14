@@ -6,17 +6,20 @@
 <link rel="icon" href="__FILELIST_BASE__/favicon.ico">
 <title>FileList</title>
 <link rel="stylesheet" href="__FILELIST_BASE__/static/pico.min.css">
-<link rel="stylesheet" href="__FILELIST_BASE__/static/app.css">
+<link rel="stylesheet" href="__FILELIST_BASE__/static/app.css?v=__FILELIST_VERSION__">
 <style>
   [x-cloak] { display: none !important; }
 </style>
 <script>
   window.__FILELIST_CONFIG__ = {
     base: "__FILELIST_BASE__",
-    uploadEnabled: __FILELIST_UPLOAD__
+    uploadEnabled: __FILELIST_UPLOAD__,
+    version: "__FILELIST_VERSION__",
+    gitCommit: "__FILELIST_GIT_COMMIT__",
+    buildTime: "__FILELIST_BUILD_TIME__"
   };
 </script>
-<script src="__FILELIST_BASE__/static/app.js"></script>
+<script src="__FILELIST_BASE__/static/app.js?v=__FILELIST_VERSION__"></script>
 <script defer src="__FILELIST_BASE__/static/alpine.min.js"></script>
 </head>
 <body x-data="filelistApp">
@@ -94,6 +97,24 @@
             x-show="uploadStatus"></span>
     </div>
     <div class="toolbar-right">
+      <div class="view-ctrl" role="group" aria-label="视图模式切换">
+        <button type="button"
+                id="viewListBtn"
+                class="view-btn"
+                :class="{ 'active': viewMode === 'list' }"
+                @click="setViewMode('list')"
+                title="列表视图">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        </button>
+        <button type="button"
+                id="viewGridBtn"
+                class="view-btn"
+                :class="{ 'active': viewMode === 'grid' }"
+                @click="setViewMode('grid')"
+                title="网格视图">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        </button>
+      </div>
       <span id="itemCount" x-text="!loading && items.length > 0 ? (sortedItems.length + ' 项') : ''"></span>
     </div>
   </div>
@@ -129,7 +150,7 @@
     </div>
 
     <!-- Data Table -->
-    <table x-show="!loading && !errorMsg && sortedItems.length > 0">
+    <table x-show="!loading && !errorMsg && sortedItems.length > 0 && viewMode === 'list'">
       <thead>
         <tr>
           <th class="name-col" data-col="name" @click="toggleSort('name')">
@@ -172,6 +193,113 @@
         </template>
       </tbody>
     </table>
+
+    <!-- Grid View -->
+    <div class="grid-wrap" x-show="!loading && !errorMsg && sortedItems.length > 0 && viewMode === 'grid'" x-cloak>
+      <template x-for="item in sortedItems" :key="item.path">
+        <div class="grid-card" :class="{ 'is-dir': item.isDir, 'is-img': isImage(item) }">
+          <!-- 1. Folder item: click to enter directory -->
+          <template x-if="item.isDir">
+            <a :href="dirHref(item.path)" @click.prevent="navigate(item.path)" class="grid-thumb folder-thumb" :title="item.name">
+              <span class="grid-icon">&#128193;</span>
+            </a>
+          </template>
+
+          <!-- 2. Image item: click to open full-screen lightbox -->
+          <template x-if="isImage(item)">
+            <div class="grid-thumb img-thumb" @click="openLightbox(item)" :title="'点击预览: ' + item.name">
+              <img :src="rawHref(item.path)" :alt="item.name" loading="lazy" class="grid-img" />
+            </div>
+          </template>
+
+          <!-- 3. Other file item: open in new tab -->
+          <template x-if="!item.isDir && !isImage(item)">
+            <a :href="fileHref(item.path, false)" target="_blank" class="grid-thumb file-thumb" :title="item.name">
+              <span class="grid-icon" x-text="getIcon(item)"></span>
+            </a>
+          </template>
+
+          <div class="grid-info">
+            <div class="grid-name" :title="item.name">
+              <template x-if="item.isDir">
+                <a :href="dirHref(item.path)" @click.prevent="navigate(item.path)" x-html="highlight(item.name)"></a>
+              </template>
+              <template x-if="isImage(item)">
+                <span class="grid-link" tabindex="0" @click="openLightbox(item)" @keydown.enter="openLightbox(item)" x-html="highlight(item.name)"></span>
+              </template>
+              <template x-if="!item.isDir && !isImage(item)">
+                <a :href="fileHref(item.path, false)" target="_blank" x-html="highlight(item.name)"></a>
+              </template>
+            </div>
+            <div class="grid-meta">
+              <span class="grid-size" x-text="item.isDir ? '文件夹' : fmtSize(item.size)"></span>
+              <template x-if="!item.isDir">
+                <a :href="downloadHref(item)" class="grid-dl" title="下载">&#11015;</a>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Site Footer -->
+  <footer class="site-footer">
+    <span>FileList v0.2.0</span>
+    <span class="sep">·</span>
+    <span class="commit" title="Git Commit Hash">__FILELIST_GIT_COMMIT__</span>
+    <span class="sep">·</span>
+    <span class="build-time">构建于 __FILELIST_BUILD_TIME__</span>
+  </footer>
+
+  <!-- Lightbox Fullscreen Image Preview -->
+  <div class="lightbox-overlay"
+       id="lightboxOverlay"
+       x-show="activeImg"
+       x-cloak
+       @keydown.window.escape="closeLightbox()"
+       @keydown.window.left="prevImg()"
+       @keydown.window.right="nextImg()"
+       @click="closeLightbox()">
+    
+    <div class="lightbox-main">
+      <!-- Top header bar: Title + Counter + Actions + Close button -->
+      <div class="lightbox-header" @click.stop>
+        <div class="lightbox-title-box">
+          <span class="lightbox-filename" x-text="activeImg ? activeImg.name : ''"></span>
+          <span class="lightbox-counter" x-show="currentImages.length > 0" x-text="(activeImgIndex + 1) + ' / ' + currentImages.length"></span>
+        </div>
+        <div class="lightbox-actions">
+          <a class="lightbox-btn" :href="activeImg ? fileHref(activeImg.path, true) : '#'" title="下载原图">&#11015;</a>
+          <a class="lightbox-btn" :href="activeImg ? fileHref(activeImg.path, false) : '#'" target="_blank" title="新标签页打开">&#8599;</a>
+          <button type="button" class="lightbox-btn close" @click="closeLightbox()" title="关闭 (Esc)">&#10005;</button>
+        </div>
+      </div>
+
+      <!-- Image display container with Nav Arrows -->
+      <div class="lightbox-body" @click="closeLightbox()">
+        <button type="button"
+                id="lightboxPrev"
+                class="lightbox-nav prev"
+                x-show="currentImages.length > 1"
+                @click.stop="prevImg()"
+                title="上一张 (←)">&#10094;</button>
+        
+        <div class="lightbox-img-wrap" @click="closeLightbox()">
+          <img :src="activeImg ? rawHref(activeImg.path) : ''"
+               :alt="activeImg ? activeImg.name : ''"
+               class="lightbox-img"
+               @click.stop />
+        </div>
+
+        <button type="button"
+                id="lightboxNext"
+                class="lightbox-nav next"
+                x-show="currentImages.length > 1"
+                @click.stop="nextImg()"
+                title="下一张 (→)">&#10095;</button>
+      </div>
+    </div>
   </div>
 </div>
 </body>

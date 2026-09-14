@@ -9,11 +9,14 @@
 - **真增量索引** - 目录未变化时整棵子树跳过（空闲时近零开销），变化只做差异更新，支持磁盘持久化
 - **路径映射** - URL 路径与磁盘路径可不同，如 `/data -> /mnt/data`
 - **子目录部署** - 支持 `basePath`，可挂到反代（Caddy/Nginx）的任意子路径下
+- **现代前端体验** - 采用 Pico.css v2 语义化样式与 Alpine.js 声明式响应式框架，零外部 CDN 依赖，支持暗黑模式无缝自适应
+- **图片网格与大图预览** - 支持经典列表与图片网格（Grid）双视图无缝切换与持久化；图片原生懒加载；全屏沉浸式 Lightbox 预览（支持键盘 Esc / 左右方向键循环切图）
+- **移动端与字号自适应** - 移动端视口（400x840 等小屏）响应式重排，无横向滚动溢出；内置无级字号调节（100% ~ 150%）
+- **构建元数据与页脚** - 页面页脚与 `/api/stats` 接口直观显示版本号、Git Commit Hash 与构建时间，服务启动日志自动输出元数据，支持 `-version` 命令行参数
 - **文件下载/预览** - 点击文件在线预览或下载
 - **文件上传（可选）** - 支持网页按钮与拖拽流式上传，大文件低内存占用，同名冲突自动后缀编号；默认只读
 - **访问控制** - 可选 token 鉴权，默认无鉴权开箱即用
-- **跨平台** - 单二进制，支持 Windows 和 Linux
-- **零依赖运行** - 编译为单个可执行文件，无运行时依赖
+- **跨平台与单二进制** - 单可执行文件分发，支持 Windows 和 Linux，无运行时依赖
 
 ## 快速开始
 
@@ -142,10 +145,16 @@ dataDir: /var/lib/filelist
 ### 运行
 
 ```bash
+# 启动服务（默认读取 config.yaml）
 ./build/filelist -config config.yaml
+
+# 查看版本与构建元数据
+./build/filelist -version
 ```
 
 浏览器访问 `http://localhost:8080`。
+
+> 提示：在开发或生产运维中，可直接使用 `.\deploy.ps1` 一键编译 Linux 二进制、通过 SCP 传输并重启远程 systemd 服务。
 
 ## Linux 开机启动
 
@@ -357,7 +366,7 @@ go test -v ./...
 | `GET /api/roots` | 配置的根目录列表 |
 | `GET /api/list?path=/data` | 列出指定目录内容 |
 | `GET /api/search?q=keyword` | 搜索文件名 |
-| `GET /api/stats` | 索引统计 |
+| `GET /api/stats` | 索引统计及版本构建元数据（包含 `version`, `gitCommit`, `buildTime`） |
 | `GET /raw/data/file.txt` | 文件预览/下载 |
 | `GET /raw/data/file.txt?download=1` | 强制下载 |
 | `POST /api/upload?path=/data` | 上传文件到指定目录（multipart/form-data，需开启 `upload.enabled`） |
@@ -367,19 +376,22 @@ go test -v ./...
 ```
 filelist/
 ├── src/                  # 源码目录
-│   ├── main.go           # 入口：配置加载、日志初始化、服务启动、优雅关闭
+│   ├── main.go           # 入口：配置加载、日志初始化、版本信息注入、服务启动、优雅关闭
 │   ├── config.go         # 配置解析（YAML）与路径映射
 │   ├── indexer.go        # 增量索引引擎（内存索引+持久化+后台更新）
-│   ├── server.go         # HTTP 路由与处理器（含流式文件上传）
+│   ├── server.go         # HTTP 路由与处理器（含流式文件上传与动态配置注入）
 │   ├── utils.go          # 纯函数与通用工具（文件名安全清洗、UTF-8边界截断、同名编号、越界检测等）
 │   ├── log.go            # 日志（级别过滤+文件输出）
-│   ├── web/index.html    # 嵌入式 Web UI（单页应用，支持浏览与拖拽上传）
+│   ├── web/              # 嵌入式 Web 前端资源（//go:embed web/*）
+│   │   ├── index.html    # SPA 语义模板（列表/网格双视图、全屏 Lightbox、字号控制器、页脚）
+│   │   └── static/       # 前端静态资产（Pico.css, Alpine.js, app.css, app.js）
 │   ├── *_test.go         # 单元测试与接口集成测试
 │   ├── go.mod
 │   └── go.sum
 ├── tests/                # 测试套件
 │   ├── run-e2e.ps1       # 一键运行 E2E 浏览器自动化测试脚本
-│   └── e2e/              # Playwright E2E 测试工程（配置、夹具、测试用例）
+│   └── e2e/              # Playwright E2E 测试工程（配置、夹具、全量 27 项测试用例）
+│       └── specs/        # auth, download, grid, navigation, search, sorting, upload
 ├── build/                # 编译产物输出目录
 ├── data/                 # 运行时数据目录（索引缓存等，运行时生成）
 ├── config.sample.yaml    # 示例配置（含全部默认值和注释）
@@ -390,6 +402,7 @@ filelist/
 ├── docs/
 │   ├── DESIGN.md         # 实现方案设计文档
 │   └── CHANGES-*.md      # 重点变更记录
-├── build.ps1             # PowerShell 构建脚本
+├── build.ps1             # PowerShell 构建脚本（注入 Git Commit 与构建时间）
+├── deploy.ps1            # PowerShell 一键交叉编译并热更新部署到远程 Linux 服务
 └── Makefile              # Make 构建脚本
 ```
