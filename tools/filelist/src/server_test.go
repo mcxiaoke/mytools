@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"mime/multipart"
@@ -264,3 +265,229 @@ func TestHandleStats_BuildInfo(t *testing.T) {
 		t.Errorf("expected buildTime '2026-09-14 12:00:00', got %v", data["buildTime"])
 	}
 }
+
+func TestHandleContent_GetAndPut(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "note.txt")
+	if err := os.WriteFile(filePath, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	cfg.Manage.Enabled = true
+	cfg.Index.ExcludeFiles = []string{".env"}
+	idx := NewIndexer(cfg)
+	idx.BuildIndex()
+	srv := NewServer(cfg, idx)
+
+	// 1. GET content
+	req := httptest.NewRequest(http.MethodGet, "/api/content?path=/data/note.txt", nil)
+	rec := httptest.NewRecorder()
+	srv.handleContent(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for GET content, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res["content"] != "hello world" {
+		t.Errorf("expected 'hello world', got %v", res["content"])
+	}
+
+	// 2. PUT content
+	putReq := httptest.NewRequest(http.MethodPut, "/api/content?path=/data/note.txt", bytes.NewBufferString("updated text"))
+	putRec := httptest.NewRecorder()
+	srv.handleContent(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for PUT content, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+	updatedOnDisk, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updatedOnDisk) != "updated text" {
+		t.Errorf("expected updated text on disk, got %s", string(updatedOnDisk))
+	}
+
+	// 3. PUT content on excluded file blocked
+	envReq := httptest.NewRequest(http.MethodPut, "/api/content?path=/data/.env", bytes.NewBufferString("SECRET=123"))
+	envRec := httptest.NewRecorder()
+	srv.handleContent(envRec, envReq)
+	if envRec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for editing .env, got %d", envRec.Code)
+	}
+}
+
+func TestHandleMkdir(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	cfg.Manage.Enabled = true
+	idx := NewIndexer(cfg)
+	idx.BuildIndex()
+	srv := NewServer(cfg, idx)
+
+	// 1. Create dir
+	req := httptest.NewRequest(http.MethodPost, "/api/mkdir?path=/data&name=my_folder", nil)
+	rec := httptest.NewRecorder()
+	srv.handleMkdir(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if info, err := os.Stat(filepath.Join(tmp, "my_folder")); err != nil || !info.IsDir() {
+		t.Fatalf("my_folder not created on disk: %v", err)
+	}
+
+	// 2. Conflict on re-create
+	req2 := httptest.NewRequest(http.MethodPost, "/api/mkdir?path=/data&name=my_folder", nil)
+	rec2 := httptest.NewRecorder()
+	srv.handleMkdir(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Errorf("expected 409 Conflict for existing dir, got %d", rec2.Code)
+	}
+}
+
+func TestHandleRename(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "orig.txt")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	cfg.Manage.Enabled = true
+	idx := NewIndexer(cfg)
+	idx.BuildIndex()
+	srv := NewServer(cfg, idx)
+
+	// 1. Rename orig.txt -> new.txt
+	req := httptest.NewRequest(http.MethodPost, "/api/rename?path=/data/orig.txt&new_name=new.txt", nil)
+	rec := httptest.NewRecorder()
+	srv.handleRename(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "new.txt")); err != nil {
+		t.Errorf("new.txt not found on disk: %v", err)
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Errorf("orig.txt still exists on disk")
+	}
+
+	// 2. Renaming root mount rejected
+	rootReq := httptest.NewRequest(http.MethodPost, "/api/rename?path=/data&new_name=data2", nil)
+	rootRec := httptest.NewRecorder()
+	srv.handleRename(rootRec, rootReq)
+	if rootRec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request when renaming root, got %d", rootRec.Code)
+	}
+}
+
+func TestHandleDelete_SafeWithToken(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "delete_me.txt")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	cfg.Manage.Enabled = true
+	cfg.Manage.AllowDelete = true
+	cfg.Manage.DeleteToken = "secret123"
+	idx := NewIndexer(cfg)
+	idx.BuildIndex()
+	srv := NewServer(cfg, idx)
+
+	// 1. Missing token
+	req1 := httptest.NewRequest(http.MethodPost, "/api/delete?path=/data/delete_me.txt", nil)
+	rec1 := httptest.NewRecorder()
+	srv.handleDelete(rec1, req1)
+	if rec1.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden without token, got %d", rec1.Code)
+	}
+
+	// 2. Wrong token
+	req2 := httptest.NewRequest(http.MethodPost, "/api/delete?path=/data/delete_me.txt&token=wrong", nil)
+	rec2 := httptest.NewRecorder()
+	srv.handleDelete(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden with wrong token, got %d", rec2.Code)
+	}
+
+	// 3. Delete root mount rejected even with correct token
+	req3 := httptest.NewRequest(http.MethodPost, "/api/delete?path=/data&token=secret123", nil)
+	rec3 := httptest.NewRecorder()
+	srv.handleDelete(rec3, req3)
+	if rec3.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request when deleting root mount, got %d", rec3.Code)
+	}
+
+	// 4. Correct token via header
+	req4 := httptest.NewRequest(http.MethodPost, "/api/delete?path=/data/delete_me.txt", nil)
+	req4.Header.Set("X-Delete-Token", "secret123")
+	rec4 := httptest.NewRecorder()
+	srv.handleDelete(rec4, req4)
+	if rec4.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK with correct token, got %d: %s", rec4.Code, rec4.Body.String())
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Errorf("delete_me.txt still exists on disk")
+	}
+}
+
+func TestHandleZip(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "f1.txt"), []byte("file1"), 0644)
+	sub := filepath.Join(tmp, "sub")
+	os.Mkdir(sub, 0755)
+	os.WriteFile(filepath.Join(sub, "f2.txt"), []byte("file2"), 0644)
+
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	idx := NewIndexer(cfg)
+	idx.BuildIndex()
+	srv := NewServer(cfg, idx)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/zip?path=/data", nil)
+	rec := httptest.NewRecorder()
+	srv.handleZip(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "application/zip" {
+		t.Errorf("expected application/zip Content-Type, got %s", rec.Header().Get("Content-Type"))
+	}
+
+	zipReader, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("invalid zip output: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for _, f := range zipReader.File {
+		names[f.Name] = true
+	}
+	if !names["f1.txt"] {
+		t.Errorf("missing f1.txt in zip, got %v", names)
+	}
+	if !names["sub/f2.txt"] {
+		t.Errorf("missing sub/f2.txt in zip, got %v", names)
+	}
+}
+

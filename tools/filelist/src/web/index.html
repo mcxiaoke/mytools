@@ -14,11 +14,13 @@
   window.__FILELIST_CONFIG__ = {
     base: "__FILELIST_BASE__",
     uploadEnabled: __FILELIST_UPLOAD__,
+    manage: __FILELIST_MANAGE__,
     version: "__FILELIST_VERSION__",
     gitCommit: "__FILELIST_GIT_COMMIT__",
     buildTime: "__FILELIST_BUILD_TIME__"
   };
 </script>
+<script src="__FILELIST_BASE__/static/qrcode.min.js?v=__FILELIST_VERSION__"></script>
 <script src="__FILELIST_BASE__/static/app.js?v=__FILELIST_VERSION__"></script>
 <script defer src="__FILELIST_BASE__/static/alpine.min.js"></script>
 </head>
@@ -81,7 +83,7 @@
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="toolbar-left">
-      <button class="upload-btn"
+      <button class="tb-btn upload-btn"
               id="uploadBtn"
               type="button"
               x-show="uploadEnabled && path !== '' && !searchMode"
@@ -90,6 +92,21 @@
               title="上传文件到当前目录">
         &#128392; 上传文件
       </button>
+      <button class="tb-btn"
+              id="mkdirBtn"
+              type="button"
+              x-show="manageConfig.allowMkdir && path !== '' && !searchMode"
+              @click="openMkdir()"
+              title="新建文件夹">
+        &#128193; 新建文件夹
+      </button>
+      <a class="tb-btn"
+         id="zipCurrentBtn"
+         x-show="path !== '' && !searchMode"
+         :href="zipHref(path)"
+         title="打包下载当前目录为 ZIP">
+        &#128230; 打包下载
+      </a>
       <span class="upload-status"
             id="uploadStatus"
             :class="uploadStatusClass"
@@ -115,7 +132,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
         </button>
       </div>
-      <span id="itemCount" x-text="!loading && items.length > 0 ? (sortedItems.length + ' 项') : ''"></span>
+      <span id="itemCount" class="item-count" x-text="!loading && items.length > 0 ? (sortedItems.length + ' 项') : ''"></span>
     </div>
   </div>
 
@@ -176,7 +193,7 @@
                 </a>
               </template>
               <template x-if="!item.isDir">
-                <a :href="fileHref(item.path, false)" target="_blank">
+                <a :href="fileHref(item.path, false)" target="_blank" @click="onFileClick($event, item)">
                   <span class="icon" x-text="getIcon(item)"></span>
                   <span class="name-text" x-html="highlight(item.name)"></span>
                 </a>
@@ -185,8 +202,44 @@
             <td class="size" x-text="item.isDir ? '-' : fmtSize(item.size)"></td>
             <td class="time" x-text="fmtTime(item.modTime)"></td>
             <td class="actions">
+              <!-- File download (keep first <a> in td.actions for backward compatibility with E2E) -->
               <template x-if="!item.isDir">
-                <a :href="downloadHref(item)" title="下载">&#11015;</a>
+                <a :href="downloadHref(item)" class="act-btn btn-dl" title="下载" download>&#11015;</a>
+              </template>
+
+              <!-- Directory ZIP download -->
+              <template x-if="item.isDir && path !== ''">
+                <a :href="zipHref(item.path)" class="act-btn btn-zip" title="打包下载 ZIP">&#128230;</a>
+              </template>
+
+              <!-- Audio / Video playback -->
+              <template x-if="!item.isDir && isMedia(item)">
+                <button type="button" class="act-btn btn-play" @click="openMedia(item)" title="播放音视频">&#9654;&#65039;</button>
+              </template>
+
+              <!-- Text editor/viewer -->
+              <template x-if="!item.isDir && isText(item)">
+                <button type="button" class="act-btn btn-edit" @click="openText(item)" :title="manageConfig.allowEdit ? '查看/编辑' : '查看'">&#9999;&#65039;</button>
+              </template>
+
+              <!-- Copy link -->
+              <template x-if="!item.isDir">
+                <button type="button" class="act-btn btn-copy" @click="copyLink(item)" title="复制直链">&#128203;</button>
+              </template>
+
+              <!-- Mobile QR code -->
+              <template x-if="!item.isDir">
+                <button type="button" class="act-btn btn-qr" @click="showQR(item)" title="手机扫码">&#128241;</button>
+              </template>
+
+              <!-- Rename -->
+              <template x-if="manageConfig.allowRename && path !== ''">
+                <button type="button" class="act-btn btn-rename" @click="openRename(item)" title="重命名">&#9998;&#65039;</button>
+              </template>
+
+              <!-- Delete -->
+              <template x-if="manageConfig.allowDelete && path !== ''">
+                <button type="button" class="act-btn btn-del" @click="openDelete(item)" title="安全删除">&#128465;&#65039;</button>
               </template>
             </td>
           </tr>
@@ -197,7 +250,7 @@
     <!-- Grid View -->
     <div class="grid-wrap" x-show="!loading && !errorMsg && sortedItems.length > 0 && viewMode === 'grid'" x-cloak>
       <template x-for="item in sortedItems" :key="item.path">
-        <div class="grid-card" :class="{ 'is-dir': item.isDir, 'is-img': isImage(item) }">
+        <div class="grid-card" :class="{ 'is-dir': item.isDir, 'is-img': isImage(item), 'is-media': isMedia(item) }">
           <!-- 1. Folder item: click to enter directory -->
           <template x-if="item.isDir">
             <a :href="dirHref(item.path)" @click.prevent="navigate(item.path)" class="grid-thumb folder-thumb" :title="item.name">
@@ -212,8 +265,23 @@
             </div>
           </template>
 
-          <!-- 3. Other file item: open in new tab -->
-          <template x-if="!item.isDir && !isImage(item)">
+          <!-- 3. Media item (Audio/Video): click to play in modal -->
+          <template x-if="!item.isDir && !isImage(item) && isMedia(item)">
+            <div class="grid-thumb media-thumb" @click="openMedia(item)" :title="'点击播放: ' + item.name">
+              <span class="grid-icon" x-text="getIcon(item)"></span>
+              <span class="grid-badge">&#9654;</span>
+            </div>
+          </template>
+
+          <!-- 4. Text item: click to open editor -->
+          <template x-if="!item.isDir && !isImage(item) && !isMedia(item) && isText(item)">
+            <div class="grid-thumb text-thumb" @click="openText(item)" :title="'点击查看/编辑: ' + item.name">
+              <span class="grid-icon" x-text="getIcon(item)"></span>
+            </div>
+          </template>
+
+          <!-- 5. Other file item: open in new tab -->
+          <template x-if="!item.isDir && !isImage(item) && !isMedia(item) && !isText(item)">
             <a :href="fileHref(item.path, false)" target="_blank" class="grid-thumb file-thumb" :title="item.name">
               <span class="grid-icon" x-text="getIcon(item)"></span>
             </a>
@@ -228,14 +296,28 @@
                 <span class="grid-link" tabindex="0" @click="openLightbox(item)" @keydown.enter="openLightbox(item)" x-html="highlight(item.name)"></span>
               </template>
               <template x-if="!item.isDir && !isImage(item)">
-                <a :href="fileHref(item.path, false)" target="_blank" x-html="highlight(item.name)"></a>
+                <a :href="fileHref(item.path, false)" target="_blank" @click="onFileClick($event, item)" x-html="highlight(item.name)"></a>
               </template>
             </div>
             <div class="grid-meta">
               <span class="grid-size" x-text="item.isDir ? '文件夹' : fmtSize(item.size)"></span>
-              <template x-if="!item.isDir">
-                <a :href="downloadHref(item)" class="grid-dl" title="下载">&#11015;</a>
-              </template>
+              <div class="grid-actions">
+                <template x-if="!item.isDir">
+                  <a :href="downloadHref(item)" class="grid-dl" title="下载" download>&#11015;</a>
+                </template>
+                <template x-if="item.isDir && path !== ''">
+                  <a :href="zipHref(item.path)" class="grid-dl" title="打包下载 ZIP">&#128230;</a>
+                </template>
+                <template x-if="!item.isDir">
+                  <button type="button" class="grid-act-btn" @click.stop="showQR(item)" title="手机扫码">&#128241;</button>
+                </template>
+                <template x-if="manageConfig.allowRename && path !== ''">
+                  <button type="button" class="grid-act-btn" @click.stop="openRename(item)" title="重命名">&#9998;&#65039;</button>
+                </template>
+                <template x-if="manageConfig.allowDelete && path !== ''">
+                  <button type="button" class="grid-act-btn grid-act-del" @click.stop="openDelete(item)" title="删除">&#128465;&#65039;</button>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -300,6 +382,247 @@
                 title="下一张 (→)">&#10095;</button>
       </div>
     </div>
+  </div>
+
+  <!-- Media Player Modal (Audio/Video) -->
+  <div class="modal-overlay"
+       id="mediaModal"
+       x-show="mediaModal.show"
+       x-cloak
+       @keydown.window.escape="closeMedia()"
+       @click="closeMedia()">
+    <div class="modal-dialog modal-media-dialog" @click.stop>
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <span class="modal-title" x-text="mediaModal.item ? mediaModal.item.name : ''"></span>
+          <span class="modal-sub" x-text="mediaModal.item ? fmtSize(mediaModal.item.size) : ''"></span>
+        </div>
+        <div class="modal-header-actions">
+          <a class="modal-icon-btn" :href="mediaModal.item ? downloadHref(mediaModal.item) : '#'" title="下载原文件" download>&#11015;</a>
+          <a class="modal-icon-btn" :href="mediaModal.item ? rawHref(mediaModal.item.path) : '#'" target="_blank" title="在新标签页打开">&#8599;</a>
+          <button type="button" class="modal-icon-btn close" @click="closeMedia()" title="关闭 (Esc)">&#10005;</button>
+        </div>
+      </div>
+      <div class="modal-body modal-media-body">
+        <template x-if="mediaModal.show && mediaModal.isVideo">
+          <video id="activeVideo"
+                 :src="mediaModal.item ? rawHref(mediaModal.item.path) : ''"
+                 controls autoplay playsinline
+                 class="media-player-video"></video>
+        </template>
+        <template x-if="mediaModal.show && !mediaModal.isVideo">
+          <div class="audio-player-wrapper">
+            <div class="audio-disc-icon">&#127925;</div>
+            <div class="audio-track-info" x-text="mediaModal.item ? mediaModal.item.name : ''"></div>
+            <audio id="activeAudio"
+                   :src="mediaModal.item ? rawHref(mediaModal.item.path) : ''"
+                   controls autoplay
+                   class="media-player-audio"></audio>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Text Viewer & In-Place Editor Modal -->
+  <div class="modal-overlay"
+       id="textModal"
+       x-show="textModal.show"
+       x-cloak
+       @keydown.window.escape="confirmCloseText()"
+       @click="confirmCloseText()">
+    <div class="modal-dialog modal-editor-dialog" @click.stop>
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <span class="modal-title" x-text="(textModal.item ? textModal.item.name : '') + (textModal.dirty ? ' *' : '')"></span>
+          <span class="modal-badge-dirty" x-show="textModal.dirty">未保存</span>
+          <span class="modal-badge-readonly" x-show="!manageConfig.allowEdit">只读模式</span>
+          <span class="modal-status-text" x-show="textModal.status" x-text="textModal.status"></span>
+        </div>
+        <div class="modal-header-actions">
+          <template x-if="manageConfig.allowEdit">
+            <button type="button"
+                    class="btn-editor-save"
+                    id="saveTextBtn"
+                    :disabled="textModal.saving || !textModal.dirty"
+                    @click="saveText()"
+                    title="保存文件 (Ctrl+S)">
+              <span x-show="!textModal.saving">&#128190; 保存</span>
+              <span x-show="textModal.saving">保存中...</span>
+            </button>
+          </template>
+          <a class="modal-icon-btn" :href="textModal.item ? downloadHref(textModal.item) : '#'" title="下载原文件" download>&#11015;</a>
+          <button type="button" class="modal-icon-btn close" @click="confirmCloseText()" title="关闭 (Esc)">&#10005;</button>
+        </div>
+      </div>
+      <div class="modal-body modal-editor-body">
+        <div class="editor-loading" x-show="textModal.loading">
+          <div class="spinner"></div>
+          <div>加载文本中...</div>
+        </div>
+        <div class="editor-err" x-show="!textModal.loading && textModal.err">
+          <span class="big">&#9888;</span>
+          <div x-text="textModal.err"></div>
+        </div>
+        <textarea x-show="!textModal.loading && !textModal.err"
+                  id="textEditorArea"
+                  class="code-textarea"
+                  x-model="textModal.content"
+                  :readonly="!manageConfig.allowEdit"
+                  @keydown="handleTextKeydown($event)"
+                  spellcheck="false"
+                  placeholder="空文件"></textarea>
+      </div>
+      <div class="editor-footer">
+        <span class="editor-info" x-text="textEditorInfo"></span>
+        <span class="editor-tips" x-show="manageConfig.allowEdit">快捷键: Ctrl+S 保存 | Tab 缩进 | Esc 退出</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mkdir Modal -->
+  <div class="modal-overlay"
+       id="mkdirModal"
+       x-show="mkdirModal.show"
+       x-cloak
+       @keydown.window.escape="mkdirModal.show = false"
+       @click="mkdirModal.show = false">
+    <div class="modal-dialog modal-sm-dialog" @click.stop>
+      <div class="modal-header">
+        <span class="modal-title">&#128193; 新建文件夹</span>
+        <button type="button" class="modal-icon-btn close" @click="mkdirModal.show = false">&#10005;</button>
+      </div>
+      <div class="modal-body modal-form-body">
+        <label for="mkdirInput">文件夹名称</label>
+        <input type="text"
+               id="mkdirInput"
+               x-model="mkdirModal.name"
+               @keydown.enter="doMkdir()"
+               placeholder="例如：my-folder"
+               autocomplete="off" />
+        <div class="modal-err-msg" x-show="mkdirModal.err" x-text="mkdirModal.err"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" @click="mkdirModal.show = false">取消</button>
+        <button type="button" class="btn-primary" id="confirmMkdirBtn" :disabled="mkdirModal.submitting" @click="doMkdir()">
+          <span x-show="!mkdirModal.submitting">创建</span>
+          <span x-show="mkdirModal.submitting">创建中...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div class="modal-overlay"
+       id="renameModal"
+       x-show="renameModal.show"
+       x-cloak
+       @keydown.window.escape="renameModal.show = false"
+       @click="renameModal.show = false">
+    <div class="modal-dialog modal-sm-dialog" @click.stop>
+      <div class="modal-header">
+        <span class="modal-title">&#9998; 重命名</span>
+        <button type="button" class="modal-icon-btn close" @click="renameModal.show = false">&#10005;</button>
+      </div>
+      <div class="modal-body modal-form-body">
+        <div class="form-row-info">原名称: <strong x-text="renameModal.item ? renameModal.item.name : ''"></strong></div>
+        <label for="renameInput">新名称</label>
+        <input type="text"
+               id="renameInput"
+               x-model="renameModal.newName"
+               @keydown.enter="doRename()"
+               placeholder="输入新文件名或文件夹名"
+               autocomplete="off" />
+        <div class="modal-err-msg" x-show="renameModal.err" x-text="renameModal.err"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" @click="renameModal.show = false">取消</button>
+        <button type="button" class="btn-primary" id="confirmRenameBtn" :disabled="renameModal.submitting" @click="doRename()">
+          <span x-show="!renameModal.submitting">确定</span>
+          <span x-show="renameModal.submitting">处理中...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safe Delete Modal -->
+  <div class="modal-overlay"
+       id="deleteModal"
+       x-show="deleteModal.show"
+       x-cloak
+       @keydown.window.escape="deleteModal.show = false"
+       @click="deleteModal.show = false">
+    <div class="modal-dialog modal-danger-dialog" @click.stop>
+      <div class="modal-header danger-header">
+        <span class="modal-title danger-title">&#9888;&#65039; 确认安全删除</span>
+        <button type="button" class="modal-icon-btn close" @click="deleteModal.show = false">&#10005;</button>
+      </div>
+      <div class="modal-body modal-form-body">
+        <p class="danger-warn-text">
+          确定要彻底删除以下<span x-text="deleteModal.item && deleteModal.item.isDir ? '文件夹及其所有内容' : '文件'"></span>吗？此操作不可逆！
+        </p>
+        <div class="delete-target-name" x-text="deleteModal.item ? deleteModal.item.name : ''"></div>
+        <template x-if="deleteModal.item && deleteModal.item.isDir">
+          <div class="danger-alert-box">
+            &#9888; <strong>高危提示：</strong>此操作将递归删除该文件夹下的所有子文件夹和文件！
+          </div>
+        </template>
+        <div class="form-group">
+          <label for="deleteTokenInput">请输入删除验证口令 (Delete Token):</label>
+          <input type="password"
+                 id="deleteTokenInput"
+                 x-model="deleteModal.token"
+                 @keydown.enter="doDelete()"
+                 placeholder="配置中的安全删除口令"
+                 autocomplete="off" />
+        </div>
+        <div class="form-checkbox">
+          <label>
+            <input type="checkbox" id="rememberTokenCheck" x-model="deleteModal.rememberSession" />
+            在当前浏览器会话中记住口令 (关闭浏览器后失效)
+          </label>
+        </div>
+        <div class="modal-err-msg danger-err" x-show="deleteModal.err" x-text="deleteModal.err"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" @click="deleteModal.show = false">取消</button>
+        <button type="button" class="btn-danger" id="confirmDeleteBtn" :disabled="deleteModal.submitting" @click="doDelete()">
+          <span x-show="!deleteModal.submitting">&#128465; 确认彻底删除</span>
+          <span x-show="deleteModal.submitting">删除中...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Code Modal -->
+  <div class="modal-overlay"
+       id="qrModal"
+       x-show="qrModal.show"
+       x-cloak
+       @keydown.window.escape="qrModal.show = false"
+       @click="qrModal.show = false">
+    <div class="modal-dialog modal-qr-dialog" @click.stop>
+      <div class="modal-header">
+        <span class="modal-title">&#128241; 手机扫码直链</span>
+        <button type="button" class="modal-icon-btn close" @click="qrModal.show = false">&#10005;</button>
+      </div>
+      <div class="modal-body modal-qr-body">
+        <div class="qr-target-name" x-text="qrModal.item ? qrModal.item.name : ''"></div>
+        <div class="qr-code-box" id="qrContainer">
+          <div x-html="qrModal.svg"></div>
+        </div>
+        <div class="qr-hint">支持手机相机扫码直接在局域网下载或串流播放</div>
+        <div class="qr-url-box">
+          <input type="text" readonly :value="qrModal.url" id="qrUrlInput" class="qr-url-input" />
+          <button type="button" class="btn-secondary" @click="copyText(qrModal.url)">复制</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Toast Notification -->
+  <div class="toast-container" x-show="toastMsg" x-cloak>
+    <div class="toast" x-text="toastMsg"></div>
   </div>
 </div>
 </body>

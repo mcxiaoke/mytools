@@ -69,7 +69,7 @@ try {
     # git not available
 }
 
-$LdFlags = "-s -w -X main.gitCommit=$GitCommit -X `"main.buildTime=$BuildTime`""
+$LdFlags = "-s -w -X main.gitCommit=$GitCommit -X 'main.buildTime=$BuildTime'"
 Write-Host "FileList build" -ForegroundColor Cyan
 Write-Host "  Source:  $SrcDir"
 Write-Host "  Output:  $BuildDir"
@@ -107,7 +107,7 @@ function Invoke-Build {
     Write-Host "Building $GOOS/$GOARCH -> $OutputName" -ForegroundColor Green
     Push-Location $SrcDir
     try {
-        & go build -ldflags $LdFlags -o $outputPath .
+        & go build -ldflags "$LdFlags" -o $outputPath .
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Build failed for $GOOS/$GOARCH"
             exit 1

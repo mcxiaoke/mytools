@@ -1,13 +1,17 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
+	"crypto/subtle"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +25,9 @@ const basePlaceholder = "__FILELIST_BASE__"
 
 // uploadPlaceholder is replaced at request time with true/false indicating if upload is enabled.
 const uploadPlaceholder = "__FILELIST_UPLOAD__"
+
+// managePlaceholder is replaced at request time with JSON client manage configuration.
+const managePlaceholder = "__FILELIST_MANAGE__"
 
 // versionPlaceholder is replaced at request time with current build version for cache busting.
 const versionPlaceholder = "__FILELIST_VERSION__"
@@ -58,6 +65,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/upload", s.handleUpload)
+	mux.HandleFunc("/api/content", s.handleContent)
+	mux.HandleFunc("/api/mkdir", s.handleMkdir)
+	mux.HandleFunc("/api/rename", s.handleRename)
+	mux.HandleFunc("/api/delete", s.handleDelete)
+	mux.HandleFunc("/api/zip", s.handleZip)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.Handle("/static/", s.handleStatic())
@@ -107,6 +119,14 @@ func (s *Server) pageHTML() []byte {
 		uploadVal = []byte("true")
 	}
 	out = bytes.ReplaceAll(out, []byte(uploadPlaceholder), uploadVal)
+	manageConfigJSON, _ := json.Marshal(map[string]bool{
+		"enabled":     s.cfg.ManageEnabled(),
+		"allowEdit":   s.cfg.ManageEdit(),
+		"allowMkdir":  s.cfg.ManageMkdir(),
+		"allowRename": s.cfg.ManageRename(),
+		"allowDelete": s.cfg.ManageDelete(),
+	})
+	out = bytes.ReplaceAll(out, []byte(managePlaceholder), manageConfigJSON)
 	out = bytes.ReplaceAll(out, []byte(versionPlaceholder), []byte(version+"-"+gitCommit))
 	out = bytes.ReplaceAll(out, []byte(gitCommitPlaceholder), []byte(gitCommit))
 	return bytes.ReplaceAll(out, []byte(buildTimePlaceholder), []byte(buildTime))
@@ -461,4 +481,504 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		"uploaded": uploaded,
 	})
 }
+
+// handleContent reads (GET) or writes (PUT/POST) text file content.
+func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
+	vpath := r.URL.Query().Get("path")
+	if vpath == "" || vpath == "/" {
+		http.Error(w, "missing or invalid path", http.StatusBadRequest)
+		return
+	}
+
+	realPath, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		http.Error(w, "path not found", http.StatusNotFound)
+		return
+	}
+
+	if !s.cfg.Security.AllowOutsideSymlinks {
+		if root, ok := s.indexer.RootFor(vpath); ok && !withinRoot(realPath, root.Path) {
+			logger.Warn("server: content access blocked outside root: %s", vpath)
+			http.Error(w, "forbidden: target outside root", http.StatusForbidden)
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		info, err := os.Stat(realPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "file not found", http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if info.IsDir() {
+			http.Error(w, "cannot view directory as text content", http.StatusBadRequest)
+			return
+		}
+		const maxReadSize = 10 * 1024 * 1024 // 10MB limit
+		if info.Size() > maxReadSize {
+			http.Error(w, "file too large for text viewer (max 10MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		data, err := os.ReadFile(realPath)
+		if err != nil {
+			http.Error(w, "cannot read file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, map[string]any{
+			"path":     vpath,
+			"name":     filepath.Base(realPath),
+			"size":     info.Size(),
+			"modTime":  info.ModTime(),
+			"content":  string(data),
+			"editable": s.cfg.ManageEdit(),
+		})
+
+	case http.MethodPut, http.MethodPost:
+		if !s.cfg.ManageEdit() {
+			http.Error(w, "text editing disabled", http.StatusForbidden)
+			return
+		}
+
+		baseName := filepath.Base(vpath)
+		if s.indexer.Excluded(baseName, false) {
+			logger.Warn("server: edit blocked on excluded file: %s", baseName)
+			http.Error(w, "editing excluded or sensitive file is blocked", http.StatusForbidden)
+			return
+		}
+
+		const maxWriteSize = 10 * 1024 * 1024 // 10MB limit
+		r.Body = http.MaxBytesReader(w, r.Body, maxWriteSize)
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request body error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		dir := filepath.Dir(realPath)
+		tmpFile := filepath.Join(dir, fmt.Sprintf(".tmp.%d.%s", time.Now().UnixNano(), baseName))
+		if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+			http.Error(w, "cannot write temporary file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if err := os.Rename(tmpFile, realPath); err != nil {
+			os.Remove(tmpFile)
+			logger.Error("server: failed atomic save for %s: %v", realPath, err)
+			http.Error(w, "cannot save file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		logger.Info("server: saved text file %s (%d bytes)", vpath, len(data))
+		writeJSON(w, map[string]any{
+			"success": true,
+			"path":    vpath,
+			"size":    len(data),
+		})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleMkdir creates a new subdirectory inside a virtual path.
+func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.cfg.ManageMkdir() {
+		writeJSONError(w, "mkdir disabled", http.StatusForbidden)
+		return
+	}
+
+	vpath := r.URL.Query().Get("path")
+	name := r.URL.Query().Get("name")
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		var req struct {
+			Path string `json:"path"`
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			if vpath == "" {
+				vpath = req.Path
+			}
+			if name == "" {
+				name = req.Name
+			}
+		}
+	}
+	if name == "" {
+		name = r.FormValue("name")
+	}
+
+	if vpath == "" || vpath == "/" {
+		writeJSONError(w, "cannot create directory in root view, please select a mount", http.StatusBadRequest)
+		return
+	}
+
+	cleanName := sanitizeFilename(name)
+	if cleanName == "" {
+		writeJSONError(w, "invalid directory name", http.StatusBadRequest)
+		return
+	}
+
+	parentReal, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		writeJSONError(w, "destination path not found", http.StatusNotFound)
+		return
+	}
+
+	info, err := os.Stat(parentReal)
+	if err != nil || !info.IsDir() {
+		writeJSONError(w, "destination parent is not a directory", http.StatusBadRequest)
+		return
+	}
+
+	targetReal := filepath.Join(parentReal, cleanName)
+	if !s.cfg.Security.AllowOutsideSymlinks {
+		if root, ok := s.indexer.RootFor(vpath); ok && !withinRoot(targetReal, root.Path) {
+			logger.Warn("server: mkdir blocked outside root: %s", targetReal)
+			writeJSONError(w, "forbidden: target outside root", http.StatusForbidden)
+			return
+		}
+	}
+
+	if _, err := os.Stat(targetReal); err == nil {
+		writeJSONError(w, "directory or file already exists", http.StatusConflict)
+		return
+	}
+
+	if err := os.Mkdir(targetReal, 0755); err != nil {
+		logger.Error("server: failed mkdir %s: %v", targetReal, err)
+		writeJSONError(w, "failed to create directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	newVpath := strings.TrimSuffix(vpath, "/") + "/" + cleanName
+	logger.Info("server: created directory %s", newVpath)
+	writeJSON(w, map[string]any{
+		"success": true,
+		"name":    cleanName,
+		"path":    newVpath,
+	})
+}
+
+// handleRename renames a file or directory within its parent directory.
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.cfg.ManageRename() {
+		writeJSONError(w, "rename disabled", http.StatusForbidden)
+		return
+	}
+
+	vpath := r.URL.Query().Get("path")
+	newName := r.URL.Query().Get("new_name")
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		var req struct {
+			Path    string `json:"path"`
+			NewName string `json:"newName"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			if vpath == "" {
+				vpath = req.Path
+			}
+			if newName == "" {
+				newName = req.NewName
+			}
+		}
+	}
+	if newName == "" {
+		newName = r.FormValue("new_name")
+	}
+	if newName == "" {
+		newName = r.FormValue("newName")
+	}
+
+	if vpath == "" || vpath == "/" {
+		writeJSONError(w, "cannot rename root view", http.StatusBadRequest)
+		return
+	}
+	for _, root := range s.cfg.Roots {
+		if vpath == root.URL || vpath == root.URL+"/" {
+			writeJSONError(w, "cannot rename root mount", http.StatusBadRequest)
+			return
+		}
+	}
+
+	cleanName := sanitizeFilename(newName)
+	if cleanName == "" {
+		writeJSONError(w, "invalid new name", http.StatusBadRequest)
+		return
+	}
+
+	oldReal, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		writeJSONError(w, "target not found", http.StatusNotFound)
+		return
+	}
+
+	parentReal := filepath.Dir(oldReal)
+	newReal := filepath.Join(parentReal, cleanName)
+
+	if !s.cfg.Security.AllowOutsideSymlinks {
+		if root, ok := s.indexer.RootFor(vpath); ok && !withinRoot(newReal, root.Path) {
+			logger.Warn("server: rename blocked outside root: %s", newReal)
+			writeJSONError(w, "forbidden: target outside root", http.StatusForbidden)
+			return
+		}
+	}
+
+	if oldReal == newReal {
+		writeJSON(w, map[string]any{"success": true, "renamed": false})
+		return
+	}
+
+	if _, err := os.Stat(newReal); err == nil {
+		writeJSONError(w, "destination name already exists", http.StatusConflict)
+		return
+	}
+
+	if err := os.Rename(oldReal, newReal); err != nil {
+		logger.Error("server: failed rename %s -> %s: %v", oldReal, newReal, err)
+		writeJSONError(w, "failed to rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	newVpath := strings.TrimSuffix(filepath.ToSlash(filepath.Dir(vpath)), "/")
+	if newVpath == "." || newVpath == "" {
+		newVpath = "/" + cleanName
+	} else {
+		newVpath = newVpath + "/" + cleanName
+	}
+
+	logger.Info("server: renamed %s -> %s", vpath, newVpath)
+	writeJSON(w, map[string]any{
+		"success": true,
+		"oldPath": vpath,
+		"newPath": newVpath,
+		"name":    cleanName,
+	})
+}
+
+// handleDelete removes a file or directory with deleteToken authentication.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.cfg.ManageDelete() {
+		if !s.cfg.ManageEnabled() || !s.cfg.Manage.AllowDelete {
+			writeJSONError(w, "delete disabled", http.StatusForbidden)
+			return
+		}
+		writeJSONError(w, "delete operation locked: deleteToken is not configured", http.StatusForbidden)
+		return
+	}
+
+	vpath := r.URL.Query().Get("path")
+	token := r.Header.Get("X-Delete-Token")
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		var req struct {
+			Path  string `json:"path"`
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			if vpath == "" {
+				vpath = req.Path
+			}
+			if token == "" {
+				token = req.Token
+			}
+		}
+	}
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
+	if token == "" {
+		token = r.FormValue("token")
+	}
+
+	if vpath == "" || vpath == "/" {
+		writeJSONError(w, "cannot delete root view", http.StatusBadRequest)
+		return
+	}
+	for _, root := range s.cfg.Roots {
+		if vpath == root.URL || vpath == root.URL+"/" {
+			writeJSONError(w, "cannot delete root mount", http.StatusBadRequest)
+			return
+		}
+	}
+
+	expectedToken := s.cfg.ManageDeleteToken()
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
+		logger.Warn("server: delete rejected: invalid token for %s", vpath)
+		writeJSONError(w, "forbidden: invalid delete token", http.StatusForbidden)
+		return
+	}
+
+	realPath, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		writeJSONError(w, "target not found", http.StatusNotFound)
+		return
+	}
+
+	if !s.cfg.Security.AllowOutsideSymlinks {
+		if root, ok := s.indexer.RootFor(vpath); ok && !withinRoot(realPath, root.Path) {
+			logger.Warn("server: delete blocked outside root: %s", realPath)
+			writeJSONError(w, "forbidden: target outside root", http.StatusForbidden)
+			return
+		}
+	}
+
+	info, err := os.Lstat(realPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSONError(w, "target not found", http.StatusNotFound)
+		} else {
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if info.IsDir() {
+		recursive := r.URL.Query().Get("recursive") == "true" || r.FormValue("recursive") == "true"
+		if recursive {
+			err = os.RemoveAll(realPath)
+		} else {
+			err = os.Remove(realPath)
+		}
+	} else {
+		err = os.Remove(realPath)
+	}
+
+	if err != nil {
+		logger.Error("server: failed delete %s: %v", realPath, err)
+		writeJSONError(w, "failed to delete: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Info("server: deleted %s", vpath)
+	writeJSON(w, map[string]any{
+		"success": true,
+		"deleted": vpath,
+	})
+}
+
+// handleZip packages a directory and streams it as a ZIP archive on-the-fly.
+func (s *Server) handleZip(w http.ResponseWriter, r *http.Request) {
+	vpath := r.URL.Query().Get("path")
+	if vpath == "" || vpath == "/" {
+		writeJSONError(w, "cannot zip entire root view", http.StatusBadRequest)
+		return
+	}
+
+	realPath, ok := s.indexer.MapVirtualToReal(vpath)
+	if !ok {
+		writeJSONError(w, "path not found", http.StatusNotFound)
+		return
+	}
+
+	info, err := os.Stat(realPath)
+	if err != nil || !info.IsDir() {
+		writeJSONError(w, "target is not a valid directory", http.StatusBadRequest)
+		return
+	}
+
+	var rootDir string
+	if root, ok := s.indexer.RootFor(vpath); ok {
+		rootDir = root.Path
+	} else {
+		rootDir = realPath
+	}
+
+	if !s.cfg.Security.AllowOutsideSymlinks && !withinRoot(realPath, rootDir) {
+		logger.Warn("server: zip blocked outside root: %s", realPath)
+		writeJSONError(w, "forbidden: target outside root", http.StatusForbidden)
+		return
+	}
+
+	dirName := path.Base(vpath)
+	if dirName == "" || dirName == "." || dirName == "/" {
+		dirName = filepath.Base(realPath)
+	}
+	if dirName == "." || dirName == "/" || dirName == "\\" {
+		dirName = "archive"
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", contentDisposition(dirName+".zip"))
+	w.Header().Set("Cache-Control", "no-cache")
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	_ = filepath.Walk(realPath, func(curPath string, curInfo os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+
+		rel, err := filepath.Rel(realPath, curPath)
+		if err != nil || rel == "." {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+
+		if !s.cfg.Security.AllowOutsideSymlinks && !withinRoot(curPath, rootDir) {
+			if curInfo.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		name := curInfo.Name()
+		if curInfo.IsDir() {
+			if s.indexer.Excluded(name, true) {
+				return filepath.SkipDir
+			}
+			header, err := zip.FileInfoHeader(curInfo)
+			if err != nil {
+				return nil
+			}
+			header.Name = rel + "/"
+			_, _ = zw.CreateHeader(header)
+			return nil
+		}
+
+		if s.indexer.Excluded(name, false) {
+			return nil
+		}
+
+		header, err := zip.FileInfoHeader(curInfo)
+		if err != nil {
+			return nil
+		}
+		header.Name = rel
+		header.Method = zip.Deflate
+
+		writer, err := zw.CreateHeader(header)
+		if err != nil {
+			return nil
+		}
+
+		file, err := os.Open(curPath)
+		if err != nil {
+			return nil
+		}
+		defer file.Close()
+
+		_, _ = io.Copy(writer, file)
+		return nil
+	})
+}
+
 

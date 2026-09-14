@@ -38,6 +38,14 @@ type Config struct {
 	Upload struct {
 		Enabled bool `yaml:"enabled"` // allow uploading files
 	} `yaml:"upload"`
+	Manage struct {
+		Enabled     bool   `yaml:"enabled"`     // master switch for file management (mkdir, rename, edit, delete)
+		AllowEdit   *bool  `yaml:"allowEdit"`   // allow editing text files (default true if manage.enabled)
+		AllowMkdir  *bool  `yaml:"allowMkdir"`  // allow creating directories (default true if manage.enabled)
+		AllowRename *bool  `yaml:"allowRename"` // allow renaming files/dirs (default true if manage.enabled)
+		AllowDelete bool   `yaml:"allowDelete"` // allow deleting files/dirs (default false)
+		DeleteToken string `yaml:"deleteToken"` // token required for deletion (must be non-empty if allowDelete is true)
+	} `yaml:"manage"`
 	Roots []RootMapping `yaml:"roots"`
 
 	// configDir is the directory of the config file, used for resolving
@@ -73,6 +81,49 @@ func (c *Config) IndexIncremental() bool {
 // InlineHTMLBlocked reports whether inline html/svg rendering is blocked (default true).
 func (c *Config) InlineHTMLBlocked() bool {
 	return c.Security.BlockInlineHTML == nil || *c.Security.BlockInlineHTML
+}
+
+// ManageEnabled reports whether file management is enabled (default false).
+func (c *Config) ManageEnabled() bool {
+	return c.Manage.Enabled
+}
+
+// ManageEdit reports whether text editing is allowed (default true when manage is enabled).
+func (c *Config) ManageEdit() bool {
+	if !c.Manage.Enabled {
+		return false
+	}
+	return c.Manage.AllowEdit == nil || *c.Manage.AllowEdit
+}
+
+// ManageMkdir reports whether creating directories is allowed (default true when manage is enabled).
+func (c *Config) ManageMkdir() bool {
+	if !c.Manage.Enabled {
+		return false
+	}
+	return c.Manage.AllowMkdir == nil || *c.Manage.AllowMkdir
+}
+
+// ManageRename reports whether renaming files/directories is allowed (default true when manage is enabled).
+func (c *Config) ManageRename() bool {
+	if !c.Manage.Enabled {
+		return false
+	}
+	return c.Manage.AllowRename == nil || *c.Manage.AllowRename
+}
+
+// ManageDelete reports whether deleting files/directories is allowed.
+// Safe by default: Delete is ONLY allowed when allowDelete is true AND deleteToken is non-empty.
+func (c *Config) ManageDelete() bool {
+	if !c.Manage.Enabled {
+		return false
+	}
+	return c.Manage.AllowDelete && strings.TrimSpace(c.Manage.DeleteToken) != ""
+}
+
+// ManageDeleteToken returns the configured deletion token.
+func (c *Config) ManageDeleteToken() string {
+	return strings.TrimSpace(c.Manage.DeleteToken)
 }
 
 // resolvePath resolves a path to an absolute path.
