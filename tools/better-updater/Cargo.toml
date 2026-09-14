@@ -1,0 +1,62 @@
+[package]
+name = "updater"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Single-file, zero-runtime-dependency, crash-safe in-place updater for Windows desktop apps (updater-rs)"
+
+[features]
+# RM 占用者诊断（只读，只写日志，零风险）。关闭后 32/5 走原有重试/回滚。
+default = ["restart-manager"]
+restart-manager = ["windows-sys/Win32_System_RestartManager"]
+# Authenticode 纵深校验。首发不做，默认关闭。
+authenticode = ["windows-sys/Win32_Security_WinTrust"]
+# 仅调试构建开启：允许缺省签名
+allow-unsigned = []
+
+[dependencies]
+# 微软官方零开销 Win32 绑定。feature 清单与代码调用点一一对应（PLAN §2.1）。
+windows-sys = { version = ">=0.59, <=0.61", default-features = false, features = [
+    "Win32_Foundation",                  # HANDLE / GetLastError / CloseHandle / SYSTEMTIME / GENERIC_*
+    "Win32_System_Threading",            # 进程等待 / CreateProcessW / Sleep / OpenProcessToken / GetCurrentProcess
+    "Win32_System_Environment",          # GetEnvironmentStringsW（降权环境块）
+    "Win32_System_Console",              # AttachConsole（--debug-console）
+    "Win32_System_Diagnostics_ToolHelp", # 枚举 explorer.exe（降权）
+    "Win32_System_SystemInformation",    # GetLocalTime（日志/GEN 时间戳）
+    "Win32_System_Memory",               # CreateFileMappingW / MapViewOfFile（单句柄全量校验）
+    "Win32_System_RemoteDesktop",        # ProcessIdToSessionId（降权 Session 0 判定）
+    "Win32_System_Registry",             # HKEY（SHELLEXECUTEINFOW 字段类型，0.61 实测）
+    "Win32_UI_WindowsAndMessaging",      # HICON/HWND（SHELLEXECUTEINFOW 字段类型，0.61 实测）
+    "Win32_Storage_FileSystem",          # CreateFileW / ReplaceFileW / MoveFileExW /
+                                         # GetFinalPathNameByHandleW / GetDiskFreeSpaceExW /
+                                         # SetFileAttributesW / 映射读取
+    "Win32_Security",                    # 令牌：OpenProcessToken / DuplicateTokenEx /
+                                         # GetTokenInformation（降权）
+    "Win32_UI_Shell",                    # ShellExecuteExW（提权）
+] }
+
+# 纯 Rust 解压：显式 flate2 rust_backend，剔除 zopfli 等写压缩器。
+# zip ≥2.4 的 deflate-flate2 不再隐式启用 flate2 可选依赖，需显式追加 "flate2"。
+zip = { version = "2.2", default-features = false, features = ["deflate-flate2", "flate2"] }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+
+# 零依赖 CLI 解析（替代 clap）
+pico-args = "0.5"
+
+# 验签：轻量 Ed25519，opt_size 压缩体积
+ed25519-compact = { version = "2.1", default-features = false, features = ["opt_size"] }
+
+# SHA256
+sha2 = { version = "0.10", default-features = false }
+
+# 日志抽象（logger.rs 自实现后端，不引入 env_logger / simplelog）
+log = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = true
+incremental = false
