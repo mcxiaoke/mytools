@@ -6,6 +6,13 @@ document.addEventListener('alpine:init', () => {
     // Global Server Config
     base: (window.__FILELIST_CONFIG__ && window.__FILELIST_CONFIG__.base) || '',
     uploadEnabled: !!(window.__FILELIST_CONFIG__ && window.__FILELIST_CONFIG__.uploadEnabled),
+    manageConfig: (window.__FILELIST_CONFIG__ && window.__FILELIST_CONFIG__.manage) || {
+      enabled: false,
+      allowEdit: false,
+      allowMkdir: false,
+      allowRename: false,
+      allowDelete: false
+    },
 
     // State
     path: '',
@@ -24,6 +31,55 @@ document.addEventListener('alpine:init', () => {
     fontScales: [0.85, 1.0, 1.15, 1.3, 1.45, 1.6, 1.8, 2.0],
     viewMode: 'list',
     activeImg: null,
+    toastMsg: '',
+    toastTimer: null,
+
+    // Modals
+    mediaModal: {
+      show: false,
+      item: null,
+      isVideo: false
+    },
+    textModal: {
+      show: false,
+      item: null,
+      content: '',
+      origContent: '',
+      loading: false,
+      saving: false,
+      err: '',
+      status: '',
+      get dirty() {
+        return this.content !== this.origContent;
+      }
+    },
+    mkdirModal: {
+      show: false,
+      name: '',
+      err: '',
+      submitting: false
+    },
+    renameModal: {
+      show: false,
+      item: null,
+      newName: '',
+      err: '',
+      submitting: false
+    },
+    deleteModal: {
+      show: false,
+      item: null,
+      token: '',
+      rememberSession: true,
+      err: '',
+      submitting: false
+    },
+    qrModal: {
+      show: false,
+      item: null,
+      url: '',
+      svg: ''
+    },
 
     // Lifecycle
     init() {
@@ -31,8 +87,18 @@ document.addEventListener('alpine:init', () => {
       this.initZoom();
       this.initHistory();
       this.initDragAndDrop();
+      this.initUnsavedWarning();
       var initialPath = this.pathFromLocation();
       this.navigate(initialPath, true, true);
+    },
+
+    initUnsavedWarning() {
+      window.addEventListener('beforeunload', (e) => {
+        if (this.textModal.show && this.textModal.dirty) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
     },
 
     initViewMode() {
@@ -104,6 +170,12 @@ document.addEventListener('alpine:init', () => {
       return this.fileHref(item.path, true);
     },
 
+    zipHref(p) {
+      if (!p || p === '/') return '';
+      var path = p.charAt(0) === '/' ? p : '/' + p;
+      return this.base + '/api/zip?path=' + this.encodePath(path);
+    },
+
     pathFromLocation() {
       var p = this.decodePath(window.location.pathname);
       if (this.base && p.indexOf(this.base) === 0) {
@@ -158,6 +230,13 @@ document.addEventListener('alpine:init', () => {
       this.uploadStatus = '';
       this.uploadStatusClass = '';
       this.activeImg = null;
+      this.closeMedia();
+      this.textModal.show = false;
+      this.textModal.item = null;
+      this.mkdirModal.show = false;
+      this.renameModal.show = false;
+      this.deleteModal.show = false;
+      this.qrModal.show = false;
 
       if (!skipState) {
         var url = this.base + (path || '/');
@@ -541,6 +620,387 @@ document.addEventListener('alpine:init', () => {
       } else {
         this.activeImg = imgs[0];
       }
+    },
+
+    // ---- Media Player & Editor Type Checks ----
+    isMedia(item) {
+      if (!item || item.isDir) return false;
+      var ext = (item.name.split('.').pop() || '').toLowerCase();
+      return ['mp4', 'webm', 'mkv', 'mov', 'avi', 'mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'].indexOf(ext) > -1;
+    },
+
+    isVideo(item) {
+      if (!item || item.isDir) return false;
+      var ext = (item.name.split('.').pop() || '').toLowerCase();
+      return ['mp4', 'webm', 'mkv', 'mov', 'avi'].indexOf(ext) > -1;
+    },
+
+    isAudio(item) {
+      if (!item || item.isDir) return false;
+      var ext = (item.name.split('.').pop() || '').toLowerCase();
+      return ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'].indexOf(ext) > -1;
+    },
+
+    isText(item) {
+      if (!item || item.isDir) return false;
+      var ext = (item.name.split('.').pop() || '').toLowerCase();
+      return ['txt', 'md', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'js', 'ts', 'go', 'py', 'sh', 'bash', 'zsh', 'bat', 'ps1', 'ini', 'conf', 'config', 'log', 'toml', 'sql', 'c', 'cpp', 'h', 'hpp', 'rs', 'java', 'kt', 'dart', 'diff', 'patch'].indexOf(ext) > -1;
+    },
+
+    onFileClick(e, item) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      if (this.isImage(item)) {
+        e.preventDefault();
+        this.openLightbox(item);
+      } else if (this.isMedia(item)) {
+        e.preventDefault();
+        this.openMedia(item);
+      } else if (this.isText(item)) {
+        e.preventDefault();
+        this.openText(item);
+      }
+    },
+
+    // ---- Audio & Video Player Modal ----
+    openMedia(item) {
+      this.mediaModal.show = true;
+      this.mediaModal.item = item;
+      this.mediaModal.isVideo = this.isVideo(item);
+    },
+
+    closeMedia() {
+      this.mediaModal.show = false;
+      this.mediaModal.item = null;
+      var v = document.getElementById('activeVideo');
+      if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
+      var a = document.getElementById('activeAudio');
+      if (a) { try { a.pause(); a.removeAttribute('src'); a.load(); } catch (e) {} }
+    },
+
+    parseApiError(r) {
+      return r.text().then((text) => {
+        try {
+          var d = JSON.parse(text);
+          if (d && d.error) return d.error;
+        } catch (e) {}
+        return text || ('HTTP ' + r.status);
+      });
+    },
+
+    // ---- Text Viewer & In-Place Editor ----
+    openText(item) {
+      if (item.size > 2 * 1024 * 1024) {
+        if (!confirm('此文件较大 (' + this.fmtSize(item.size) + ')，在线编辑可能较慢，确定打开吗？')) return;
+      }
+      this.textModal.show = true;
+      this.textModal.item = item;
+      this.textModal.content = '';
+      this.textModal.origContent = '';
+      this.textModal.loading = true;
+      this.textModal.saving = false;
+      this.textModal.err = '';
+      this.textModal.status = '';
+      var url = this.base + '/api/content?path=' + encodeURIComponent(item.path);
+      fetch(url)
+        .then((r) => {
+          if (!r.ok) {
+            return this.parseApiError(r).then((msg) => { throw new Error(msg); });
+          }
+          return r.json();
+        })
+        .then((data) => {
+          var txt = (data && data.content !== undefined) ? data.content : '';
+          this.textModal.content = txt;
+          this.textModal.origContent = txt;
+          this.textModal.loading = false;
+          this.$nextTick(() => {
+            var el = document.getElementById('textEditorArea');
+            if (el) el.focus();
+          });
+        })
+        .catch((err) => {
+          this.textModal.err = '加载文件失败: ' + err.message;
+          this.textModal.loading = false;
+        });
+    },
+
+    confirmCloseText() {
+      if (this.textModal.dirty) {
+        if (!confirm('当前有未保存的修改，确定要关闭吗？已修改的内容将丢失。')) return;
+      }
+      this.textModal.show = false;
+      this.textModal.item = null;
+    },
+
+    saveText() {
+      if (!this.manageConfig.allowEdit || !this.textModal.item || this.textModal.saving) return;
+      this.textModal.saving = true;
+      this.textModal.status = '保存中...';
+      var url = this.base + '/api/content?path=' + encodeURIComponent(this.textModal.item.path);
+      fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: this.textModal.content
+      })
+        .then((r) => {
+          if (!r.ok) {
+            return this.parseApiError(r).then((msg) => { throw new Error(msg); });
+          }
+          return r.json();
+        })
+        .then(() => {
+          this.textModal.origContent = this.textModal.content;
+          this.textModal.saving = false;
+          this.textModal.status = '已保存';
+          this.showToast('保存成功');
+          this.loadDir(this.path);
+          setTimeout(() => {
+            if (this.textModal.status === '已保存') this.textModal.status = '';
+          }, 3000);
+        })
+        .catch((err) => {
+          this.textModal.saving = false;
+          this.textModal.status = '';
+          alert('保存失败: ' + err.message);
+        });
+    },
+
+    handleTextKeydown(e) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        this.saveText();
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        var ta = e.target;
+        var start = ta.selectionStart;
+        var end = ta.selectionEnd;
+        var indent = '  ';
+        this.textModal.content = this.textModal.content.substring(0, start) + indent + this.textModal.content.substring(end);
+        this.$nextTick(() => {
+          ta.selectionStart = ta.selectionEnd = start + indent.length;
+        });
+      }
+    },
+
+    get textEditorInfo() {
+      var c = this.textModal.content || '';
+      var lines = c ? c.split('\n').length : 0;
+      return lines + ' 行 | ' + c.length + ' 字符 | UTF-8';
+    },
+
+    // ---- Directory Creation ----
+    openMkdir() {
+      this.mkdirModal.show = true;
+      this.mkdirModal.name = '';
+      this.mkdirModal.err = '';
+      this.mkdirModal.submitting = false;
+      this.$nextTick(() => {
+        var el = document.getElementById('mkdirInput');
+        if (el) el.focus();
+      });
+    },
+
+    doMkdir() {
+      var name = (this.mkdirModal.name || '').trim();
+      if (!name) {
+        this.mkdirModal.err = '文件夹名称不能为空';
+        return;
+      }
+      if (/[\/\\:]/.test(name)) {
+        this.mkdirModal.err = '文件夹名称不能包含 / \\ : 等特殊字符';
+        return;
+      }
+      this.mkdirModal.submitting = true;
+      this.mkdirModal.err = '';
+      var url = this.base + '/api/mkdir';
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: this.path, name: name })
+      })
+        .then((r) => {
+          if (!r.ok) {
+            return this.parseApiError(r).then((msg) => { throw new Error(msg); });
+          }
+          return r.json();
+        })
+        .then(() => {
+          this.mkdirModal.show = false;
+          this.mkdirModal.submitting = false;
+          this.showToast('文件夹已创建: ' + name);
+          this.loadDir(this.path);
+        })
+        .catch((err) => {
+          this.mkdirModal.submitting = false;
+          this.mkdirModal.err = err.message || '创建文件夹失败';
+        });
+    },
+
+    // ---- File / Directory Rename ----
+    openRename(item) {
+      this.renameModal.show = true;
+      this.renameModal.item = item;
+      this.renameModal.newName = item.name;
+      this.renameModal.err = '';
+      this.renameModal.submitting = false;
+      this.$nextTick(() => {
+        var el = document.getElementById('renameInput');
+        if (el) { el.focus(); el.select(); }
+      });
+    },
+
+    doRename() {
+      var newName = (this.renameModal.newName || '').trim();
+      if (!newName) {
+        this.renameModal.err = '名称不能为空';
+        return;
+      }
+      if (/[\/\\:]/.test(newName)) {
+        this.renameModal.err = '名称不能包含 / \\ : 等特殊字符';
+        return;
+      }
+      if (this.renameModal.item && newName === this.renameModal.item.name) {
+        this.renameModal.show = false;
+        return;
+      }
+      this.renameModal.submitting = true;
+      this.renameModal.err = '';
+      var url = this.base + '/api/rename';
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: this.renameModal.item.path, newName: newName })
+      })
+        .then((r) => {
+          if (!r.ok) {
+            return this.parseApiError(r).then((msg) => { throw new Error(msg); });
+          }
+          return r.json();
+        })
+        .then(() => {
+          this.renameModal.show = false;
+          this.renameModal.submitting = false;
+          this.showToast('重命名成功');
+          this.loadDir(this.path);
+        })
+        .catch((err) => {
+          this.renameModal.submitting = false;
+          this.renameModal.err = err.message || '重命名失败';
+        });
+    },
+
+    // ---- Safe Deletion with deleteToken ----
+    openDelete(item) {
+      this.deleteModal.show = true;
+      this.deleteModal.item = item;
+      this.deleteModal.err = '';
+      this.deleteModal.submitting = false;
+      var saved = sessionStorage.getItem('filelist_del_token');
+      if (saved) {
+        this.deleteModal.token = saved;
+      }
+      this.$nextTick(() => {
+        var el = document.getElementById('deleteTokenInput');
+        if (el) { el.focus(); if (this.deleteModal.token) el.select(); }
+      });
+    },
+
+    doDelete() {
+      var token = (this.deleteModal.token || '').trim();
+      if (!token) {
+        this.deleteModal.err = '请输入安全删除验证口令';
+        return;
+      }
+      this.deleteModal.submitting = true;
+      this.deleteModal.err = '';
+      var url = this.base + '/api/delete';
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: this.deleteModal.item.path, token: token })
+      })
+        .then((r) => {
+          if (!r.ok) {
+            return this.parseApiError(r).then((msg) => { throw new Error(msg); });
+          }
+          return r.json();
+        })
+        .then(() => {
+          if (this.deleteModal.rememberSession) {
+            sessionStorage.setItem('filelist_del_token', token);
+          }
+          this.deleteModal.show = false;
+          this.deleteModal.submitting = false;
+          this.showToast('已删除: ' + (this.deleteModal.item ? this.deleteModal.item.name : ''));
+          this.loadDir(this.path);
+        })
+        .catch((err) => {
+          this.deleteModal.submitting = false;
+          this.deleteModal.err = err.message || '删除失败，请检查验证口令';
+        });
+    },
+
+    // ---- Mobile QR Code & Link Sharing ----
+    showQR(item) {
+      var fullUrl = window.location.origin + this.rawHref(item.path);
+      this.qrModal.item = item;
+      this.qrModal.url = fullUrl;
+      this.qrModal.svg = '';
+      try {
+        if (typeof window.qrcode === 'function') {
+          var qr = window.qrcode(0, 'M');
+          qr.addData(fullUrl);
+          qr.make();
+          this.qrModal.svg = qr.createSvgTag({ scalable: true });
+        }
+      } catch (ex) {
+        console.error('QR generation failed:', ex);
+      }
+      this.qrModal.show = true;
+    },
+
+    copyLink(item) {
+      var fullUrl = window.location.origin + this.rawHref(item.path);
+      this.copyText(fullUrl);
+    },
+
+    copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          this.showToast('链接已复制到剪贴板');
+        }).catch(() => {
+          this.fallbackCopy(text);
+        });
+      } else {
+        this.fallbackCopy(text);
+      }
+    },
+
+    fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        this.showToast('链接已复制到剪贴板');
+      } catch (e) {
+        this.showToast('复制失败，请手动复制');
+      }
+      document.body.removeChild(ta);
+    },
+
+    showToast(msg) {
+      this.toastMsg = msg;
+      clearTimeout(this.toastTimer);
+      this.toastTimer = setTimeout(() => {
+        this.toastMsg = '';
+      }, 2500);
     }
   }));
 });

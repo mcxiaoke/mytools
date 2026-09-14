@@ -22,6 +22,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
+// writeJSONError writes a JSON error object {"error": msg} with the specified HTTP status code.
+func writeJSONError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		logger.Error("server: json encode error: %v", err)
+	}
+}
+
 // contentDisposition builds a Content-Disposition header value with
 // RFC 5987 encoding for non-ASCII filenames.
 func contentDisposition(filename string) string {

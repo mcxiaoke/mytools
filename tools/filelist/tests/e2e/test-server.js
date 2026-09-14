@@ -78,6 +78,12 @@ function setupFixtures(testDir) {
     fs.writeFileSync(path.join(imgDir, 'sample.png'), Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082', 'hex'));
   }
 
+  // Root1 media folder
+  const mediaDir = path.join(root1, 'media');
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.writeFileSync(path.join(mediaDir, 'sample.mp4'), Buffer.from('000000186674797069736f6d0000020069736f6d69736f32617663310000000866726565', 'hex'));
+  fs.writeFileSync(path.join(mediaDir, 'sample.mp3'), Buffer.from('49443303000000000000', 'hex'));
+
   // Root2 files
   fs.writeFileSync(path.join(root2, 'guide.md'), '# FileList Guide\n', 'utf-8');
 
@@ -124,6 +130,13 @@ log:
 dataDir: "${dataDir.replace(/\\/g, '/')}"
 upload:
   enabled: ${options.uploadEnabled !== false}
+manage:
+  enabled: ${options.manageEnabled !== undefined ? options.manageEnabled : true}
+  allowEdit: ${options.allowEdit !== undefined ? options.allowEdit : true}
+  allowMkdir: ${options.allowMkdir !== undefined ? options.allowMkdir : true}
+  allowRename: ${options.allowRename !== undefined ? options.allowRename : true}
+  allowDelete: ${options.allowDelete !== undefined ? options.allowDelete : true}
+  deleteToken: "${options.deleteToken || 'e2e-secret-delete-token'}"
 index:
   interval: "1h"
   excludeFiles:

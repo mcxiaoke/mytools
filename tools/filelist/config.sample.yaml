@@ -91,6 +91,18 @@ upload:
                          # (not the root catalog view). Filename conflicts are
                          # automatically suffixed with numbers, e.g. file (1).txt.
 
+# Management & File Operations (mkdir, text editing, rename, safe deletion)
+# Disabled by default for read-only safety.
+manage:
+  enabled: false         # master switch for management features
+  allowEdit: true        # true: allow online viewing & editing of text files (Ctrl+S, atomic save)
+  allowMkdir: true       # true: allow creating new subdirectories
+  allowRename: true      # true: allow renaming files and folders
+  allowDelete: false     # true: allow deleting files and folders (requires non-empty deleteToken!)
+  deleteToken: ""        # independent token for deletion. When configured, deleting any file or
+                         # folder requires typing this secret token in the confirmation dialog.
+                         # If left empty, delete operations remain hard-locked on the server.
+
 # Path mappings: URL path -> real disk path
 # - URL: virtual web path shown in browser (must start with /)
 # - Path: real disk path (use forward slashes for cross-platform)
