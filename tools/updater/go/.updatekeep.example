@@ -1,0 +1,23 @@
+# updater 保护清单示例
+#
+# 语法：每行一个相对路径（相对 --target 目录），# 开头为注释
+#   dir\      以斜杠结尾 = 整棵目录（含子目录）
+#   *.log     含 * ? [ ] = glob，匹配完整相对路径、文件名或任一上级目录
+#   a/b.txt   不含通配符 = 精确匹配该文件，或作为目录前缀匹配
+
+# ---- 用户配置与数据（按项目实际情况修改）----
+config\
+userdata\
+logs\
+*.log
+settings.json
+
+# ---- 注意：不要把 Flutter 的 data\ 整条列入 ----
+# Flutter Windows 的运行时资源（flutter_assets\、icudtl.dat、app.so 等）
+# 就在 exe 同级的 data\ 下，必须随版本更新，列入会导致更新失效。
+
+# ---- 下面两项由 updater 无条件自保护，写在这里只是便于审阅 ----
+# 正在运行的 updater 文件与其自身路径（含大小写变体）永远不会被覆盖，
+# 保护清单文件本身同样不会；这两条无法通过 --keep 取消。
+updater.exe
+.updatekeep
