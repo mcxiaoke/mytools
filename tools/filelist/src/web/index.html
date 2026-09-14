@@ -37,7 +37,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
 }
 .container {
@@ -45,21 +45,21 @@ body {
   margin: 0 auto;
   padding: 40px 24px 48px;
 }
+@media (min-width: 1920px) {
+  .container { max-width: 1400px; }
+}
+@media (min-width: 2560px) {
+  .container { max-width: 1800px; }
+}
 @media (max-width: 768px) {
   .container { padding: 24px 16px 32px; }
-}
-@media (max-width: 480px) {
-  .container { padding: 16px 12px 24px; }
+  header { margin-bottom: 16px; }
 }
 header {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-@media (max-width: 768px) {
-  header { margin-bottom: 16px; }
 }
 .search-bar {
   flex: 1;
@@ -72,36 +72,40 @@ header {
   border-radius: var(--radius);
   padding: 0 14px;
   box-shadow: var(--shadow);
+  height: 42px;
 }
 .search-bar input {
   flex: 1;
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 14px;
-  padding: 12px 0;
+  font-size: 15px;
+  padding: 8px 0;
   outline: none;
-}
-@media (max-width: 768px) {
-  .search-bar input { padding: 11px 0; font-size: 16px; }
+  min-width: 0;
 }
 .search-bar input::placeholder { color: var(--text-dim); }
 .search-bar button {
   border: none;
   background: var(--accent);
   color: #fff;
-  padding: 8px 16px;
+  padding: 0 16px;
+  height: 30px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
   white-space: nowrap;
   transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .search-bar button:hover { background: var(--accent-hover); }
 .search-bar button.clear {
   background: transparent;
   color: var(--text-dim);
-  padding: 8px 6px;
+  padding: 0 6px;
+  font-size: 14px;
 }
 .search-bar button.clear:hover { color: var(--text); }
 .breadcrumb {
@@ -109,7 +113,7 @@ header {
   align-items: center;
   gap: 2px;
   margin-bottom: 16px;
-  font-size: 13px;
+  font-size: 14px;
   flex-wrap: wrap;
 }
 .breadcrumb a {
@@ -130,7 +134,7 @@ header {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 .toolbar-left {
@@ -143,10 +147,10 @@ header {
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--accent);
-  padding: 3px 10px;
+  padding: 4px 11px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -163,7 +167,7 @@ header {
   cursor: not-allowed;
 }
 .upload-status {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--accent);
 }
 .upload-status.error {
@@ -202,11 +206,11 @@ table { width: 100%; border-collapse: collapse; }
 th {
   text-align: left;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 10px 16px;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--card);
   user-select: none;
@@ -217,8 +221,9 @@ th:hover { color: var(--text); }
 th .arrow { font-size: 10px; margin-left: 2px; }
 th.name-col { width: 50%; }
 th.size-col, th.time-col { width: 25%; }
+th.actions-col { width: 60px; text-align: center; }
 td {
-  padding: 8px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
   overflow: hidden;
@@ -234,16 +239,23 @@ td.name a {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 td.name a:hover { color: var(--accent); }
-td.name .icon { font-size: 16px; flex-shrink: 0; }
+td.name .icon { font-size: 18px; flex-shrink: 0; }
+td.name a .name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 td.size { color: var(--text-dim); text-align: right; font-variant-numeric: tabular-nums; }
 td.time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 td.actions { width: 60px; text-align: center; }
 td.actions a {
   color: var(--text-dim);
   text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -281,13 +293,16 @@ td.actions a:hover { background: var(--accent); color: #fff; }
   gap: 4px;
   color: var(--accent);
   text-decoration: none;
-  font-size: 13px;
-  padding: 8px 14px;
-  border-radius: 6px;
+  font-size: 14px;
+  padding: 0 14px;
+  height: 42px;
+  border-radius: var(--radius);
   cursor: pointer;
   border: 1px solid var(--border);
   background: var(--card);
   white-space: nowrap;
+  box-shadow: var(--shadow);
+  flex-shrink: 0;
 }
 .back-link:hover { background: var(--hover); }
 mark {
@@ -295,16 +310,6 @@ mark {
   color: var(--text);
   border-radius: 2px;
   padding: 0 2px;
-}
-/* responsive table: hide time/size columns on small screens */
-@media (max-width: 640px) {
-  th.size-col, td.size,
-  th.time-col, td.time { display: none; }
-  th.name-col { width: auto; }
-  td { padding: 10px 12px; }
-  th { padding: 8px 12px; }
-  .search-bar { padding: 0 10px; }
-  .search-bar button { padding: 7px 12px; font-size: 12px; }
 }
 .retry-btn {
   margin-top: 16px;
@@ -318,6 +323,111 @@ mark {
   transition: background 0.15s;
 }
 .retry-btn:hover { background: var(--accent-hover); }
+.font-ctrl {
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  height: 42px;
+  flex-shrink: 0;
+}
+.font-ctrl button {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 10px;
+  height: 100%;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.font-ctrl button:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+.font-ctrl .font-val {
+  min-width: 48px;
+  text-align: center;
+  font-weight: 500;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+}
+.font-ctrl .font-val:hover {
+  color: var(--accent);
+}
+/* responsive styles for mobile / small screens (<= 640px) */
+@media (max-width: 640px) {
+  .container { padding: 14px 12px 24px; }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  #homeLink {
+    order: 1;
+    font-size: 13px;
+    padding: 0 12px;
+    height: 36px;
+  }
+  .font-ctrl {
+    order: 2;
+    margin-left: auto;
+    height: 36px;
+  }
+  .font-ctrl button {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .font-ctrl .font-val {
+    min-width: 44px;
+    font-size: 11px;
+  }
+  .search-bar {
+    order: 3;
+    width: 100%;
+    flex: none;
+    padding: 0 10px;
+    height: 40px;
+  }
+  .search-bar input {
+    font-size: 14px;
+    padding: 6px 0;
+  }
+  .search-bar button {
+    padding: 0 12px;
+    height: 28px;
+    font-size: 12px;
+  }
+  .search-bar button.clear {
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .breadcrumb {
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+  th.size-col, td.size,
+  th.time-col, td.time { display: none; }
+  th.name-col { width: auto; }
+  th.actions-col, td.actions { width: 44px; text-align: center; }
+  td { padding: 9px 10px; }
+  th { padding: 8px 10px; font-size: 12px; }
+  td.actions a { padding: 2px 4px; font-size: 12px; }
+}
 </style>
 </head>
 <body>
@@ -326,8 +436,13 @@ mark {
     <a class="back-link" href="__FILELIST_BASE__/" id="homeLink">&#128193; 根目录</a>
     <div class="search-bar">
       <input type="text" id="searchInput" placeholder="搜索文件或目录名..." autocomplete="off">
+      <button class="clear" id="clearBtn" type="button" style="display:none;" title="清除搜索">&#10005;</button>
       <button id="searchBtn" type="button">搜索</button>
-      <button class="clear" id="clearBtn" type="button" style="display:none;">&#10005;</button>
+    </div>
+    <div class="font-ctrl" title="字号调节（点击中间百分比恢复默认）">
+      <button type="button" id="fontDec" title="缩小字号">A-</button>
+      <button type="button" id="fontReset" class="font-val" title="点击恢复默认字号 (100%)">100%</button>
+      <button type="button" id="fontInc" title="放大字号">A+</button>
     </div>
   </header>
 
@@ -589,7 +704,7 @@ function renderTable(items, searchQuery) {
   html += '<th class="name-col" data-col="name">名称<span class="arrow">' + (state.sortCol === 'name' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
   html += '<th class="size-col" data-col="size">大小<span class="arrow">' + (state.sortCol === 'size' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
   html += '<th class="time-col" data-col="time">修改时间<span class="arrow">' + (state.sortCol === 'time' ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '') + '</span></th>';
-  html += '<th style="width:60px;text-align:center;">操作</th>';
+  html += '<th class="actions-col">操作</th>';
   html += '</tr></thead><tbody>';
 
   for (var i = 0; i < sorted.length; i++) {
@@ -602,9 +717,9 @@ function renderTable(items, searchQuery) {
     html += '<tr>';
     html += '<td class="name">';
     if (e.isDir) {
-      html += '<a href="' + esc(dirHref(e.path)) + '"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+      html += '<a href="' + esc(dirHref(e.path)) + '"><span class="icon">' + icon + '</span><span class="name-text">' + nameHtml + '</span></a>';
     } else {
-      html += '<a href="' + esc(fileHref(e.path, false)) + '" target="_blank"><span class="icon">' + icon + '</span>' + nameHtml + '</a>';
+      html += '<a href="' + esc(fileHref(e.path, false)) + '" target="_blank"><span class="icon">' + icon + '</span><span class="name-text">' + nameHtml + '</span></a>';
     }
     html += '</td>';
     html += '<td class="size">' + sizeStr + '</td>';
@@ -854,6 +969,71 @@ D.addEventListener('click', function(e) {
   var p = (href === '/') ? '' : decodePath(href);
   navigate(p, false, false);
 });
+
+// ---- Font Size & UI Scale (Zoom) Controller ----
+var FONT_SCALES = [0.85, 1.0, 1.15, 1.3, 1.45, 1.6, 1.8, 2.0];
+var currentScale = 1.0;
+var fontDecBtn = D.getElementById('fontDec');
+var fontIncBtn = D.getElementById('fontInc');
+var fontResetBtn = D.getElementById('fontReset');
+
+function setZoom(scale, save) {
+  currentScale = Math.round(scale * 100) / 100;
+  document.body.style.zoom = currentScale;
+  if (fontResetBtn) {
+    fontResetBtn.textContent = Math.round(currentScale * 100) + '%';
+  }
+  if (save) {
+    try {
+      localStorage.setItem('filelist_zoom', String(currentScale));
+    } catch(e) {}
+  }
+}
+
+function initZoom() {
+  var saved = null;
+  try {
+    saved = localStorage.getItem('filelist_zoom');
+  } catch(e) {}
+  if (saved) {
+    var val = parseFloat(saved);
+    if (!isNaN(val) && val >= 0.7 && val <= 3.0) {
+      setZoom(val, false);
+      return;
+    }
+  }
+  setZoom(1.0, false);
+}
+
+if (fontDecBtn && fontIncBtn && fontResetBtn) {
+  fontDecBtn.addEventListener('click', function() {
+    var next = FONT_SCALES[0];
+    for (var i = FONT_SCALES.length - 1; i >= 0; i--) {
+      if (FONT_SCALES[i] < currentScale - 0.01) {
+        next = FONT_SCALES[i];
+        break;
+      }
+    }
+    setZoom(next, true);
+  });
+
+  fontIncBtn.addEventListener('click', function() {
+    var next = FONT_SCALES[FONT_SCALES.length - 1];
+    for (var i = 0; i < FONT_SCALES.length; i++) {
+      if (FONT_SCALES[i] > currentScale + 0.01) {
+        next = FONT_SCALES[i];
+        break;
+      }
+    }
+    setZoom(next, true);
+  });
+
+  fontResetBtn.addEventListener('click', function() {
+    setZoom(1.0, true);
+  });
+}
+
+initZoom();
 
 // ---- Init: read path from location.pathname ----
 var initPath = pathFromLocation();
