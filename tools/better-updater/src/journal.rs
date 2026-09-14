@@ -248,7 +248,7 @@ pub fn recover(target: &str, ttl_days: u32, retr: crate::transaction::RetryParam
         }
         Stage::Committed => {
             log::info!("recovery(L3): COMMITTED journal found (gen {}), finalizing", j.gen);
-            crate::transaction::finalize_committed(target, &j, ttl_days, retr, true);
+            crate::transaction::finalize_committed(target, &j, ttl_days, retr, true, None);
             Ok(RecoverResult::Finalized)
         }
     }

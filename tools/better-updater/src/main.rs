@@ -142,6 +142,11 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
         return dry_run(&args);
     }
 
+    // ---- --watchdog：先等 Worker，再取锁接管收尾/回滚（TRANSACTION §1.4）----
+    if args.mode == Mode::Watchdog {
+        return watchdog_mode(&args);
+    }
+
     // ---- 1. 写权限预检：MkdirAll(.updater) + 探针文件 ----
     let probe = probe_target(&args);
     if let Err(c) = probe {
@@ -201,6 +206,41 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
     // ---- --recover 模式：取锁 → 等待 pid → 恢复 → 按需拉起 ----
     if args.mode == Mode::Recover {
         return recover_mode(&args);
+    }
+
+    // ---- --rollback-previous：取锁 → 自愈优先 → 回退到保留的上一版本 ----
+    if args.mode == Mode::RollbackPrevious {
+        let retr = RetryParams::new(args.write_retries, args.write_delay_ms);
+        if let Ok(journal::RecoverResult::RollbackIncomplete) = journal::recover(&args.target, args.previous_ttl_days, retr) {
+            log::error!("unresolved journal; refusing to start a rollback transaction");
+            end("ABORTED", "-", "-", "-", "-", "unresolved journal");
+            return EXIT_CATASTROPHIC;
+        }
+        return match transaction::rollback_previous(
+            &args.target,
+            args.launch.as_deref(),
+            &args.args_raw,
+            args.previous_ttl_days,
+            retr,
+        ) {
+            Ok(transaction::RollbackPreviousOutcome::NoGeneration) => {
+                end("COMMITTED", "-", "-", "-", "-", "no retained generation to roll back to");
+                EXIT_OK
+            }
+            Ok(transaction::RollbackPreviousOutcome::Reverted { version }) => {
+                let v = version.unwrap_or_else(|| "-".to_string());
+                if args.worker {
+                    let _ = selfcopy::rename_self_del();
+                }
+                end("COMMITTED", &v, "written", "retained", "unverified", "rolled back to previous generation");
+                EXIT_OK
+            }
+            Err(e) => {
+                log::error!("rollback-previous failed: {}", e);
+                end("ABORTED", "-", "-", "-", "-", "rollback-previous failed");
+                EXIT_CATASTROPHIC
+            }
+        };
     }
 
     // ---- 3. 影子分身：自身在 target 内 且 未带 --worker ----
@@ -264,7 +304,78 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
     // 陈世代 GC（Tier 2）
     gc::run(&args.target, args.previous_ttl_days);
 
-    update_flow(&args, retr)
+    update_flow(&args, raw, retr)
+}
+
+/// 恢复看门狗（L2，TRANSACTION §1.4）：等 Worker 退出（句柄绑定 + 映像核验 PID 复用 +
+/// 安全超时降级 L3）→ 取锁接管 → 按Journal 收尾/回滚 → 按需拉起 → 自改名 .del。
+fn watchdog_mode(args: &Args) -> i32 {
+    log::info!("watchdog: guarding worker pid {} (image {})", args.watch_pid, args.watch_image);
+    let safety_timeout = args.timeout.saturating_add(600);
+    let h = win32::process::open_sync(args.watch_pid);
+    match h {
+        None => log::info!("watchdog: worker pid {} not found, treat as exited", args.watch_pid),
+        Some(h) => {
+            let g = h;
+            let actual = win32::process::image_path(g.get()).unwrap_or_default();
+            if !actual.is_empty() && win32::path_guard::norm_ci(&actual) != win32::path_guard::norm_ci(&args.watch_image) {
+                log::info!(
+                    "watchdog: pid {} reused by {} (expected {}); treat worker as exited",
+                    args.watch_pid, actual, args.watch_image
+                );
+            } else {
+                let ms = (safety_timeout as u64).saturating_mul(1000);
+                let w = win32::process::wait_for_ms(g.get(), ms);
+                if matches!(w, win32::process::WaitCode::Timeout) {
+                    // 3T：Worker 仍存活 ⇒ 绝不据取锁成败推断“已被接管”；放弃守护并明确标注降级 L3
+                    log::warn!(
+                        "watchdog: safety timeout ({}s) reached while worker still alive; giving up, degrading to L3",
+                        safety_timeout
+                    );
+                    let _ = selfcopy::rename_self_del();
+                    end("ABORTED", "-", "-", "-", "-", "watchdog safety timeout, degraded to L3");
+                    return EXIT_OK;
+                }
+                log::info!("watchdog: worker exited");
+            }
+        }
+    }
+    // 3. 取锁：失败 ⇒ 有新 updater 接管（Worker 持锁存活时取锁本就必败）
+    let lock_path = format!("{}\\.updater\\lock", args.target.trim_end_matches('\\'));
+    let _lock = match win32::lockfile::acquire(&lock_path) {
+        Ok(h) => h,
+        Err(_) => {
+            log::info!("watchdog: lock still held (another updater instance took over); exiting");
+            let _ = selfcopy::rename_self_del();
+            end("ABORTED", "-", "-", "-", "-", "lock held by another instance");
+            return EXIT_OK;
+        }
+    };
+    let retr = RetryParams::new(args.write_retries, args.write_delay_ms);
+    match journal::recover(&args.target, args.previous_ttl_days, retr) {
+        Ok(journal::RecoverResult::RollbackIncomplete) | Err(_) => {
+            log::error!("watchdog: recovery incomplete; site preserved");
+            let _ = selfcopy::rename_self_del();
+            end("ABORTED", "-", "-", "-", "-", "watchdog recovery incomplete");
+            EXIT_CATASTROPHIC
+        }
+        Ok(r) => {
+            if args.launch.is_some() {
+                let _ = launch_app(args);
+            }
+            let what = match r {
+                journal::RecoverResult::NoJournal => "nothing to do",
+                journal::RecoverResult::Cleaned => "planned journal cleaned",
+                journal::RecoverResult::RolledBack => "rolled back to old version",
+                journal::RecoverResult::Finalized => "committed transaction finalized",
+                journal::RecoverResult::RollbackIncomplete => unreachable!(),
+            };
+            log::info!("watchdog: {}", what);
+            let _ = selfcopy::rename_self_del();
+            end("COMMITTED", "-", "-", "-", "-", what);
+            EXIT_OK
+        }
+    }
 }
 
 fn recover_mode(args: &Args) -> i32 {
@@ -353,7 +464,7 @@ fn dry_run(args: &Args) -> i32 {
 }
 
 /// 普通更新主流程（Worker 上下文）：预检 → 等待 → 计划 → 事务 → 提交 → 收尾 → 拉起。
-fn update_flow(args: &Args, retr: RetryParams) -> i32 {
+fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
     let mut prog = progress::Progress::new(args.progress_file.clone());
     prog.phase("PRECHECK");
     // ---- 5. 无损预检 ----
@@ -433,8 +544,19 @@ fn update_flow(args: &Args, retr: RetryParams) -> i32 {
     win32::set_hidden_sys(&j.backup);
     win32::set_hidden_sys(&j.tmpdir);
 
-    // ---- 9. 派生看门狗：首发延后（L2）。Worker 被强杀时由 L3（--recover / 下次启动）收敛；
-    //         调用方必须遵守“启动自检同步执行 --recover”硬性契约（TRANSACTION §2.3）----
+    // ---- 9. 派生恢复看门狗（L2，TRANSACTION §1.4）：PLANNED fsync 之后、APPLYING 之前，
+    //         看门狗在任何文件动作之前即已存在。派生失败仅 WARNING，降级 L3，不阻断更新。----
+    if let Some(b) = runtime::locate(&args.target) {
+        let worker_image = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match selfcopy::spawn_watchdog(args, &raw, &b.runtime, &gen, &worker_image, std::process::id()) {
+            Ok(child) => log::info!("watchdog spawned (pid {})", child.pid),
+            Err(e) => log::warn!("failed to spawn watchdog ({}); degrading to L3", e),
+        }
+    } else {
+        log::warn!("no runtime directory for watchdog; degrading to L3");
+    }
 
     // ---- 10. APPLYING（fsync 成功后才执行文件动作）----
     prog.phase("APPLYING");
@@ -500,7 +622,7 @@ fn update_flow(args: &Args, retr: RetryParams) -> i32 {
     drop(jw);
 
     // ---- 12b/12c/13. 收尾：state 原子写入 → _meta.txt → 备份转移 → 删 Journal ----
-    let stats = transaction::finalize_committed(&args.target, &j, args.previous_ttl_days, retr, false);
+    let stats = transaction::finalize_committed(&args.target, &j, args.previous_ttl_days, retr, false, None);
 
     // ---- 14. --delete-zip（zip 句柄已关闭；失败仅 WARNING）----
     drop(arch);

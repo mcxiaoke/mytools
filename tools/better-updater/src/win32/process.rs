@@ -156,3 +156,28 @@ pub fn exit_code(h: *mut core::ffi::c_void) -> Option<u32> {
 pub fn wait_forever(h: *mut core::ffi::c_void) {
     unsafe { WaitForSingleObject(h, INFINITE) };
 }
+
+pub enum WaitCode {
+    Signaled,
+    Timeout,
+}
+
+/// 有限等待（看门狗安全超时用）。
+pub fn wait_for_ms(h: *mut core::ffi::c_void, ms: u64) -> WaitCode {
+    let r = unsafe { WaitForSingleObject(h, ms.min(0xFFFF_FFFF) as u32) };
+    if r == WAIT_OBJECT_0 {
+        WaitCode::Signaled
+    } else {
+        WaitCode::Timeout
+    }
+}
+
+/// OpenProcess(SYNCHRONIZE | QUERY_LIMITED_INFORMATION)；失败返回 None。
+pub fn open_sync(pid: u32) -> Option<H> {
+    let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if h.is_null() || h == INVALID_HANDLE_VALUE {
+        None
+    } else {
+        Some(H(h))
+    }
+}

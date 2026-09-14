@@ -36,6 +36,41 @@ pub fn spawn_worker(
         .map_err(|c| format!("win32 error {}", c))
 }
 
+/// 派生看门狗副本（TRANSACTION §1.4）：复制自身为 `upd-watchdog-<GEN>.exe`，
+/// 透传"影响收尾/回滚"的参数集合，挂上 --watchdog/--watch-pid/--watch-image。
+pub fn spawn_watchdog(
+    args: &Args,
+    raw_tokens: &[String],
+    runtime_dir: &str,
+    gen: &str,
+    worker_image: &str,
+    worker_pid: u32,
+) -> Result<crate::win32::process::Child, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dst = format!("{}\\upd-watchdog-{}.exe", runtime_dir.trim_end_matches('\\'), gen);
+    std::fs::copy(&exe, &dst).map_err(|e| format!("copy self (watchdog): {}", e))?;
+    let mut flags: Vec<String> = vec![
+        "--watchdog".to_string(),
+        "--watch-pid".to_string(),
+        worker_pid.to_string(),
+        "--watch-image".to_string(),
+        worker_image.to_string(),
+        "--gen".to_string(),
+        gen.to_string(),
+    ];
+    if args.gen.is_some() {
+        flags.pop();
+        flags.pop();
+    }
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| args.target.clone());
+    let cmd = crate::cli::rebuild_tokens(args, raw_tokens, &flags);
+    let full = format!("{} {}", crate::cli::quote_arg(&dst), cmd);
+    crate::win32::process::spawn(None, &full, &cwd, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, None)
+        .map_err(|c| format!("win32 error {}", c))
+}
+
 /// 自清理之一：自身改名为 .del（运行中 EXE 允许重命名），并登记重启删除。
 /// .del 在本次运行内必然无法删除，等下一次 updater 启动回收（不宣称零残留）。
 pub fn rename_self_del() -> bool {
@@ -43,6 +78,14 @@ pub fn rename_self_del() -> bool {
         Ok(p) => p.to_string_lossy().into_owned(),
         Err(_) => return false,
     };
+    // 仅运行期副本（upd-worker-*/upd-watchdog-*）才自改名；直接运行的 updater.exe 绝不动
+    let name = std::path::Path::new(&exe)
+        .file_name()
+        .map(|x| x.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !name.starts_with("upd-") {
+        return false;
+    }
     // 正常 Worker 不在 target 内；若因退化情形仍在 target 内，绝不改名自身（保护不变量）
     let dst = format!("{}.del", exe);
     if std::fs::rename(&exe, &dst).is_ok() {
