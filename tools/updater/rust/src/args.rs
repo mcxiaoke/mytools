@@ -46,7 +46,7 @@ impl Config {
         let mut timeout: u64 = 60;
         let mut write_retries: u32 = 20;
         let mut write_delay_ms: u64 = 500;
-        let mut max_uncompressed: u64 = 4 * 1024 * 1024 * 1024; // 4 GB default
+        let mut max_uncompressed_mib: u64 = 4096; // 4096 MiB (4 GB) default
         let mut delete_zip = false;
         let mut dry_run = false;
         let mut elevate = false;
@@ -114,7 +114,7 @@ impl Config {
                 }
                 Long("max-uncompressed") => {
                     let val = next_string(&mut parser)?;
-                    max_uncompressed = val.parse::<u64>().map_err(|_| format!("Invalid max-uncompressed: {}", val))?;
+                    max_uncompressed_mib = val.parse::<u64>().map_err(|_| format!("Invalid max-uncompressed: {}", val))?;
                 }
                 Long("delete-zip") => {
                     delete_zip = true;
@@ -151,6 +151,7 @@ impl Config {
         let zip = zip.ok_or_else(|| "Missing required parameter: --zip".to_string())?;
         let target = target.ok_or_else(|| "Missing required parameter: --target".to_string())?;
         let launch = launch.ok_or_else(|| "Missing required parameter: --launch".to_string())?;
+        let max_uncompressed = max_uncompressed_mib.saturating_mul(1024 * 1024);
 
         Ok(Config {
             pid,

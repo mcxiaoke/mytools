@@ -82,7 +82,7 @@ updater.exe --pid <PID> --zip <ZIP> --target <DIR> --launch <EXE> [options]
 | `--timeout` | 否 | `60` | 等待主进程完全退出的超时时间（秒） |
 | `--write-retries` | 否 | `20` | 单文件替换失败时的重试次数（应对杀软/同步盘短暂锁） |
 | `--write-delay-ms`| 否 | `500` | 每次重试等待毫秒数（20 × 500ms = 10秒，契合 Defender 扫描窗口） |
-| `--max-uncompressed`| 否 | `4294967296` | 最大允许解压总量（字节，默认 4GB，防 Zip bomb 爆盘） |
+| `--max-uncompressed`| 否 | `4096` | 最大允许解压总量（单位 MiB，默认 4096 即 4GB，防 Zip bomb 爆盘） |
 | `--delete-zip` | 否 | `false` | 更新成功后自动删除 zip 包 |
 | `--dry-run` | 否 | `false` | 仅输出写入/跳过计划与校验，不修改磁盘 |
 | `--elevate` | 否 | `false` | 若目标目录无写权限，尝试通过 UAC 提权执行 |
