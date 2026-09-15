@@ -1,0 +1,56 @@
+# better-updater 的机械守卫流水线（TESTING.md §2）
+#
+# ⚠️ 激活方式：GitHub Actions **只读取仓库根目录**的 `.github/workflows/`。
+#    本仓库是 monorepo（根目录含 extensions/ tools/ userscripts/ webutils/），
+#    因此要真正跑起来，需把本文件放到仓库根 `<repo>/.github/workflows/better-updater.yml`。
+#    本文件放在项目内是为了**与项目一起版本化、可评审**；内容与根目录版本完全一致，
+#    路径相关的差异只有 `defaults.run.working-directory` 与 `paths` 过滤（见下）。
+#
+# 本地等价入口：`pwsh -File scripts/verify.ps1`（CI 调用的就是同一个脚本，
+# 保证"本地绿 = CI 绿"，避免两套判定漂移）。
+name: better-updater CI
+
+on:
+  push:
+    paths:
+      - 'tools/better-updater/**'
+      - '.github/workflows/better-updater.yml'
+  pull_request:
+    paths:
+      - 'tools/better-updater/**'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: tools/better-updater
+
+jobs:
+  verify:
+    # 本工具是 Windows 专有实现（Win32 直调 + 真实 PE 夹具），必须在 windows runner 上跑
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/better-updater
+
+      # 单一入口：构建（含 --no-default-features 缩回开关）+ 测试 + clippy(-D warnings)
+      # + 分层守卫 + 体积守卫 + Defender 扫描归档
+      - name: Mechanical guards (scripts/verify.ps1)
+        shell: pwsh
+        run: ./scripts/verify.ps1
+
+      - name: Upload guard snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: better-updater-docs-artifacts
+          path: tools/better-updater/docs/artifacts/
+          if-no-files-found: warn

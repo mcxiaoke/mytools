@@ -27,7 +27,7 @@
 | 9 | **影子 Worker**：实际干活的是运行期目录里的副本，因此 `target/updater.exe` 可被更新（自更新能力） | `RUNTIME.md` §3 |
 | 10 | 复杂度预算：Tier 0 产品代码 ≤ 2600 行、直接依赖 = 7、并发原语 = 0 | `PLAN.md` §1、§2 |
 
-**已开工（2026-09-14）。** Phase 0–5 的首发范围已实现并通过测试：直接依赖 7、Tier 0 无并发原语、31 项测试（21 单元 + 10 端到端）全绿、release 产物 397 KB。看门狗（L2）与 `--rollback-previous` 按首发范围延后（L3 冷启动自愈 + `--recover` 兜底，调用方须遵守"启动自检同步执行 `--recover`"硬性契约）。详见 `../CHANGES-20260914.md`。Go 版 `updater.exe` 仍可作为行为对照基线。
+**已开工（2026-09-14）。** Phase 0–6 已实现并通过测试：直接依赖 7、Tier 0 无并发原语、33 项测试（21 单元 + 12 端到端）全绿、release 产物 397 KB。**L2 看门狗与 `--rollback-previous` 回退引擎已落地**（2026-09-14 21:05 解除延后）；L3 冷启动自愈 + `--recover` 仍为兜底，调用方须遵守"启动自检同步执行 `--recover`"硬性契约。**Phase 7 Authenticode 搁置**（无代码签名证书，条件不具备）。详见 `CHANGES-20260914.md`。Go 版 `updater.exe` 仍可作为行为对照基线。
 
 ---
 
@@ -57,19 +57,24 @@
 | `PLAN.md` | 复杂度怎么被约束住？依赖多少个？分几个阶段做？ | §0.2、§14、§15、§19 | 工程约束与实施 |
 | `TESTING.md` | 验收标准是什么？测试矩阵、CI 守卫、故障注入怎么做？ | §17 | 验证 |
 | `REFERENCE.md` | 哪些 Win32 / Deflate 事实支撑了这些决策？先例是什么？ | 附录 A、§0.5.2、先例调研文档 | 事实核验 |
+| `CHANGES-YYYYMMDD.md` | 什么时候改了什么（按日期倒序） | — | 时间线 |
+| `artifacts/` | 守卫快照：体积 / 依赖 / 测试原文 / Defender 状态 | — | 归档 |
+| `rust-updater-architecture-design-v4.2.md` | 原始论证全文（**史料存档，只读**） | — | 源文档 |
+| `updater-prior-art-and-design-recheck.md` | 行业先例调研与缺口分析（N1–N11 的来源） | — | 调研 |
 
 ---
 
-## 相关文档（不在本目录）
+## 相关文档（兄弟项目）
 
 | 文件 | 是什么 | 与本文档的关系 |
 | :--- | :--- | :--- |
-| `../rust-updater-architecture-design-v4.2.md` | **v4.3.0 源文档**（2242 行，含 §0 全部改动说明、§0.4 未采纳意见、§0.5 三方评审合并 34 项与三处技术裁定） | **史料存档，只读**。本目录不重复其中"改动总览 / 评审对话 / 历史版本备查"部分 |
-| `../rust-updater-architecture-design-lite.md` | **极简版**（v1.0，2026-09-14 17:52）：砍掉 Journal / 看门狗 / 版本/降级防护 / 签名，改内存回滚栈，目标 500–700 行 | **另一条路线**，与本目录构成"完整基线 vs 精简基线"的二选一，见 `SCOPE.md` §5 |
-| `../updater-prior-art-and-design-recheck.md` | 主流 updater（Omaha / Squirrel / Velopack / MSIX / Tauri 等）先例调研与缺口分析 | v4.2 新增能力（N1–N11）的来源，索引见 `REFERENCE.md` |
-| `../../go/README.md` | Go 版实现文档（已可用） | 行为对照基线，差异清单见 `CONTRACT.md` §4 |
-| `../temp/` | 历史版本（v1–v4.1）与三份评审原文、逐条核验记录 | 考古资料，实现时**不必读** |
-| `../CHANGES-YYYYMMDD.md` | 变更记录 | 时间线 |
+| `rust-updater-architecture-design-v4.2.md` | **v4.3.0 源文档**（2242 行，含 §0 全部改动说明、§0.4 未采纳意见、§0.5 三方评审合并 34 项与三处技术裁定） | **史料存档，只读**（就在本目录）。本目录不重复其中"改动总览 / 评审对话 / 历史版本备查"部分 |
+| `updater-prior-art-and-design-recheck.md` | 主流 updater（Omaha / Squirrel / Velopack / MSIX / Tauri 等）先例调研与缺口分析 | v4.2 新增能力（N1–N11）的来源，索引见 `REFERENCE.md`（就在本目录） |
+| `../../updater/docs/rust-updater-architecture-design-lite.md` | **极简版**（v1.0，2026-09-14 17:52）：砍掉 Journal / 看门狗 / 版本/降级防护 / 签名，改内存回滚栈，目标 500–700 行 | **另一条路线**，与本目录构成"完整基线 vs 精简基线"的二选一，见 `SCOPE.md` §5 |
+| `../../updater/go/README.md` | Go 版实现文档（已可用） | 行为对照基线，差异清单见 `CONTRACT.md` §4 |
+| `../../updater/docs/temp/` | 历史版本（v1–v4.1）与三份评审原文、逐条核验记录 | 考古资料，实现时**不必读** |
+| `temp/`（本目录上级） | 本项目的过程脚本与局部备份（`*.py`、`temp/backups/`） | 非文档，随时可清理 |
+| `CHANGES-YYYYMMDD.md` | 变更记录 | 时间线（就在本目录） |
 
 ---
 
@@ -80,8 +85,8 @@
 | 每个编号（H1–H4 / M1–M5 / L1–L6 / N1–N11 / D1–D4）的来龙去脉 | 源文档 §0.1、§0.3 |
 | **没被采纳**的意见及理由 | 源文档 §0.4、§0.5.3 |
 | 三方评审的合并过程与三处"与评审不同"的技术裁定 | 源文档 §0.5.2 |
-| 评审原文与逐条核验 | `../temp/rust-updater-reviews.txt`、`../temp/rust-updater-review-verification-20260914.md` |
-| 早期设计版本 | `../temp/rust-updater-architecture-design-v{1,2,3,4,4.1}.md` |
+| 评审原文与逐条核验 | `../../updater/docs/temp/rust-updater-reviews.txt`、`../../updater/docs/temp/rust-updater-review-verification-20260914.md` |
+| 早期设计版本 | `../../updater/docs/temp/rust-updater-architecture-design-v{1,2,3,4,4.1}.md` |
 
 > **拆分时丢弃了什么**：只丢弃"改动总览类"内容（v4.2 相对 v4.1 改了什么、v4.1 相对 v4 改了什么），因为它们描述的是**文档自身的历史**而非系统行为。所有决策、数值、错误码、不变量、测试用例**一条未删**，均在源文档留档，并在本目录各文件中保留。
 

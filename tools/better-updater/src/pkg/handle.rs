@@ -101,3 +101,47 @@ impl Pkg {
         Ok(unsafe { File::from_raw_handle(dup) })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    /// I8 回归：句柄一旦打开，窗口期内任何进程都无法改写/替换该文件，
+    /// 因此"验签对象"与"解压对象"必然是同一个文件对象。
+    /// 复制句柄（file_view）与映射视图（map）都与原句柄指向同一份字节。
+    #[test]
+    fn share_read_only_excludes_writers_and_deleters() {
+        let dir = std::env::temp_dir()
+            .join(format!("updater-pkg-handle-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("pkg.zip");
+        let bytes = b"hello-package-bytes";
+        std::fs::write(&p, bytes).unwrap();
+        let path = p.to_string_lossy().into_owned();
+
+        let pkg = Pkg::open(&path).expect("open pkg");
+        assert_eq!(pkg.size, bytes.len() as u64);
+
+        // 不共享写 ⇒ 任何写入者被拒（这正是"窗口期内禁改写"的实现）
+        assert!(
+            std::fs::OpenOptions::new().write(true).open(&path).is_err(),
+            "writer must be excluded by FILE_SHARE_READ-only"
+        );
+        // 不共享删除 ⇒ 任何删除者被拒（替换 zip 也会失败）
+        assert!(std::fs::remove_file(&path).is_err(), "deleter must be excluded");
+
+        // 复制句柄与映射视图读到的都是同一份字节（同一文件对象）
+        let mut f = pkg.file_view().expect("duplicate handle");
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+        assert_eq!(pkg.map().expect("map view").bytes(), bytes);
+        // 复制句柄也持不共享删除的共享模式 ⇒ 必须先关闭，原文件才可删
+        drop(f);
+
+        drop(pkg);
+        std::fs::remove_file(&path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

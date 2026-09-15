@@ -66,13 +66,13 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--sha256` | string | "" | 期望的 zip SHA256（弱校验，与签名互补） |
 | `--allow-downgrade` | bool | false | 允许安装**低于**当前已安装版本的包。默认拒绝（防重放旧版） |
 | `--min-version` | string | "" | 调用方额外设定的版本下限；包内版本低于此值即拒绝（防供应链回退） |
-| `--rollback-previous` | bool | false | **回退模式（首发暂缓实现）**：用保留的上一版本还原 target。只需 `--target` |
+| `--rollback-previous` | bool | false | **回退模式**：用保留的上一版本还原 target。只需 `--target`；`--zip`/`--sig` 传入按忽略 + WARNING；`--launch` 可选。回退本身走同一事务引擎（写新 Journal），因此**回退可再回退** |
 | `--previous-ttl-days` | int | 7 | **非最新代**的保留目录其 mtime 超过该天数后被 GC 删除；`0` = 提交后立即删除。<br/>**语义**：实际效果是"**最新 1 个永驻** + 至多一个 TTL 内的次新代"——TTL **不约束最新代** |
 | `--recover` | bool | false | **恢复模式**：仅凭 Journal 执行自愈，只需 `--target` |
 | `--skip-hash-verify` | bool | false | 跳过提交前逐文件哈希复核（默认复核）。**必须记 WARNING，并标注 `unverified`** |
 | `--strict-path-check` | bool | false | 物理路径校验恢复"全严格"模式：解析失败也拒绝 |
 | `--progress-file` | string | "" | 进度文件路径；应用侧可轮询以显示"正在更新" |
-| `--verify-authenticode` | string | "" | 校验包内每个 EXE/DLL 的 Authenticode 签名，且签名者须包含该子串（首发不做，需编译期 `authenticode`） |
+| `--verify-authenticode` | string | "" | 校验包内每个 EXE/DLL 的 Authenticode 签名，且签名者须包含该子串（**Phase 7 搁置**：无代码签名证书，当前唯一行为是 fail-closed 拒绝） |
 | `--allow-unsigned` | bool | false | 允许缺失签名。**仅调试构建生效**，发布构建忽略并告警 |
 | `--log` | string | "" | 日志路径，默认 `<base>\logs\updater-<ts>.log` |
 | `--silent` | bool | false | 兼容性保留参数（GUI 子系统无窗口，恒静默） |
@@ -129,7 +129,7 @@ END: <COMMITTED|ROLLED_BACK|ABORTED|DERIVED(角色)> ver=<目标版本> state=<w
 | 普通更新（主实例 / Worker） | 必需 | **必需** | 可选（默认 `<zip>.sig`） | **必需**（提交前自检第 4 项依赖它） | `--pid` / `--keep` / `--require` / `--strip` 等可选 |
 | `--dry-run` | 必需 | **必需** | 可选 | **必需** | 与普通更新相同，但**零落盘**：跳过写权限预检与取锁 |
 | `--recover` | 必需 | 不使用 | 不使用 | 可选（给了才拉起） | `--pid` 可选 |
-| `--rollback-previous`（首发暂缓） | 必需 | 不使用 | 不使用 | 可选 | `--pid` 可选 |
+| `--rollback-previous` | 必需 | 不使用 | 不使用 | 可选 | `--pid` 可选 |
 | `--watchdog`（内部） | 必需 | 不使用 | 不使用 | 可选（由 Worker 透传） | `--watch-pid` / `--watch-image` 必需 |
 | `--help` / `--version` | 不需要 | 不需要 | 不需要 | 不需要 | 出现即执行并退出 0 |
 
@@ -175,7 +175,7 @@ settings.json
 
 | 项 | Go 版 | 本设计 | 兼容性 |
 | :--- | :--- | :--- | :--- |
-| CLI 参数 | 见 `go/README.md` | **全部保留**，新增 `--sig` / `--sha256` / `--recover` / `--max-uncompressed` / `--keep-elevation` / `--wait-derived` / `--allow-unsigned` / `--debug-console` / `--strict-path-check` / `--progress-file`（`--pid-image`、`--splash`、`--rm-shutdown` 已删除，`--rollback-previous` 暂缓） | ✅ 向后兼容 |
+| CLI 参数 | 见 `../../updater/go/README.md` | **全部保留**，新增 `--sig` / `--sha256` / `--recover` / `--rollback-previous` / `--watchdog` / `--max-uncompressed` / `--keep-elevation` / `--wait-derived` / `--allow-unsigned` / `--debug-console` / `--strict-path-check` / `--progress-file`（`--pid-image`、`--splash`、`--rm-shutdown` 已删除） | ✅ 向后兼容 |
 | 退出码 | 0 / 1 / 2 | 新增 `3`（灾难性）；派生路径的 `0` 语义已显式声明 | ✅ 兼容（新增语义） |
 | `.updatekeep` 语义 | 三类规则 | **逐条一致** | ✅ |
 | 保护清单 / 自身保护 | — | 一致，新增内部保留名层 | ✅ 加强 |
@@ -188,7 +188,7 @@ settings.json
 | 等待目标进程 | 句柄等待 + 轮询 | 同，另加映像路径**日志**核验 | ✅ |
 | 等待目标进程**超时**的退出码 | `1`（走 `abort()` 路径） | `2`（此时尚未改动任何文件，"零改动"语义更准确） | ⚠️ 语义变化 |
 | **版本与降级防护** | 无（不读版本号） | 读 `updater.manifest` + `.updater/state`；低于当前版本默认拒绝；`--allow-downgrade` 放行 | ⚠️ 语义变化（旧包无清单 → 跳过并 WARNING） |
-| **版本回退** | 无 | 保留上一版本（默认 TTL 7 天）+ `_meta.txt`；`--rollback-previous` **首发暂缓**（用"重下旧包 + `--allow-downgrade`"兜底） | ⚠️ 能力延后 |
+| **版本回退** | 无 | 保留上一版本（默认 TTL 7 天）+ `_meta.txt`；`--rollback-previous` 用该保留代还原（回退事务可再回退） | ⚠️ 能力新增 |
 | **安装目录新增隐藏目录** | 无 | **仅一项**：`<target>/.updater/`（Hidden + System）。内部文件全部收在该目录内；其中只有 `state` 是稳态常驻文件 | ⚠️ 布局变化 |
 | **运行时副本位置** | 调用方通常自置于 `%TEMP%`，或本工具早期版本置于 `%TEMP%` | `%LOCALAPPDATA%\<目标目录名>-updater\<hash8>\runtime\` | ⚠️ 位置变化 |
 | **占用者诊断** | 无 | Restart Manager 列出占用者进程并写日志（**只读诊断，不关闭任何进程**） | ✅ 加强 |
@@ -222,10 +222,10 @@ settings.json
 8. 由于 CLI 与 `.updatekeep` 语义兼容，回退只需把目标文件名换回 `updater-go.exe`；
 9. Rust 版若已执行过一次成功更新，回退无需额外动作（新版文件与实现语言无关）。
 
-**坏版本的兜底路径（首发不含 `--rollback-previous`）**：服务端下发上一版本的完整包 → 调用方以 `--allow-downgrade` 重装（`pkg_ver < cur_ver` 时必需该开关）。三点注意：
+**坏版本的兜底路径**：**首选** `updater.exe --rollback-previous --target <dir>`——用本地保留的上一版本还原，无需服务端配合、无需网络。**次选**（保留代已被 GC / TTL 过期 / 现场无保留目录时）：服务端下发上一版本的完整包 → 调用方以 `--allow-downgrade` 重装（`pkg_ver < cur_ver` 时必需该开关）。次选路径的三点注意：
 
 1. 这要求**应用还能被拉起**（哪怕只是短暂启动）；若应用已完全无法启动，需要调用方提供独立的修复入口（例如由启动器或单独的修复脚本调用 updater）——这也是把"**回退触发点必须由调用方提供**"写成契约的原因；
 2. 重装后 `.updater/state` 被写回旧版本，**必须同时用 `--min-version` 或服务端 kill switch 挡住被否决的版本**，否则下次更新会把坏包再装一遍；
-3. `previous/` 目录仍然存在（保留 + `_meta.txt`），至少能让运维人员手工比对或取回旧文件——这是"首发砍掉回退引擎"仍然保留保留目录的原因。
+3. `previous/` 目录仍应保留（保留 + `_meta.txt`）：它既是 `--rollback-previous` 的数据来源，也能让运维人员手工比对或取回旧文件。若把 `--previous-ttl-days` 设为 `0`（缩回旧行为），则首选路径失效，只剩次选。
 
 **不可回退事项（须提前知悉）**：若线上已发生一次 Rust 版**成功更新**，则 `target/updater.exe` 已是 Rust 版；回退到 Go 版需重新下发 Go 版二进制（可通过下一次更新包内附带 `updater.exe` 完成）。

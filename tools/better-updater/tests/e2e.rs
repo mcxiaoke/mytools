@@ -1,148 +1,18 @@
 //! 端到端集成测试：真实进程、真实文件系统。
 //! 覆盖：完整更新流（含 manifest 版本防护 + previous 保留）、--dry-run 零落盘、
 //! 降级拒绝、L3 恢复（APPLYING 回滚 / COMMITTED 收尾）、keep 保护与保留名拦截、
-//! 影子 Worker 自更新。
+//! 影子 Worker 自更新、看门狗接管、--rollback-previous。
+//!
+//! 不变量守恒（I1–I10）见 `tests/invariants.rs`；新增能力的缩回开关与 Tier 2 隔离
+//! 见 `tests/capabilities.rs`。三者共用 `tests/common/mod.rs`（含跨二进制串行锁）。
+
+#[path = "common/mod.rs"]
+mod common;
+use common::*;
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
-
-/// e2e 全部串行执行：测试共享 %LOCALAPPDATA% 下的 base 命名与系统负载，避免相互干扰。
-static E2E_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn exe_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_updater"))
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> TempDir {
-        let p = std::env::temp_dir().join(format!(
-            "updater-e2e-{}-{}-{}",
-            tag,
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos()
-        ));
-        fs::create_dir_all(&p).unwrap();
-        TempDir(p)
-    }
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn write(p: &Path, content: &str) {
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(p, content).unwrap();
-}
-
-fn read(p: &Path) -> String {
-    fs::read_to_string(p).unwrap()
-}
-
-/// 用 zip crate（写侧，与 updater 相同的 deflate-flate2 + flate2 rust_backend）打包一个目录。
-fn make_zip(stage: &Path, zip_path: &Path, manifest: Option<&str>) {
-    let file = fs::File::create(zip_path).unwrap();
-    let mut w = zip::ZipWriter::new(file);
-    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    fn add_dir(w: &mut zip::ZipWriter<fs::File>, opts: &zip::write::SimpleFileOptions, dir: &Path, base: &Path) {
-        for e in fs::read_dir(dir).unwrap().flatten() {
-            let name = e.path().strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
-            if e.path().is_dir() {
-                w.add_directory(&name, *opts).unwrap();
-                add_dir(w, opts, &e.path(), base);
-            } else {
-                w.start_file(&name, *opts).unwrap();
-                let data = fs::read(e.path()).unwrap();
-                std::io::Write::write_all(&mut *w, &data).unwrap();
-            }
-        }
-    }
-    // 包内元数据最后写入（先确保目录内容在前）
-    add_dir(&mut w, &opts, stage, stage);
-    if let Some(m) = manifest {
-        w.start_file("updater.manifest", opts).unwrap();
-        std::io::Write::write_all(&mut w, m.as_bytes()).unwrap();
-    }
-    w.finish().unwrap();
-}
-
-/// 打包目录内容（用于 manifest 生成：相对路径 + 大小 + sha256）。
-fn manifest_for(stage: &Path, version: &str) -> String {
-    let mut lines = vec!["MANIFEST:1".to_string(), format!("VERSION:{}", version)];
-    fn walk(dir: &Path, base: &Path, lines: &mut Vec<String>) {
-        for e in fs::read_dir(dir).unwrap().flatten() {
-            let rel = e.path().strip_prefix(base).unwrap().to_string_lossy().replace('/', "\\");
-            if e.path().is_dir() {
-                lines.push(format!("DIR:{}", rel));
-                walk(&e.path(), base, lines);
-            } else {
-                let data = fs::read(e.path()).unwrap();
-                use sha2::Digest;
-                let h = sha2::Sha256::digest(&data);
-                let hex: String = h.iter().map(|b| format!("{:02x}", b)).collect();
-                lines.push(format!("FILE:{}|{}|{}", rel, data.len(), hex));
-            }
-        }
-    }
-    walk(stage, stage, &mut lines);
-    lines.join("\n") + "\n"
-}
-
-/// 运行 updater（自身位于 target 之外 ⇒ 无影子分身，退出码即真实终态）。
-fn run_updater(target: &Path, args: &[&str]) -> i32 {
-    let _g = E2E_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = Command::new(exe_path());
-    cmd.arg("--target").arg(target);
-    for a in args {
-        cmd.arg(a);
-    }
-    let out = cmd.output().expect("failed to spawn updater");
-    out.status.code().unwrap_or(-1)
-}
-
-fn wait_for(cond: impl Fn() -> bool, timeout: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    cond()
-}
-
-/// 最小合法 PE 映像（MZ 头 + e_lfanew → PE\0\0），用于 --launch 入口校验。
-fn assert_file_is(p: &Path, want: &[u8]) {
-    let got = fs::read(p).unwrap_or_default();
-    if got != want {
-        panic!(
-            "file {} mismatch: got {} bytes (want {}), first-diff at {:?}",
-            p.display(),
-            got.len(),
-            want.len(),
-            got.iter().zip(want.iter()).position(|(a, b)| a != b),
-        );
-    }
-}
-
-fn old_app_bytes() -> Vec<u8> {
-    fs::read(r"C:\Windows\System32\cmd.exe").expect("cmd.exe must exist")
-}
-
-fn new_app_bytes() -> Vec<u8> {
-    fs::read(exe_path()).unwrap()
-}
+use std::time::Duration;
 
 #[test]
 fn full_update_flow_with_manifest() {
@@ -186,6 +56,8 @@ fn full_update_flow_with_manifest() {
     assert!(st.contains("VERSION:1.0.1"));
     // --delete-zip
     assert!(!zip.exists());
+    // 包内元数据绝不落盘
+    assert!(!target.join("updater.manifest").exists(), "updater.manifest must never land");
     // .updatekeep 本身未被包内容覆盖（包内没有它，这里只验证仍在）
     assert!(target.join(".updatekeep").exists());
 }
@@ -232,7 +104,7 @@ fn recover_from_applying_journal_rolls_back() {
     let tmp = TempDir::new("recover-apply");
     let target = tmp.path().join("target");
     make_target(&target);
-    // 人为制造“替换中途崩溃”现场：app.exe 已换成新版、new.dll 已新增、journal 停在 APPLYING
+    // 人为制造"替换中途崩溃"现场：app.exe 已换成新版、new.dll 已新增、journal 停在 APPLYING
     let up = target.join(".updater");
     let gen = "20260914T120000-1";
     let backup = up.join("backup").join(gen);
@@ -241,14 +113,14 @@ fn recover_from_applying_journal_rolls_back() {
     write_bin(&target.join("app.exe"), &new_app_bytes()); // 已被替换
     write(&target.join("new.dll"), "new dll"); // 已新增
     fs::create_dir_all(&tmpdir).unwrap();
-    let journal = format!(
-        "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nNEW:new.dll\nDIR:newdir\nSTAGE:APPLYING\n",
+    write_journal(
+        &target,
         gen,
-        target.canonicalize().unwrap().to_string_lossy(),
-        backup.canonicalize().unwrap().to_string_lossy(),
-        tmpdir.canonicalize().unwrap().to_string_lossy(),
+        &backup,
+        &tmpdir,
+        Some("1.5.0"),
+        "STAGE:PLANNED\nEXIST:app.exe\nNEW:new.dll\nDIR:newdir\nSTAGE:APPLYING\n",
     );
-    fs::write(up.join("journal"), journal).unwrap();
 
     let code = run_updater(&target, &["--recover"]);
     assert_eq!(code, 0, "recover must succeed");
@@ -273,14 +145,14 @@ fn recover_from_committed_journal_finalizes() {
     write_bin(&target.join("app.exe"), &new_app_bytes());
     let tmpdir = up.join("tmp").join(gen);
     fs::create_dir_all(&tmpdir).unwrap();
-    let journal = format!(
-        "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nSTAGE:APPLYING\nMOVED:app.exe\nSTAGE:COMMITTED\n",
+    write_journal(
+        &target,
         gen,
-        target.canonicalize().unwrap().to_string_lossy(),
-        backup.canonicalize().unwrap().to_string_lossy(),
-        tmpdir.canonicalize().unwrap().to_string_lossy(),
+        &backup,
+        &tmpdir,
+        Some("1.5.0"),
+        "STAGE:PLANNED\nEXIST:app.exe\nSTAGE:APPLYING\nMOVED:app.exe\nSTAGE:COMMITTED\n",
     );
-    fs::write(up.join("journal"), journal).unwrap();
 
     let code = run_updater(&target, &["--recover"]);
     assert_eq!(code, 0);
@@ -374,56 +246,10 @@ fn bad_zip_rejected_zero_touch() {
     assert!(!target.join(".updater\\journal").exists());
 }
 
-/// 构造一个“目标安装目录”。app.exe 用真实 PE（cmd.exe 拷贝），保证拉起可用。
-fn write_bin(p: &Path, content: &[u8]) {
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(p, content).unwrap();
-}
-
-fn make_target(dir: &Path) {
-    write_bin(&dir.join("app.exe"), &old_app_bytes());
-    write(&dir.join("data\\old.txt"), "old data");
-    write(&dir.join("userdata\\user.txt"), "user data");
-    write(&dir.join(".updatekeep"), "# keep\nuserdata\\\n");
-}
-
-/// 构造一个更新包 stage。新版 app.exe 用 updater.exe 自身（真 PE，内容与旧版不同）。
-fn make_stage(dir: &Path) {
-    write_bin(&dir.join("app.exe"), &new_app_bytes());
-    write(&dir.join("data\\old.txt"), "new data");
-    write(&dir.join("new.dll"), "new dll");
-    write(&dir.join("userdata\\inpkg.txt"), "must be skipped");
-}
-
-#[test]
-fn debug_read_cmd() {
-    let b = fs::read(r"C:\Windows\System32\cmd.exe");
-    match b {
-        Ok(v) => assert!(v.len() > 1000, "cmd.exe too small: {}", v.len()),
-        Err(e) => panic!("cmd.exe read failed: {}", e),
-    }
-}
-
-/// 启动一个长驻“假 Worker”（ping 自身，System32 真 PE），返回 pid。
-fn spawn_fake_worker() -> (u32, String, std::process::Child) {
-    let img = r"C:\Windows\System32\ping.exe".to_string();
-    let child = Command::new(&img).args(["-n", "30", "127.0.0.1"]).spawn().expect("spawn ping");
-    (child.id(), img, child)
-}
-
-fn kill_pid(pid: u32) {
-    let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
-}
-
-fn wait_journal_gone(target: &Path, timeout: Duration) -> bool {
-    wait_for(|| !target.join(".updater\\journal").exists(), timeout)
-}
-
 /// 看门狗在 Worker 退出后接管：COMMITTED 现场收尾（state 补写 + previous 转移 + 删 Journal + 拉起）。
 #[test]
 fn watchdog_finalizes_committed() {
+    let _g = GlobalLock::acquire();
     let tmp = TempDir::new("wd-commit");
     let target = tmp.path().join("target");
     make_target(&target);
@@ -434,17 +260,14 @@ fn watchdog_finalizes_committed() {
     write_bin(&target.join("app.exe"), &new_app_bytes()); // 已提交：新版就位
     let tmpdir = up.join("tmp").join(gen);
     fs::create_dir_all(&tmpdir).unwrap();
-    fs::write(
-        up.join("journal"),
-        format!(
-            "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nSTAGE:APPLYING\nMOVED:app.exe\nSTAGE:COMMITTED\n",
-            gen,
-            target.canonicalize().unwrap().to_string_lossy(),
-            backup.canonicalize().unwrap().to_string_lossy(),
-            tmpdir.canonicalize().unwrap().to_string_lossy(),
-        ),
-    )
-    .unwrap();
+    write_journal(
+        &target,
+        gen,
+        &backup,
+        &tmpdir,
+        Some("1.5.0"),
+        "STAGE:PLANNED\nEXIST:app.exe\nSTAGE:APPLYING\nMOVED:app.exe\nSTAGE:COMMITTED\n",
+    );
 
     let (worker_pid, worker_image, mut worker) = spawn_fake_worker();
     let mut st = Command::new(exe_path())
@@ -477,6 +300,7 @@ fn watchdog_finalizes_committed() {
 /// 看门狗在 Worker 退出后接管：APPLYING 现场回滚（旧版还原 + 新增删除）。
 #[test]
 fn watchdog_rolls_back_applying() {
+    let _g = GlobalLock::acquire();
     let tmp = TempDir::new("wd-apply");
     let target = tmp.path().join("target");
     make_target(&target);
@@ -488,17 +312,14 @@ fn watchdog_rolls_back_applying() {
     write(&target.join("new.dll"), "new dll"); // 已新增
     let tmpdir = up.join("tmp").join(gen);
     fs::create_dir_all(&tmpdir).unwrap();
-    fs::write(
-        up.join("journal"),
-        format!(
-            "JOURNAL:3\nGEN:{}\nTARGET:{}\nBACKUP:{}\nTMPDIR:{}\nTOVER:1.5.0\nSTAGE:PLANNED\nEXIST:app.exe\nNEW:new.dll\nDIR:newdir\nSTAGE:APPLYING\n",
-            gen,
-            target.canonicalize().unwrap().to_string_lossy(),
-            backup.canonicalize().unwrap().to_string_lossy(),
-            tmpdir.canonicalize().unwrap().to_string_lossy(),
-        ),
-    )
-    .unwrap();
+    write_journal(
+        &target,
+        gen,
+        &backup,
+        &tmpdir,
+        Some("1.5.0"),
+        "STAGE:PLANNED\nEXIST:app.exe\nNEW:new.dll\nDIR:newdir\nSTAGE:APPLYING\n",
+    );
 
     let (worker_pid, worker_image, mut worker) = spawn_fake_worker();
     let mut st = Command::new(exe_path())
@@ -542,7 +363,7 @@ fn rollback_previous_reverts_to_retained_generation() {
         "VERSION:1.0.0\nTSA:2026-09-14T10:00:00\nADDED:data\\new_only.txt\n",
     )
     .unwrap();
-    // 当前（新版）状态：v1.0.1 已安装，含“新版独有”文件
+    // 当前（新版）状态：v1.0.1 已安装，含"新版独有"文件
     write_bin(&target.join("app.exe"), &new_app_bytes());
     write(&target.join("data\\f.txt"), "new data");
     write(&target.join("data\\new_only.txt"), "added by new version");

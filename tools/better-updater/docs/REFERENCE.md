@@ -1,6 +1,6 @@
 # REFERENCE — 事实核验与先例
 
-> 来源：源文档附录 A、§0.5.2，以及 `../updater-prior-art-and-design-recheck.md`
+> 来源：源文档附录 A、§0.5.2，以及 `updater-prior-art-and-design-recheck.md`（就在本目录）
 > 本文回答：**哪些 Win32 / Deflate 事实支撑了这些决策？谁已经在这么做？哪些还没核验？**
 > 用途：**当有人质疑某条设计"是不是想当然"时，先查这里。**
 
@@ -31,15 +31,24 @@
 | `ed25519-compact` 2.1.0 features：`default = [random, std, x25519, pem]`，另有 `opt_size` | docs.rs `ed25519-compact` 2.1.0 `Cargo.toml.orig` |
 | `windows-sys` 官方建议按 `>=0.59, <=0.61` 声明 | windows-sys README（0.61.2） |
 
-### 1.2 尚未经实构建核验的六项
+### 1.2 Phase 0 六项实测结果（原"尚未核验"清单）
 
-全部列入 **Phase 0 / Phase 1** 出口条件（清单与退路见 `PLAN.md` §4.1）：`ed25519-compact` 关闭 `std` 后的验签可用性、`zip` 2.2 **读档侧** feature 完整性、`windows-sys` feature 与调用点的一一对应、`Win32_System_RestartManager` 与 `Win32_Security_WinTrust` 的准确 feature 名、以及 **`\\?\` 前缀下 `ReplaceFileW` / `MoveFileExW` / `CopyFileExW` / `GetFinalPathNameByHandleW` 的实测行为**。
+全部列入 **Phase 0 / Phase 1** 出口条件（清单与退路见 `PLAN.md` §4.1）。**2026-09-14 实测完成 5 项，1 项随 Phase 7 搁置**：
+
+| 待验证项 | 结果 |
+| :--- | :--- |
+| `ed25519-compact` 关闭 `std`（`default-features = false` + `opt_size`）后验签可用性 | ✅ 可用：`PublicKey::verify(msg, sig)` 正常，无需追加 `std` |
+| `zip` **读档侧** feature 完整性（只开 `deflate-flate2`） | ✅ 可用；**须显式追加 `flate2` feature**（zip ≥ 2.4 起不再隐式启用该可选依赖，已在 `Cargo.toml` 注明） |
+| `windows-sys` feature 与调用点一一对应 | ✅ 以 `cargo build` 机械验证；0.61 下需补齐 `Win32_System_Memory` / `Win32_System_RemoteDesktop` / `Win32_System_Registry` / `Win32_UI_WindowsAndMessaging` / `Win32_System_SystemInformation`（模块映射与 0.59 文档有差异） |
+| `Win32_System_RestartManager` 准确 feature 名 | ✅ 确认可用 |
+| `Win32_Security_WinTrust` 准确 feature 名 | ⏸ **未实测**（Phase 7 搁置，无代码签名证书）；feature 声明保留在 `Cargo.toml` |
+| `\\?\` 前缀下 `ReplaceFileW` / `MoveFileExW` / `CopyFileExW` / `GetFinalPathNameByHandleW` 实测行为 | ✅ 端到端全流程（含长目录、备份转移、恢复）经 verbatim 路径实测正常，**无需为任一 API 记录例外** |
 
 ---
 
 ## 2. 先例调研（行业对照）
 
-完整调研见 `../updater-prior-art-and-design-recheck.md`（含"10 条标准做法""我们已对齐或更强""缺口按 P0/P1/P2 分级""过度设计审视""根本抉择：原地替换 vs 稳定入口 + 版本目录""明确不采纳的行业做法"）。此处保留**事实性来源**，供引用时核对：
+完整调研见 `updater-prior-art-and-design-recheck.md`（含"10 条标准做法""我们已对齐或更强""缺口按 P0/P1/P2 分级""过度设计审视""根本抉择：原地替换 vs 稳定入口 + 版本目录""明确不采纳的行业做法"）。此处保留**事实性来源**，供引用时核对：
 
 | 结论 | 来源 |
 | :--- | :--- |

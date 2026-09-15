@@ -415,6 +415,8 @@ pub const ALLOW_UNSIGNED_AT_BUILD: bool = false;
 
 **验签语义**：包的 `.sig` 只需能被**列表中任一**公钥验证通过即可。
 
+> **⚠️ 发布前置（阻断项）**：当前构建的 `RELEASE_PUBLIC_KEYS` 为**空**，即 `unsigned-build`——**签名安全边界为 0**，仅可用于内部与调试。正式对外发布前，必须填入真实发布公钥（并走完下面的轮换流程）；否则"签名 fail-closed"这一承诺在实机上不成立。
+
 **密钥轮换流程（写入运维规范）**
 
 | 步 | 动作 |
@@ -447,7 +449,7 @@ pub const ALLOW_UNSIGNED_AT_BUILD: bool = false;
 - **验证范围与解压范围的一致性由 §5.1 的单句柄锁定保证**——这是签名从"形式校验"变成"真实安全边界"的前提；
 - 用途区分：签名是**真实性**防线（不可伪造）；`--sha256` 是调用方传入的**完整性**防线（同侧可篡改）。二者不可互相替代。
 
-### 6.4 Authenticode 立场（首发不含）
+### 6.4 Authenticode 立场（Phase 7 搁置）
 
 **我们签的是"包"，不是"二进制"。** 这两件事在 Windows 上是不同的信任通道：
 
@@ -459,7 +461,7 @@ pub const ALLOW_UNSIGNED_AT_BUILD: bool = false;
 Velopack 的官方文档直白指出"强烈建议代码签名，否则应用可能被标记为病毒"。而**本工具会替换可执行文件**——正是杀软与 SmartScreen 的重点观察对象。因此：
 
 1. **要求（构建侧，非代码）**：`updater.exe` 自身、以及更新包内的所有 EXE/DLL，都应使用 **Authenticode 代码签名**。这一步不做任何代码改动，但**直接影响用户能否顺利更新**；应写入打包流程与发布检查单。
-2. **可选（代码侧，纵深防御，首发不做）**：`--verify-authenticode <publisher-substring>` 会用 `WinVerifyTrust` 校验包内**每个 EXE/DLL** 的 Authenticode 签名有效，且签名者主体名包含给定子串（如 `CN=YourCompany`）。
+2. **可选（代码侧，纵深防御，Phase 7 搁置）**：`--verify-authenticode <publisher-substring>` 会用 `WinVerifyTrust` 校验包内**每个 EXE/DLL** 的 Authenticode 签名有效，且签名者主体名包含给定子串（如 `CN=YourCompany`）。搁置原因：**无代码签名证书，条件不具备**；当前构建对该参数一律 fail-closed 拒绝（退出 2），不静默忽略。
    - 编译期开关：cargo feature **`authenticode`（默认关闭）**，避免未签名阶段白白增加体积与依赖；
    - 运行期开关：不传 `--verify-authenticode` 时不生效；
    - 定位：**纵深防御**，不替代包签名（包签名才是主边界）。用途是"万一包的私钥泄露，攻击者仍无法用未签名二进制替换你的 EXE"；

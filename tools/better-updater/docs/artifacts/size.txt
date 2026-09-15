@@ -1,0 +1,8 @@
+# updater.exe 体积快照（由 scripts/check_size.ps1 生成）
+# 预算区间：250 KB（下界）~ 750 KB（上界）；目标值 ~500 KB（PLAN.md §2.2）
+
+size_bytes = 432640
+size_kb    = 422.5
+threshold_min_kb = 250
+threshold_max_kb = 750
+measured_at = 2026-09-15 09:35:27 +08:00

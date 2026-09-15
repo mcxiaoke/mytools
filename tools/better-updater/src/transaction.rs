@@ -357,6 +357,19 @@ pub fn finalize_committed(
     } else {
         log::warn!("COMMITTED journal retained (idempotent finalize will run on next start)");
     }
+    // 5. 暂存目录与空的父目录不保留：稳态 `.updater/` 只有 `state`（+ 可选 `previous/`）。
+    //    提交点已过，tmp 中的内容全部已落位/已消费，清理**纯属收敛**——故一律尽力而为，
+    //    失败仅记 WARNING，绝不改变事务结果、也绝不参与 Journal 去留判定（I3 不受影响）。
+    if let Err(e) = std::fs::remove_dir_all(&j.tmpdir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("failed to clean staging dir {} ({})", j.tmpdir, e);
+        }
+    }
+    for d in [&j.tmpdir, &j.backup] {
+        if let Some(parent) = std::path::Path::new(d).parent() {
+            let _ = std::fs::remove_dir(parent); // 仅空目录会被删除
+        }
+    }
     FinalizeStats { state, previous }
 }
 

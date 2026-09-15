@@ -233,24 +233,24 @@ src/                     ← 括号内为 Tier；Tier 0 产品代码合计 ≤ 2
 
 ## 4. 实施阶段
 
-| Phase | 内容 | 出口条件 | 可延后？ |
-| :--- | :--- | :--- | :--- |
-| **0** | **依赖实构建验证**：§2.3 的**六项**。产出一个能编译的最小 `main.rs` + 完整 Cargo.toml | 六项结论落档；不确定项当场暴露（都在编译期或可离线实测） | 否 |
-| **1** | 工程骨架、Cargo 体积配置、**CI 守卫（含 §3.1 的分层守卫；必须使用重写版本：`cargo metadata` 计数 + Tier 0 产品/测试代码口径拆分 + 去注释后再匹配禁用构造）**、`cli.rs`（`quote_arg` + 绝对化 + argv 重建）、`logger.rs`、`version.rs` | 空流程可编译；体积在区间内；`quote_arg` 与版本比较单测通过；分层守卫脚本可运行且**在正确依赖集下不误报** | 否 |
-| **2** | `win32/` 核心（`lockfile` 独占锁 + 32/5 均可重试、句柄等待、`path_guard` + 分级判定 + `to_verbatim` 四条规范化、`disk`、`elevate`（含 `!--elevated-worker` 守卫）、`de_elevate` + 环境块 + Session 0 例外、`restartmgr` **只读诊断**、`console`） | 锁跨会话 / 无陈旧锁 / DELETE_PENDING 重试用例、提权递归防护、提权 / 降权 / 1314 容灾 / 环境变量保留 / Session 0 不拉起、RM 诊断命名占用者 通过 | 否 |
-| **3** | `keep.rs` + `pkg/`（单句柄锁定、清单解析 + 路径归一化/strip 映射、zip 解析、方法约束、双层 zip bomb（比值 2000:1 + 绝对上限）、Zip Slip、strip、重复条目）+ `state.rs` | 与 Go 版 keep 语义比对一致；TOCTOU 用例、清单同句柄用例（I8）、跨平台路径归一化用例通过 | 否 |
-| **4** | `journal.rs` + `restore.rs`（`restore_from(source_dir, excludes)`）+ `transaction.rs`（权威集落盘含 `TOVER`、GEN 隔离、ReplaceFileW 错误码分类、**三处 MkdirAll**、回滚对账、**保留上一版本 + `_meta.txt` 步骤 2b**） | L1 恢复、两个崩溃窗口、不变量 I1–I4/I7/I10、`previous_*` 用例通过（`rollback_previous_*` 随该能力暂缓）。**开工前置：`TESTING.md` §3 的注入形态必须已定稿** | 否 |
-| **5** | `selfcopy.rs` + `gc.rs` + `progress.rs`（影子 Worker、argv 重建、自清理、陈清代 GC、进度文件） | L3 恢复、自更新、相对路径、`progress_failure_isolated`（I5）通过 | **看门狗（L2）可延后至首发之后** |
-| **6** | **看门狗（L2）** + `--wait-derived` 实验开关 | L2 恢复、提交后崩溃窗口、`watchdog_pid_reuse` 通过 | **是**——它是"防 updater 自身被杀"的加固，不是可用性前提 |
-| **7** | `authenticode`（可选 feature） | 三条用例通过 | **是**——需先有代码签名证书 |
-| **8** | 端到端、体积与误报归档、灰度比对、发布说明 | §5 DoD 全部满足 | 否 |
+| Phase | 内容 | 出口条件 | 可延后？ | 状态（2026-09-15） |
+| :--- | :--- | :--- | :--- | :--- |
+| **0** | **依赖实构建验证**：§2.3 的**六项**。产出一个能编译的最小 `main.rs` + 完整 Cargo.toml | 六项结论落档；不确定项当场暴露（都在编译期或可离线实测） | 否 | ✅ 已完成（5/6 实测通过；`Win32_Security_WinTrust` 未实测 → 随 Phase 7 搁置） |
+| **1** | 工程骨架、Cargo 体积配置、**CI 守卫（含 §3.1 的分层守卫；必须使用重写版本：`cargo metadata` 计数 + Tier 0 产品/测试代码口径拆分 + 去注释后再匹配禁用构造）**、`cli.rs`（`quote_arg` + 绝对化 + argv 重建）、`logger.rs`、`version.rs` | 空流程可编译；体积在区间内；`quote_arg` 与版本比较单测通过；分层守卫脚本可运行且**在正确依赖集下不误报** | 否 | ✅ 已完成（`scripts/check_tiers.ps1`；CI 接线进行中） |
+| **2** | `win32/` 核心（`lockfile` 独占锁 + 32/5 均可重试、句柄等待、`path_guard` + 分级判定 + `to_verbatim` 四条规范化、`disk`、`elevate`（含 `!--elevated-worker` 守卫）、`de_elevate` + 环境块 + Session 0 例外、`restartmgr` **只读诊断**、`console`） | 锁跨会话 / 无陈旧锁 / DELETE_PENDING 重试用例、提权递归防护、提权 / 降权 / 1314 容灾 / 环境变量保留 / Session 0 不拉起、RM 诊断命名占用者 通过 | 否 | ✅ 代码完成；⏳ 用例待补齐（需外部注入夹具） |
+| **3** | `keep.rs` + `pkg/`（单句柄锁定、清单解析 + 路径归一化/strip 映射、zip 解析、方法约束、双层 zip bomb（比值 2000:1 + 绝对上限）、Zip Slip、strip、重复条目）+ `state.rs` | 与 Go 版 keep 语义比对一致；TOCTOU 用例、清单同句柄用例（I8）、跨平台路径归一化用例通过 | 否 | ✅ 代码完成；⏳ `keep_rules_parity` 比对待补 |
+| **4** | `journal.rs` + `restore.rs`（`restore_from(source_dir, excludes)`）+ `transaction.rs`（权威集落盘含 `TOVER`、GEN 隔离、ReplaceFileW 错误码分类、**三处 MkdirAll**、回滚对账、**保留上一版本 + `_meta.txt` 步骤 2b**） | L1 恢复、两个崩溃窗口、不变量 I1–I4/I7/I10、`previous_*` 用例通过（`rollback_previous_*` 随该能力暂缓）。**开工前置：`TESTING.md` §3 的注入形态必须已定稿** | 否 | ✅ 代码完成；⏳ F 组不变量用例补齐中 |
+| **5** | `selfcopy.rs` + `gc.rs` + `progress.rs`（影子 Worker、argv 重建、自清理、陈清代 GC、进度文件） | L3 恢复、自更新、相对路径、`progress_failure_isolated`（I5）通过 | **看门狗（L2）可延后至首发之后** | ✅ 已完成 |
+| **6** | **看门狗（L2）** + `--wait-derived` 实验开关 | L2 恢复、提交后崩溃窗口、`watchdog_pid_reuse` 通过 | **是**——它是"防 updater 自身被杀"的加固，不是可用性前提 | ✅ **已完成**（延后已解除，2026-09-14 21:05）；连同 `--rollback-previous` 一并落地 |
+| **7** | `authenticode`（可选 feature） | 三条用例通过 | **是**——需先有代码签名证书 | ⏸ **搁置**（无证书，条件不具备；`--verify-authenticode` 保持 fail-closed 拒绝） |
+| **8** | 端到端、体积与误报归档、灰度比对、发布说明 | §5 DoD 全部满足 | 否 | ⏳ 进行中（CI 接线 / `docs/artifacts/` 归档 / 调用方文档 / 测试补齐） |
 
 **关于"可延后"的判定原则**：延后项的共同特征是**其失效不会导致目录损坏**——看门狗缺失时，Worker 被杀只会让更新停在"未提交"状态，由 L3 在下次启动收敛；`authenticode` 缺失时，包签名仍是完整的安全边界。反之，Phase 3/4 的任何一项都不可延后，因为它们直接决定"失败是否可回滚"。
 
 **节奏约束（本拆分版新增）**
 
 1. **发售前的收窄**：首发按 `SCOPE.md` §2.1 的"包含清单"交付，其余 Phase 内容按 §2.2 的触发条件再纳入。**首发 Tier 0 ≤ 1200 行**（`SCOPE.md` §3）。
-2. **`--rollback-previous` 自 Phase 4 移出，列为可延后**（首发不交付）。但 **`previous/` 保留与 `_meta.txt`（步骤 2b/3）留在 Phase 4**——它们只依赖收尾逻辑，不依赖回退引擎，且是"坏版本现场可人工取证"的唯一手段。
+2. **`--rollback-previous`**：原计划自 Phase 4 移出列为可延后；**实际已随 Phase 6 一并交付**（回退复用事务引擎，回退可再回退）。`previous/` 保留与 `_meta.txt`（步骤 2b/3）原本留在 Phase 4，现同时服务于回退引擎。
 3. **Phase 4 的硬前置**：`TESTING.md` §3 的故障注入形态必须在 Phase 4 开工前定稿——Phase 2/3 的部分注入用例同样依赖它。
 4. **Phase 1 的出口条件包含"分层守卫脚本可运行"**，因此 `TESTING.md` §2 的重写版守卫脚本必须在此之前替换完毕：旧版本会在**第一天就误报**（crate 计数把 windows-sys 算进去），或更糟——**静默失效**（`cargo tree` 的树形字符在 PowerShell 5.1 + 中文代码页下被破坏，匹配恒为 0）。
 5. **CI 守卫可整体推迟到 Phase 4 之后**：拿约 100 行 PowerShell 去治理 1200 行 Rust，治理成本高于被治理对象。Phase 1–3 先用 `cargo clippy` + 人工 review，Phase 4 起再上机械守卫。
@@ -279,6 +279,21 @@ src/                     ← 括号内为 Tier；Tier 0 产品代码合计 ≤ 2
 5. **分层预算守卫通过**：Tier 0 **产品代码 ≤ 2600 行**（首发 ≤ 1200 行，超限须附架构评审记录）、Tier 0 无禁用构造（**剥离注释后**判定）、**直接依赖 = 7**（`cargo metadata` 统计）；
 6. 体积与 Defender 扫描状态归档（`docs/artifacts/`）；
 7. 与 Go 版 `verify.py` 的 `keep_rules_parity` 比对结果归档；
-8. `CONTRACT.md` §4 中**标 ⚠️ 的**语义/布局/流程变化已写入发布说明（含"调用方清理逻辑必须把 `.updater/` 加入白名单"、"已删除 `--splash` 与 `--rm-shutdown`"、"`--rollback-previous` 暂缓"）；
-9. **集成契约交付物**：调用方文档必须包含"**启动自检 → 同步执行 `--recover`**"硬性契约（这是"任意时刻崩溃均确定性收敛"承诺的前提），以及"回退触发点 / 防重装"约定；首发不含回退能力时，至少要写明"坏版本的兜底 = 重下旧包 + `--allow-downgrade`"；
+8. `CONTRACT.md` §4 中**标 ⚠️ 的**语义/布局/流程变化已写入发布说明（含"调用方清理逻辑必须把 `.updater/` 加入白名单"、"已删除 `--splash` 与 `--rm-shutdown`"、"新增 `--rollback-previous` / `--watchdog`"）；
+9. **集成契约交付物**：调用方文档必须包含"**启动自检 → 同步执行 `--recover`**"硬性契约（这是"任意时刻崩溃均确定性收敛"承诺的前提），以及"回退触发点 / 防重装"约定；坏版本兜底首选 `--rollback-previous`，次选"重下旧包 + `--allow-downgrade`"；
 10. **`TESTING.md` §3 的注入形态已定稿**，且 A 组的主要故障注入走"外部注入"（真实进程终止 / 独占句柄 / 只读目录），代码内钩子仅用于外部无法制造的场景。
+
+**DoD 逐条状态（2026-09-15）**
+
+| # | 状态 | 说明 |
+| :--- | :--- | :--- |
+| 1 | ⏳ 进行中 | 矩阵 141 条，已自动化 33 条；E/F 强制组补齐中（`TESTING.md` §1 顶部有覆盖状态） |
+| 2 | ⏳ 待做 | 需外部注入夹具做真实进程终止 |
+| 3 | ⏳ 进行中 | E 组缩回开关类用例优先补齐 |
+| 4 | ⏳ 进行中 | F 组 I1–I10 补齐中 |
+| 5 | ✅ 满足 | 依赖 = 7 ✓、无禁用构造 ✓、Tier 0 2716 行（超线已记录评审，`SCOPE.md` §3 实测状态） |
+| 6 | ⏳ 待做 | `docs/artifacts/` 已建立，体积快照待归档 |
+| 7 | ⏳ 待做 | 需 Go 版 `verify.py` 对照 |
+| 8 | ⏳ 待做 | 发布说明未产出 |
+| 9 | ⏳ 待做 | 调用方集成文档未产出 |
+| 10 | ✅ 满足 | `TESTING.md` §3 已定稿 |

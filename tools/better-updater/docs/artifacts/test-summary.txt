@@ -1,0 +1,98 @@
+# cargo test --all-targets 结果（由 scripts/verify.ps1 生成）
+# 生成时间: 2026-09-15 09:35:26 +08:00
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src\main.rs (target\debug\deps\updater-05dfe044f7669bd9.exe)
+
+running 25 tests
+test cli::tests::quote_plain ... ok
+test cli::tests::quote_arg_roundtrip ... ok
+test keep::tests::dir_trailing_slash ... ok
+test keep::tests::comments_and_case ... ok
+test keep::tests::literal_file_or_prefix ... ok
+test keep::tests::reserved_names ... ok
+test state::tests::state_roundtrip ... ok
+test cli::tests::quote_specials ... ok
+test verify::crypto::tests::hex_sig_parse ... ok
+test keep::tests::glob_rules ... ok
+test version::tests::numeric_compare ... ok
+test version::tests::prerelease_ordering ... ok
+test version::tests::rejected_forms ... ok
+test win32::path_guard::tests::normalize_resolves_dots_and_case ... ok
+test win32::path_guard::tests::normalize_trims_trailing_dots_and_spaces ... ok
+test win32::path_guard::tests::under_checks ... ok
+test win32::path_guard::tests::verbatim_prefixes ... ok
+test journal::tests::parse_truncated_tail_tolerated ... ok
+test journal::tests::target_mismatch_rejected_but_case_equal_ok ... ok
+test journal::tests::parse_unknown_version_rejected ... ok
+test pkg::handle::tests::share_read_only_excludes_writers_and_deleters ... ok
+test journal::tests::parse_ok_and_stages ... ok
+test gc::tests::gc_keeps_newest_previous ... ok
+test gc::tests::gc_ttl_zero_purges_non_newest ... ok
+test gc::tests::gc_skips_referenced_generation ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\capabilities.rs (target\debug\deps\capabilities-5abe4556e50f5cd0.exe)
+
+running 19 tests
+test lockfile_no_stale_and_delete_on_close ... ok
+test previous_meta_from_authoritative_new ... ok
+test rollback_previous_none ... ok
+test help_and_version ... ok
+test removed_params_rejected ... ok
+test stale_gen_gc ... ok
+test downgrade_allowed ... ok
+test manifest_missing_compat ... ok
+test single_internal_dir_steadystate_and_hidden_attr ... ok
+test runtime_dir_location ... ok
+test min_version_rejected ... ok
+test require_empty_file_ok ... ok
+test previous_retained_with_meta ... ok
+test previous_ttl_zero_retracts ... ok
+test same_version_warn ... ok
+test progress_file_written_atomically ... ok
+test state_missing_first_install ... ok
+test temp_file_not_hidden ... ok
+test exit_codes_matrix ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.67s
+
+     Running tests\e2e.rs (target\debug\deps\e2e-cf74519d12ba43e3.exe)
+
+running 12 tests
+
+正在 Ping 127.0.0.1 具有 32 字节的数据:
+来自 127.0.0.1 的回复: 字节=32 时间<1ms TTL=64
+test watchdog_finalizes_committed ... ok
+
+正在 Ping 127.0.0.1 具有 32 字节的数据:
+来自 127.0.0.1 的回复: 字节=32 时间<1ms TTL=64
+test watchdog_rolls_back_applying ... ok
+test bad_zip_rejected_zero_touch ... ok
+test unknown_arg_rejected_exit_2 ... ok
+test recover_from_committed_journal_finalizes ... ok
+test rollback_previous_reverts_to_retained_generation ... ok
+test recover_from_applying_journal_rolls_back ... ok
+test reserved_names_and_keep_file_protected ... ok
+test downgrade_rejected ... ok
+test dry_run_zero_touch ... ok
+test full_update_flow_with_manifest ... ok
+test self_update_in_target_via_shadow_worker ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
+
+     Running tests\invariants.rs (target\debug\deps\invariants-1138eb16cb5c6ef2.exe)
+
+running 9 tests
+test inv_I3_journal_after_backup ... ok
+test inv_I2_no_rollback_after_commit ... ok
+test inv_I4_gen_scoped_recovery ... ok
+test inv_I1_rollback_before_commit ... ok
+test inv_I6_no_journal_means_determined ... ok
+test inv_I10_rollback_idempotent ... ok
+test inv_I7_same_volume ... ok
+test inv_I5_tier2_isolated ... ok
+test inv_I9_reserved_names ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s

@@ -8,6 +8,8 @@
 
 ## 1. 测试矩阵
 
+> **覆盖状态（2026-09-15）**：矩阵共 **141 条**用例；已自动化 **65 条**（25 单元 + 12 e2e + 9 不变量 + 19 能力），`cargo test` 全绿。**F 组（不变量 I1–I10）已全部覆盖**；**E 组的缩回开关与 Tier 2 隔离已覆盖**。仍待补的是 A–D 组中依赖**交互式/并发夹具**的条目（真实强杀、UAC 会话、独占句柄、多实例竞争），以及因**条件不具备**而暂不可达的 `sig_*`（公钥列表为空）与 `authenticode_*`（Phase 7 搁置）。未被自动化覆盖的条目**不视为已通过**，逐条进度见 §6"覆盖进度"。
+
 ### A. 事务与崩溃恢复（重点）
 
 | 用例 | 场景 | 预期断言 |
@@ -114,7 +116,7 @@
 
 ### E. 新增能力（每项均含故障注入与"关闭后行为"两条）
 
-> `previous_*`（保留 + `_meta.txt`）用例**首发必须通过**；`rollback_previous_*` 四条随该能力**一并暂缓**；`rm_shutdown_*` 与 `splash_*` 已删除（对应能力被删），改为"参数已删除"的回归用例。
+> `previous_*`（保留 + `_meta.txt`）与 `rollback_previous_*` 用例**均为必测**（`--rollback-previous` 已随 Phase 6 落地，不再暂缓）；`rm_shutdown_*` 与 `splash_*` 已删除（对应能力被删），改为"参数已删除"的回归用例。
 
 | 用例 | 场景 | 预期断言 |
 | :--- | :--- | :--- |
@@ -133,10 +135,10 @@
 | `previous_meta_from_authoritative_new` | 事务中强杀使**运行期** `ADDED:` 建议记录丢失，但 Journal 权威 `NEW` 集合完整 | 恢复后生成的 `_meta.txt` **仍包含完整 ADDED**（取自权威集）；**不得**出现"回退后留下新版独有孤儿文件" |
 | `previous_ttl_zero` | `--previous-ttl-days 0` | 退回旧行为：提交后删除备份（缩回开关），且不要求写 `_meta.txt` |
 | `previous_transfer_fail_no_journal_delete` | 强制让"备份→previous"的改名失败 | **WARNING + 保留 COMMITTED Journal + 不删除 Journal**、**绝不回滚**（I2/I3 回归）；下次启动的 COMMITTED 分支幂等收尾 |
-| `rollback_previous_ok` **(暂缓)** | 新版启动即崩，执行 `--rollback-previous` | 目标文件还原为上一版本；**新版新增的文件被删除**（依据 `_meta.txt` 的 ADDED）；`.updater/state` 版本回退 |
-| `rollback_previous_is_transactional` **(暂缓)** | 回退过程中强杀 | 走同一套三层恢复；回退本身也产生新的 `.updater/previous`，因此**可再回退** |
-| `rollback_previous_reuses_restore` **(暂缓)** | 静态检查 + 单测 | `--rollback-previous` 与回滚 R1 **调用同一个** `restore_from`，且传入 `excludes = {_meta.txt}`（I10 幂等性同源） |
-| `rollback_previous_none` **(暂缓)** | 无保留目录时执行 | 记 INFO "无保留版本可退"，退出 0，目录零改动 |
+| `rollback_previous_ok` | 新版启动即崩，执行 `--rollback-previous` | 目标文件还原为上一版本；**新版新增的文件被删除**（依据 `_meta.txt` 的 ADDED）；`.updater/state` 版本回退 |
+| `rollback_previous_is_transactional` | 回退过程中强杀 | 走同一套三层恢复；回退本身也产生新的 `.updater/previous`，因此**可再回退** |
+| `rollback_previous_reuses_restore` | 静态检查 + 单测 | `--rollback-previous` 与回滚 R1 **调用同一个** `restore_from`，且传入 `excludes = {_meta.txt}`（I10 幂等性同源） |
+| `rollback_previous_none` | 无保留目录时执行 | 记 INFO "无保留版本可退"，退出 0，目录零改动 |
 | `previous_gc_ttl` | 保留目录超过 TTL 且非最新 | 被 GC 删除；**最新 1 个始终保留**（I4 回归） |
 | `rm_diagnose_names_holder` | 目标 DLL 被另一进程以不共享删除方式打开 | 重试耗尽后日志出现 `"file <rel> 被 <name>(<pid>) 占用"`；**事务行为与不含诊断时完全一致**（未被诊断改变） |
 | `rm_feature_disabled` | 以 `--no-default-features` 构建 | 32/5 走原有重试/回滚，无 RM 日志；其余行为不变（缩回开关） |
@@ -186,7 +188,23 @@
 
 ## 2. CI 守卫
 
+**单一入口（已落地）**：`scripts/verify.ps1` 把下面的检查合并为一条流水线，CI 与本机调用的是**同一个脚本**——避免"本地绿、CI 红"的两套判定漂移。
+
+| 脚本 | 职责 | 失败语义 |
+| :--- | :--- | :--- |
+| `scripts/verify.ps1` | 全量守卫编排：构建（含缩回开关）→ 测试 → clippy → 分层 → 体积 → Defender 归档 | 任一步失败即**就地停下**并返回非 0 |
+| `scripts/check_tiers.ps1` | §2.3 分层守卫（Tier 声明 / 禁用构造 / 依赖数 / 行数 WARN） | 硬失败（行数仅 WARN） |
+| `scripts/check_size.ps1` | §2.1 体积守卫 + `docs/artifacts/` 快照归档 | 硬失败 |
+| `scripts/gen_manifest.ps1` | §4 的 `updater.manifest` 生成（打包流程，非守卫） | — |
+
+> **CI 激活说明**：Actions **只读取仓库根目录**的 `.github/workflows/`，而本仓库是 monorepo。
+> 项目内的 `.github/workflows/ci.yml` 是**可评审的版本化定义**；要真正跑起来，需把它放到
+> `<repo>/.github/workflows/better-updater.yml`（`paths` 已限定到 `tools/better-updater/**`，
+> 不影响同仓其它项目）。该 workflow 只做一件事：在 `windows-latest` 上执行 `scripts/verify.ps1`。
+
 ### 2.1 体积守卫
+
+**已落地**为 `scripts/check_size.ps1`（下列逻辑即该脚本的实现口径）：
 
 ```powershell
 # 体积守卫：上界告警、下界异常检测（下界命中通常意味着 feature 被误裁或构建未包含功能）
@@ -195,20 +213,22 @@ $kb   = [math]::Round($size / 1KB, 1)
 Write-Host "updater.exe = $kb KB"
 if ($size -gt 750KB) { throw "体积超上限: $kb KB（检查是否误开 zip 的 deflate/zopfli）" }
 if ($size -lt 250KB) { throw "体积低于下限: $kb KB（检查 feature 是否被误裁）" }
-
-# 依赖与 feature 快照（体积回归时用于定位放大来源）
-cargo tree -e features --depth 2 | Out-File -Encoding utf8 docs/artifacts/cargo-tree.txt
 ```
+
+> **快照口径已修正**：不要用 `cargo tree -e features` 落档（`cargo tree` 的树形字符在
+> PowerShell 5.1 + 中文代码页下会被破坏，且 `cargo tree` 的 feature 展开随版本变动）。
+> `check_size.ps1` 改为归档 `cargo metadata --no-deps` 的 JSON 到 `docs/artifacts/deps.json`，
+> 体积回归时用**机器可解析**的格式定位放大来源。
 
 ### 2.2 其他必须执行的检查
 
 1. `cargo build --release` 的 **feature 完整性验证**（防"清单漏 feature"复发）；
-2. `cargo build --no-default-features`（验证 RM feature 缩回开关可用）；
-3. `cargo test`：`quote_arg`、`keep`、ZIP 解析、Journal 解析、**版本比较（边界表）**的单元测试；
-4. 测试矩阵中标记为**自动化可行**的用例；**E/F 两组为强制项，未覆盖即视为构建失败**；
-5. `PLAN.md` §4.1 的**六项**实构建/实测验证结论归档；
-6. 明确**禁止**引入 UPX 步骤，并对产物做一次 Defender 扫描记录误报状态；
-7. **分层守卫**（见下）。
+2. `cargo build --release --no-default-features`（验证 RM feature 缩回开关可用）；
+3. `cargo test --all-targets`：单元（`quote_arg` / `keep` / ZIP / Journal / **版本比较边界表** / 路径规范化 / I8 / GC）+ e2e + 不变量 + 能力四组；
+4. **E/F 两组为强制项**，未覆盖即视为构建失败——现由 `tests/invariants.rs` 与 `tests/capabilities.rs` 承担（进度见 §5）；
+5. `PLAN.md` §4.1 的**六项**实构建/实测结论已归档到 `REFERENCE.md` §1.2（5/6 通过，1 项随 Phase 7 搁置）；
+6. **禁止**引入 UPX 步骤；Defender 扫描结果归档到 `docs/artifacts/defender-scan.txt`（`SCANNED` / `UNAVAILABLE` / `SKIPPED` 三态，见该目录 README）；
+7. **分层守卫**（见 §2.3）。
 
 ### 2.3 分层守卫脚本
 
@@ -297,3 +317,58 @@ $lines -join "`n" | Set-Content -Path (Join-Path $stage 'updater.manifest') -Enc
 ```
 
 > 该脚本属**打包流程**，不是 updater 的一部分；但它是版本与降级防护生效的前提，应纳入发布检查单。
+> **已落地**为 `scripts/gen_manifest.ps1`（可直接调用，见脚本头部用法）。
+
+---
+
+## 5. 覆盖进度（2026-09-15）
+
+自动化用例 **65 条**：`cargo test` 全绿，`cargo clippy --all-targets` 0 警告。
+
+| 测试文件 | 条数 | 职责 |
+| :--- | :--- | :--- |
+| `src/**` 模块内测试 | 25 | `quote_arg` 往返、版本比较边界、keep 规则、Journal 解析/校验、路径规范化、**I8 同一文件对象**、**GC 三条规则** |
+| `tests/e2e.rs` | 12 | 主流程：完整更新、`--dry-run` 零落盘、降级拒绝、L3 恢复、保留名拦截、影子自更新、看门狗接管、`--rollback-previous` |
+| `tests/invariants.rs` | 9 | **F 组 I1–I7 / I9 / I10**（I8 在模块内测试） |
+| `tests/capabilities.rs` | 19 | **E 组**：缩回开关、Tier 2 隔离、版本防护矩阵、GC、锁、布局与属性、进度、退出码、CLI 契约 |
+| `tests/common/mod.rs` | — | 共享夹具（含**跨测试二进制**的 Win32 命名互斥量串行锁） |
+
+### 已覆盖（矩阵条目 → 用例）
+
+| 矩阵条目 | 对应用例 |
+| :--- | :--- |
+| F 组 `inv_I1…I10` 全部 10 条 | `inv_*` × 9 + `pkg::handle::tests`（I8） |
+| `crash_midway_L1` / `journal_fsync_not_committed` | `inv_I1_rollback_before_commit`、`recover_from_applying_journal_rolls_back` |
+| `journal_fsync_committed` / `state_repaired_from_journal` | `recover_from_committed_journal_finalizes` |
+| `crash_midway_L2` / `crash_after_committed_before_launch` | `watchdog_rolls_back_applying`、`watchdog_finalizes_committed` |
+| `journal_unknown_version` / `exit_codes` | `exit_codes_matrix`（0/1/2/3 四态） |
+| `rollback_previous_ok` / `rollback_previous_is_transactional`(部分) | `rollback_previous_reverts_to_retained_generation` |
+| `rollback_previous_none` | `rollback_previous_none` |
+| `previous_retained` / `previous_meta_from_authoritative_new` | `previous_retained_with_meta`、`previous_meta_from_authoritative_new` |
+| `previous_ttl_zero`（缩回开关） | `previous_ttl_zero_retracts` |
+| `manifest_missing_compat`（缩回开关） | `manifest_missing_compat` |
+| `downgrade_rejected` / `downgrade_allowed` / `same_version_warn` / `min_version_rejected` / `state_missing_first_install` | `downgrade_rejected`、`downgrade_allowed`、`same_version_warn`、`min_version_rejected`、`state_missing_first_install` |
+| `stale_gen_gc` / `previous_gc_ttl` | `stale_gen_gc` + `gc::tests` ×3（含**被引用代不清理**，仅模块内可观察） |
+| `lockfile_no_stale` / `lockfile_delete_on_close` | `lockfile_no_stale_and_delete_on_close` |
+| `single_internal_dir_steadystate` / `internal_dir_hidden_attr` / `temp_file_not_hidden` | `single_internal_dir_steadystate_and_hidden_attr`、`temp_file_not_hidden` |
+| `runtime_dir_location` | `runtime_dir_location` |
+| `progress_failure_isolated` / `progress_atomic_rewrite`（部分） | `inv_I5_tier2_isolated`、`progress_file_written_atomically` |
+| `help_version` / `splash_param_removed` / `rm_shutdown_removed` | `help_and_version`、`removed_params_rejected`、`unknown_arg_rejected_exit_2` |
+| `require_empty_file_ok` / `dry_run_zero_touch` / `delete_zip_after_close` | `require_empty_file_ok`、`dry_run_zero_touch`、`full_update_flow_with_manifest` |
+| `dry_run` 不派生看门狗 / `probe_skipped_on_dry_run` | `dry_run_zero_touch` |
+| `keep_internal_reserved*` / `single_internal_dir_blocked` | `inv_I9_reserved_names`、`reserved_names_and_keep_file_protected` |
+
+### 待补（及阻塞因素）
+
+| 条目 | 阻塞因素 |
+| :--- | :--- |
+| `crash_window_*` / `crash_midway_L3` / `crash_before_watchdog_spawn`（**真实进程终止**，DoD 第 2 条） | 需"在 `ReplaceFileW` 成功后、`MOVED` 落盘前"精确插入强杀的夹具；需按 PID/进程树定位 `upd-worker-<GEN>.exe` |
+| `elevate_*` / `de_elevate_*` / `elevate_cancel` / `elevate_still_unwritable_no_recursion` | 需交互式 UAC 会话与第二个管理员上下文，无法在无人值守 CI 中稳定复现 |
+| `lock_busy_main_and_worker` / `fork_no_lock_gap` / `lockfile_cross_session` / `recover_lock_busy` | 需可控的多实例竞争夹具（当前串行锁下不可并发发起） |
+| `zip_handle_pinned` / `manifest_parsed_same_handle`（外部观察） | 机制已由 `pkg::handle` 模块内测试证明；外部观察需在事务窗口内并发替换 zip，夹具未就位 |
+| `rm_diagnose_names_holder` / `rm_feature_disabled` | 需真实独占句柄持有者；无默认 feature 构建需在 CI 单独跑一条 `--no-default-features` |
+| `sig_missing_fail_closed` / `sig_tampered` / `sig_hex_and_bin` | **当前构建公钥列表为空**（`unsigned-build`），签名强制分支不可达；填真实公钥后即可自动化 |
+| `authenticode_*` | **Phase 7 搁置**（无代码签名证书） |
+| `de_elevate_session0_no_launch` | 需在 Session 0 服务上下文启动 |
+| `zipbomb_*` / `zip_method_reject` / `duplicate_entry_reject` / `join_escape_blocked` / `long_path` / `fs_unsupported_*` / `keep_rules_parity` | 夹具可做，尚未编写（`keep_rules_parity` 另需 Go 版 `verify.py` 对照） |
+
