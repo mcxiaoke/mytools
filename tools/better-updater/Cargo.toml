@@ -33,6 +33,10 @@ windows-sys = { version = ">=0.59, <=0.61", default-features = false, features =
     "Win32_Security",                    # 令牌：OpenProcessToken / DuplicateTokenEx /
                                          # GetTokenInformation（降权）
     "Win32_UI_Shell",                    # ShellExecuteExW（提权）
+    "Win32_UI_Controls",                 # 原生进度条 InitCommonControlsEx / PBM_* / PBS_*
+    "Win32_Graphics_Gdi",                # GDI 字体与画刷 CreateFontW / DeleteObject
+    "Win32_System_LibraryLoader",        # GetModuleHandleW
+    "Win32_Globalization",               # GetUserDefaultUILanguage 界面语言自适应
 ] }
 
 # 纯 Rust 解压：显式 flate2 rust_backend，剔除 zopfli 等写压缩器。

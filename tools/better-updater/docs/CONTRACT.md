@@ -57,7 +57,7 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--timeout` | int | 60 | 等待目标进程退出超时秒数 |
 | `--write-retries` | int | **20** | 单文件替换 / 还原的重试次数（回滚路径同样适用） |
 | `--write-delay-ms` | int | **500** | 重试间隔毫秒（单文件约 10s；占用者多为杀软扫描 / 同步盘 / 索引服务，秒级重试不足） |
-| `--max-uncompressed` | int(MiB) | 2048 | 允许的累计解压总量上限（zip bomb 防护） |
+| `--max-uncompressed` | int(MiB) | 4096 | 允许的累计解压总量上限（zip bomb 防护） |
 | `--delete-zip` | bool | false | 更新成功后删除 zip 与 sig（失败仅 WARNING） |
 | `--dry-run` | bool | false | 仅输出计划：不落盘、不写 Journal、不派生看门狗 |
 | `--elevate` | bool | false | target 不可写时请求 UAC 提权重启（仅主实例生效） |
@@ -76,6 +76,8 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--allow-unsigned` | bool | false | 允许缺失签名。**仅调试构建生效**，发布构建忽略并告警 |
 | `--log` | string | "" | 日志路径，默认 `<base>\logs\updater-<ts>.log` |
 | `--silent` | bool | false | 兼容性保留参数（GUI 子系统无窗口，恒静默） |
+| `--gui` | bool | false | 开启原生 Win32 极简进度对话框（独立 UI 线程防假死、双模式动效、双语自适应） |
+| `--gui-title` | string | 自动自适应 | 自定义 GUI 窗口标题（优先于系统自适应标题） |
 | `--debug-console` | bool | false | 调试：`AttachConsole(ATTACH_PARENT_PROCESS)` |
 | `--help` / `-h` | bool | — | 打印用法，退出码 0 |
 | `--version` | bool | — | 打印版本 + 内嵌公钥指纹，退出码 0 |

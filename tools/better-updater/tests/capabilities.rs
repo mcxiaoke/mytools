@@ -477,3 +477,20 @@ fn require_empty_file_ok() {
     assert_successful_update(&target);
     assert_eq!(fs::metadata(target.join("empty.bin")).unwrap().len(), 0);
 }
+
+#[test]
+fn gui_options_accepted() {
+    let tmp = TempDir::new("cap-gui");
+    let target = tmp.path().join("target");
+    make_target(&target);
+    let zip = build_package(&tmp, "1.0.1");
+
+    let code = run_updater(&target, &[
+        "--zip", zip.to_str().unwrap(),
+        "--launch", "app.exe",
+        "--gui",
+        "--gui-title", "MyApp Updating...",
+    ]);
+    assert_eq!(code, 0, "--gui and --gui-title must be accepted and exit 0");
+    assert_successful_update(&target);
+}

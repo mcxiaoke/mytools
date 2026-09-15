@@ -50,6 +50,8 @@ pub struct Args {
     pub allow_unsigned: bool,
     pub log: Option<String>,
     pub debug_console: bool,
+    pub gui: bool,
+    pub gui_title: Option<String>,
     // 内部一次性标记
     pub worker: bool,
     pub elevated_worker: bool,
@@ -95,7 +97,7 @@ OPTIONS:
   --timeout <sec>           wait timeout for --pid (default 60)
   --write-retries <n>       per-file replace/restore retries (default 20)
   --write-delay-ms <n>      retry interval ms (default 500)
-  --max-uncompressed <MiB>  total uncompressed size cap (default 2048)
+  --max-uncompressed <MiB>  total uncompressed size cap (default 4096)
   --delete-zip              delete zip+sig after success
   --dry-run                 print plan only, zero disk writes
   --elevate                 request UAC elevation when target is not writable
@@ -112,6 +114,8 @@ OPTIONS:
   --allow-unsigned          (debug builds only) allow missing signature
   --log <FILE>              log file (default <base>\\logs\\updater-<ts>.log)
   --silent                  kept for compatibility (GUI subsystem, always silent)
+  --gui                     show native Win32 progress dialog
+  --gui-title <TITLE>       custom GUI window title
   --debug-console           attach to parent console for debugging
   --help / --version
 ";
@@ -233,7 +237,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
     let write_delay_ms: u32 =
         ap.opt_value_from_str("--write-delay-ms").map_err(|e| format!("--write-delay-ms: {}", e))?.unwrap_or(500);
     let max_mib: u64 =
-        ap.opt_value_from_str("--max-uncompressed").map_err(|e| format!("--max-uncompressed: {}", e))?.unwrap_or(2048);
+        ap.opt_value_from_str("--max-uncompressed").map_err(|e| format!("--max-uncompressed: {}", e))?.unwrap_or(4096);
     let min_version = get_str(&mut ap, "--min-version")?;
     let previous_ttl_days: u32 = ap
         .opt_value_from_str("--previous-ttl-days")
@@ -247,6 +251,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
     let watch_image = get_str(&mut ap, "--watch-image")?.unwrap_or_default();
     let gen = get_str(&mut ap, "--gen")?;
     let verify_authenticode = get_str(&mut ap, "--verify-authenticode")?.unwrap_or_default();
+    let gui_title = get_str(&mut ap, "--gui-title")?;
 
     let flag = |ap: &mut Arguments, name: &'static str| -> bool { ap.contains(name) };
     let delete_zip = flag(&mut ap, "--delete-zip");
@@ -259,6 +264,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
     let strict_path_check = flag(&mut ap, "--strict-path-check");
     let allow_unsigned = flag(&mut ap, "--allow-unsigned");
     let debug_console = flag(&mut ap, "--debug-console");
+    let gui = flag(&mut ap, "--gui");
     flag(&mut ap, "--silent"); // 兼容性保留：GUI 子系统恒静默
     let worker = flag(&mut ap, "--worker");
     let elevated_worker = flag(&mut ap, "--elevated-worker");
@@ -361,6 +367,8 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
         allow_unsigned,
         log,
         debug_console,
+        gui,
+        gui_title,
         worker,
         elevated_worker,
         watchdog,

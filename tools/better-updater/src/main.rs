@@ -8,6 +8,7 @@
 
 mod cli;
 mod gc;
+mod gui;
 mod journal;
 mod keep;
 mod logger;
@@ -18,6 +19,7 @@ mod restore;
 mod runtime;
 mod selfcopy;
 mod state;
+mod strings;
 mod transaction;
 mod version;
 mod verify;
@@ -465,6 +467,11 @@ fn dry_run(args: &Args) -> i32 {
 
 /// 普通更新主流程（Worker 上下文）：预检 → 等待 → 计划 → 事务 → 提交 → 收尾 → 拉起。
 fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+    let strings = strings::get();
+    let title = args.gui_title.as_deref().unwrap_or(strings.default_title);
+    let mut gui = gui::GuiProgress::new(args.gui, title);
+    gui.set_status(strings.verifying_package, true);
+
     let mut prog = progress::Progress::new(args.progress_file.clone());
     prog.phase("PRECHECK");
     // ---- 5. 无损预检 ----
@@ -473,6 +480,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
         Err(e) => {
             log::error!("precheck rejected: {} (target untouched)", e);
             end("ABORTED", "-", "-", "-", "-", "precheck failed");
+            gui.close();
             fallback_launch(args);
             return EXIT_ABORTED;
         }
@@ -482,11 +490,13 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
 
     // ---- 6. 等待目标进程退出（句柄绑定，免疫 PID 重用）----
     if args.pid > 0 {
+        gui.set_status(strings.waiting_process, true);
         let expect = args.launch.clone().unwrap_or_default();
         match win32::process::wait_pid(args.pid, args.timeout, &expect) {
             WaitResult::Timeout => {
                 log::error!("timeout waiting for target process {}; aborting without changes", args.pid);
                 end("ABORTED", "-", "-", "-", "-", "wait timeout");
+                gui.close();
                 fallback_launch(args);
                 return EXIT_ABORTED;
             }
@@ -560,10 +570,12 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
 
     // ---- 10. APPLYING（fsync 成功后才执行文件动作）----
     prog.phase("APPLYING");
+    gui.set_status(strings.updating_files, false);
     if let Err(e) = jw.stage(Stage::Applying) {
         // 尚未改动任何文件：按 PLANNED 语义清理后中止
         log::error!("failed to persist APPLYING stage: {}", e);
         drop(jw);
+        gui.close();
         let _ = std::fs::remove_dir_all(&j.backup);
         let _ = std::fs::remove_dir_all(&j.tmpdir);
         let _ = std::fs::remove_file(journal::journal_path(&args.target));
@@ -587,12 +599,14 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
         match transaction::apply_file(&mut arch, &f.rel, f.idx, f.size, &mut actx, &mut jw) {
             Ok(true) => {
                 prog.tick(i as u64 + 1, total_files, &f.rel);
+                gui.set_progress(i as u64 + 1, total_files, &f.rel);
             }
             Ok(false) => {} // 被保留名第二层拦截（I9），跳过
             Err(e) => {
                 log::error!("apply failed at {} ({}); rolling back", f.rel, apply_err_text(&e));
                 drop(jw); // 先关句柄，journal 才能被删除
                 drop(arch);
+                gui.close();
                 return finish_rollback(args, &j, retr, hashes_planned);
             }
         }
@@ -606,6 +620,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
             log::error!("self-check failed: {}; rolling back", e);
             drop(jw);
             drop(arch);
+            gui.close();
             return finish_rollback(args, &j, retr, "unverified");
         }
     };
@@ -617,12 +632,14 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
         log::error!("failed to persist COMMITTED stage: {}", e);
         drop(jw);
         drop(arch);
+        gui.close();
         return finish_rollback(args, &j, retr, hashes);
     }
     drop(jw);
 
     // ---- 12b/12c/13. 收尾：state 原子写入 → _meta.txt → 备份转移 → 删 Journal ----
     let stats = transaction::finalize_committed(&args.target, &j, args.previous_ttl_days, retr, false, None);
+    gui.set_status(strings.completing, true);
 
     // ---- 14. --delete-zip（zip 句柄已关闭；失败仅 WARNING）----
     drop(arch);
@@ -640,6 +657,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
     }
 
     // ---- 15. 拉起主程序（降权 / 常规；Session 0 拒绝）----
+    gui.close();
     prog.phase("LAUNCHING");
     let launch_ok = launch_app(args);
     let ver = tover.clone().unwrap_or_else(|| "-".to_string());
