@@ -222,6 +222,11 @@
                 <button type="button" class="act-btn btn-edit" @click="openText(item)" :title="manageConfig.allowEdit ? '查看/编辑' : '查看'">&#9999;&#65039;</button>
               </template>
 
+              <!-- Novel reader -->
+              <template x-if="!item.isDir && isNovel(item)">
+                <a :href="readerHref(item)" target="_blank" class="act-btn btn-read" title="在小说阅读器中阅读">&#128214;</a>
+              </template>
+
               <!-- Copy link -->
               <template x-if="!item.isDir">
                 <button type="button" class="act-btn btn-copy" @click="copyLink(item)" title="复制直链">&#128203;</button>
@@ -310,6 +315,9 @@
                 </template>
                 <template x-if="!item.isDir">
                   <button type="button" class="grid-act-btn" @click.stop="showQR(item)" title="手机扫码">&#128241;</button>
+                </template>
+                <template x-if="!item.isDir && isNovel(item)">
+                  <a :href="readerHref(item)" target="_blank" class="grid-act-btn" title="在小说阅读器中阅读">&#128214;</a>
                 </template>
                 <template x-if="manageConfig.allowRename && path !== ''">
                   <button type="button" class="grid-act-btn" @click.stop="openRename(item)" title="重命名">&#9998;&#65039;</button>
@@ -450,6 +458,9 @@
               <span x-show="!textModal.saving">&#128190; 保存</span>
               <span x-show="textModal.saving">保存中...</span>
             </button>
+          </template>
+          <template x-if="textModal.item && isNovel(textModal.item)">
+            <a class="modal-icon-btn" :href="readerHref(textModal.item)" target="_blank" title="在小说阅读器中阅读">&#128214;</a>
           </template>
           <a class="modal-icon-btn" :href="textModal.item ? downloadHref(textModal.item) : '#'" title="下载原文件" download>&#11015;</a>
           <button type="button" class="modal-icon-btn close" @click="confirmCloseText()" title="关闭 (Esc)">&#10005;</button>

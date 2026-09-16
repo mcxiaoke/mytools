@@ -647,6 +647,25 @@ document.addEventListener('alpine:init', () => {
       return ['txt', 'md', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'js', 'ts', 'go', 'py', 'sh', 'bash', 'zsh', 'bat', 'ps1', 'ini', 'conf', 'config', 'log', 'toml', 'sql', 'c', 'cpp', 'h', 'hpp', 'rs', 'java', 'kt', 'dart', 'diff', 'patch'].indexOf(ext) > -1;
     },
 
+    isNovel(item) {
+      if (!item || item.isDir) return false;
+      var ext = (item.name.split('.').pop() || '').toLowerCase();
+      return ext === 'txt';
+    },
+
+    readerHref(item) {
+      if (!item) return '';
+      var rawUrl = this.rawHref(item.path);
+      var title = item.name;
+      return this.base + '/static/reader.html?url=' + encodeURIComponent(rawUrl) + '&title=' + encodeURIComponent(title);
+    },
+
+    openReader(item) {
+      if (!item) return;
+      var url = this.readerHref(item);
+      window.open(url, '_blank');
+    },
+
     onFileClick(e, item) {
       if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
       if (this.isImage(item)) {

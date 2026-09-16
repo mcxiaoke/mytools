@@ -72,6 +72,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/zip", s.handleZip)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
+	mux.HandleFunc("/reader", s.handleReader)
+	mux.HandleFunc("/reader.html", s.handleReader)
 	mux.Handle("/static/", s.handleStatic())
 	mux.HandleFunc("/", s.handleIndex)
 	return mux
@@ -94,6 +96,18 @@ func (s *Server) handleStatic() http.Handler {
 // stripping, optional token auth, then the routes.
 func (s *Server) Handler() http.Handler {
 	return securityHeaders(s.stripBase(s.authMiddleware(s.Routes())))
+}
+
+// handleReader serves the standalone novel reader page.
+func (s *Server) handleReader(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := webFS.ReadFile("web/static/reader.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(tmpl)
 }
 
 // handleIndex serves the embedded SPA for all non-API, non-raw paths.
