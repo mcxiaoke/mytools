@@ -13,6 +13,22 @@ restart-manager = ["windows-sys/Win32_System_RestartManager"]
 authenticode = ["windows-sys/Win32_Security_WinTrust"]
 # 仅调试构建开启：允许缺省签名
 allow-unsigned = []
+# 开发期打包工具 `packer`。**刻意不进 default**：写 zip 的代码在 release profile 下约 +54 KB，
+# 而它是构建期能力，没有理由让每个最终用户承担（docs/PROPOSAL-pack-subcommand.md §3.2）。
+# 默认构建连这个模块都不编译；`scripts/check_size.ps1` 另有一条守卫断言发布产物内不存在写侧。
+pack = []
+
+# 更新器本体：release 下 GUI 子系统（`windows_subsystem` 只在此 bin）。
+[[bin]]
+name = "updater"
+path = "src/main.rs"
+
+# 打包工具：控制台程序，需在终端输出进度与摘要，因此**不带** GUI 子系统属性。
+# `required-features` 保证默认 `cargo build --release` 不会产生这个产物。
+[[bin]]
+name = "packer"
+path = "src/bin/packer.rs"
+required-features = ["pack"]
 
 [dependencies]
 # 微软官方零开销 Win32 绑定。feature 清单与代码调用点一一对应（PLAN §2.1）。

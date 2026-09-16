@@ -82,7 +82,7 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--gui-title` | string | 自动自适应 | 自定义 GUI 窗口标题（优先于系统自适应标题） |
 | `--debug-console` | bool | false | 调试：`AttachConsole(ATTACH_PARENT_PROCESS)` |
 | `--help` / `-h` | bool | — | 打印用法，退出码 0 |
-| `--version` | bool | — | 打印版本 + 内嵌公钥指纹，退出码 0 |
+| `--version` | bool | — | 打印版本 + 内嵌公钥指纹，退出码 0。**2026-09-16 起追加构建身份**（见下） |
 | `--worker` | bool | false | **内部**：影子工作进程（一次性标记） |
 | `--elevated-worker` | bool | false | **内部**：由 `--elevate` 派生（一次性标记） |
 | `--watchdog` | bool | false | **内部**：恢复看门狗 |
@@ -90,6 +90,21 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--watch-image` | string | "" | **内部**：Worker 的预期映像路径（PID 重用核验） |
 
 `--help` / `--version` 优先级最高：出现即执行并退出，不做任何其它初始化。
+
+**`--version` 的输出格式（2026-09-16 起）**——解析方按"**前缀 + 可选追加**"处理：
+
+```text
+updater-rs 1.0.0 (unsigned-build) build=7dedc67 built=2026-09-16T05:32:26Z target=x86_64-pc-windows-msvc profile=release features=restart-manager
+└────────────── 前缀（既有格式，逐字节不变）──────────────┘ └──────────────── 追加：构建身份 ────────────────┘
+```
+
+- **前缀不变**：`updater-rs <版本> (unsigned-build)` 或 `updater-rs <版本> pubkey:<指纹>`；
+- **追加字段**：`build=`（git 短哈希，脏工作区带 `-dirty`，取不到为 `unknown`）、`built=`（构建时间，UTC ISO 8601）、
+  `target=`、`profile=`、`features=`（逗号分隔，无则 `none`）；
+- **为什么加**：同一版本号会有无数次不同构建，而本项目 release 构建**不可复现**；
+  没有它就无法回答"现场跑的是哪一次构建"。**日志首行也带** `build=<哈希> <时间>`（影子 Worker 在
+  `%LOCALAPPDATA%` 里跑，日志是唯一线索）；
+- **不要**把整行当固定串匹配：只解析前缀，其余按 `key=value` 取用。
 
 **已删除的参数（不要再传）**：`--pid-image`（只改善日志措辞，无行为差异）、`--splash`（需 PNG 解码器 + 消息循环，价值与 `--progress-file` 重叠）、`--rm-shutdown`（会静默关闭用户程序）。
 
@@ -213,6 +228,8 @@ settings.json
 | **进度可见** | 无 | `--progress-file`；应用侧可据此显示"正在更新" | ✅ 加强 |
 | **并发锁** | `Local\` 命名互斥量（按会话隔离） | `<target>/.updater/lock` 独占锁文件（跨会话有效） | ✅ 加强 |
 | **打包要求** | 只需普通 zip | 需额外包含 `updater.manifest`（可选但**强烈建议**，否则失去降级防护与逐文件哈希自检） | ⚠️ 流程变化 |
+| **`--version` 输出** | 仅版本串 | 前缀不变，**追加** `build=… built=… target=… profile=… features=…`（2026-09-16） | ⚠️ 追加（解析方按"前缀 + 可选追加"处理） |
+| **日志首行** | — | 追加 `build=<git> <构建时间>`（2026-09-16） | ✅ 追加（只增字段） |
 
 ⚠️ **所有标 ⚠️ 的语义/布局/流程变化**需在发布说明中显式告知调用方，并建立回归测试保证可预期。其中最需要提醒的是"安装目录新增隐藏目录"：
 

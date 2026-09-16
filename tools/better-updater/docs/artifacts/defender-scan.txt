@@ -1,5 +1,5 @@
 # Defender 扫描记录（由 scripts/verify.ps1 生成）
-# 生成时间: 2026-09-15 19:09:27 +08:00
+# 生成时间: 2026-09-16 13:40:04 +08:00
 # 目标: C:\Home\Projects\mytools\tools\better-updater\target\release\updater.exe
 # 说明: 本步骤只归档误报状态，不阻断构建（DoD 第 6 条的归档要求）。
 

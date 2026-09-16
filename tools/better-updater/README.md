@@ -17,10 +17,11 @@ updater.exe --pid <PID> --zip <UPDATE.zip> --target <INSTALL_DIR> --launch <APP.
 
 | 项 | 状态 |
 | :--- | :--- |
-| 测试 | **80 项全绿**（`cargo test --all-targets`）：单元 28 + 能力 20 + 包防护 9 + 崩溃窗口 2 + e2e 12 + 不变量 9 |
-| `clippy -D warnings` | 0 警告 |
+| 测试 | **114 项全绿**：默认 feature 95 项（单元 34 + 能力 20 + 包防护 9 + 崩溃窗口 2 + e2e 13 + 不变量 9 + 自身修复 8）+ `--features pack` 19 项（packer 单元 12 + 集成 7） |
+| `clippy -D warnings` | 0 警告（两轮：默认 feature 与 `--features pack`） |
 | 直接依赖 | 7（`windows-sys` + 6 个第三方） |
-| 体积 | 约 422 KB（预算 250–750 KB） |
+| 体积 | `updater.exe` 468.5 KB（预算 250–750 KB）；`packer.exe` 366.5 KB（开发期工具，不计入发布预算） |
+| 构建身份 | `--version` 与**日志首行**都带 `build=<git 短哈希> built=<构建时间> target=… profile=… features=…`（同一版本号的不同构建可区分） |
 | 崩溃窗口真实终止验证 | ✅ 已完成（`tests/crash_windows.rs`，真实强杀非模拟） |
 | 个人版实时防护验证 | ✅ **火绒 6.0.11.3** 实时防护+系统加固开启下 9/9 PASS，隔离区零新增（`scripts/check_av.ps1`） |
 | 企业级 EDR 验证 | ⏸ 未验证（本机只有个人版杀软，不可替代） |
@@ -34,8 +35,11 @@ updater.exe --pid <PID> --zip <UPDATE.zip> --target <INSTALL_DIR> --launch <APP.
 
 ## 快速开始
 
+> **两个二进制在 `target\dist\`**（由 `scripts/build.ps1` 产出）：
+> `updater.exe` 随应用放进安装目录；`packer.exe` 留在发布机上打更新包。
+
 - **要接进自己的应用** → [`docs/USAGE.md`](docs/USAGE.md)（含 7 项集成契约、参数表、退出码、排障）
-- **要发版** → `docs/USAGE.md` §2.1 + `scripts/gen_manifest.ps1`
+- **要发版** → `docs/USAGE.md` §2.1（用 `target\dist\packer.exe` 打更新包）
 - **想知道与旧版（lite）差在哪** → [`docs/updater-vs-better-updater-reliability-recheck.md`](docs/updater-vs-better-updater-reliability-recheck.md)
 
 最小集成（Dart / Flutter）：
@@ -61,18 +65,28 @@ exit(0);
 ## 构建与验证
 
 ```powershell
-cargo build --release                        # 产物 target\release\updater.exe
-pwsh -File scripts/verify.ps1                # 全量机械守卫（构建 + 测试 + clippy + 分层 + 体积 + Defender 归档）
-cargo test --all-targets                     # 仅测试
+pwsh -File scripts/build.ps1                  # 构建两个产物 → target\dist\{updater.exe, packer.exe}
+cargo build --release --features pack         # 等价的一条 cargo 命令（两个产物都出，落在 target\release\）
+pwsh -File scripts/verify.ps1                 # 全量机械守卫（构建 + 测试 + clippy + 分层 + 体积与形态 + 可见性 + Defender/AV 归档）
+cargo test --all-targets                      # 仅测试（默认 feature）
+cargo test --all-targets --features pack      # 含 packer 的单测/集成/与旧脚本的等价性守卫
 ```
+
+> 两个产物都从**同一个 crate** 出来：`updater.exe`（发布产物）与 `packer.exe`（开发期打包工具，
+> `--features pack`）。两者**共用一份实现**（lib），所以 `updater.exe` 在带不带 `pack` feature 时
+> **大小完全相同**——写侧只被 `packer.exe` 引用，未被引用的代码由 LTO 丢弃；兜住这一点的机械守卫是
+> `check_size.ps1` 的形态守卫（断言产物内无 packer 独有字面量）。细节见 `docs/PLAN.md` §3.2 与
+> `docs/PROPOSAL-pack-subcommand.md` §9.5。
 
 `scripts/` 一览：
 
 | 脚本 | 作用 |
 | :--- | :--- |
 | `verify.ps1` | **单一入口**：CI 与本地跑的是同一个脚本，保证"本地绿 = CI 绿" |
+| `build.ps1` | 只产出两个二进制到 `target\dist\`（含大小与 sha256）；正确性交给 `verify.ps1` |
 | `check_tiers.ps1` | 分层守卫（Tier 声明 / Tier 0 禁用构造 / 依赖数 = 7） |
-| `check_size.ps1` | 体积守卫 + 依赖与体积快照归档 |
+| `check_size.ps1` | 体积守卫 + **形态守卫**（发布产物不得含 packer 写侧）+ 依赖与体积快照归档 |
+| `probe_console_visibility.py` | 控制台可见性守卫（P1-5） |
 | `check_av.ps1` | **杀软干扰验证**：在实时防护下跑"最可疑形态"（影子 Worker + 自更新）并归档证据 |
 | `gen_manifest.ps1` | 生成 `updater.manifest`（版本防护与哈希自检的前提） |
 | `release_pack.ps1` | 打包流水线：生成清单 → 压缩 → **产物自检** → 输出 sha256 |

@@ -1,0 +1,185 @@
+# cargo test --all-targets --features pack 结果（由 scripts/verify.ps1 生成）
+# 生成时间: 2026-09-16 13:39:57 +08:00
+
+   Compiling updater v1.0.0 (C:\Home\Projects\mytools\tools\better-updater)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.21s
+     Running unittests src\lib.rs (target\debug\deps\updater-7125fb43320d5399.exe)
+
+running 46 tests
+test buildinfo::tests::built_at_is_iso8601_utc_shaped ... ok
+test cli::tests::quote_specials ... ok
+test keep::tests::comments_and_case ... ok
+test buildinfo::tests::iso8601_known_epochs ... ok
+test cli::tests::quote_plain ... ok
+test cli::tests::quote_arg_roundtrip ... ok
+test keep::tests::dir_trailing_slash ... ok
+test buildinfo::tests::suffix_carries_every_key ... ok
+test buildinfo::tests::injected_fields_are_usable ... ok
+test keep::tests::glob_rules ... ok
+test keep::tests::literal_file_or_prefix ... ok
+test keep::tests::reserved_names ... ok
+test packer::closure::tests::closure_classification ... ok
+test packer::closure::tests::custom_patterns_replace_the_defaults ... ok
+test packer::closure::tests::order_puts_the_closure_at_the_tail ... ok
+test packer::closure::tests::tail_check_catches_mutation ... ok
+test packer::tests::build_info_carries_identity ... ok
+test packer::tests::arg_parsing_and_validation ... ok
+test packer::walk::tests::excludes_reserved_and_config_only ... ok
+test state::tests::state_roundtrip ... ok
+test strings::tests::test_gui_title_derives_app_name ... ok
+test strings::tests::test_locale_fallback ... ok
+test strings::tests::test_repair_failed_message_carries_context ... ok
+test verify::crypto::tests::hex_sig_parse ... ok
+test version::tests::numeric_compare ... ok
+test strings::tests::test_strings_validity ... ok
+test version::tests::prerelease_ordering ... ok
+test version::tests::rejected_forms ... ok
+test win32::path_guard::tests::normalize_resolves_dots_and_case ... ok
+test win32::path_guard::tests::normalize_trims_trailing_dots_and_spaces ... ok
+test win32::path_guard::tests::under_checks ... ok
+test win32::path_guard::tests::verbatim_prefixes ... ok
+test journal::tests::parse_unknown_version_rejected ... ok
+test journal::tests::parse_truncated_tail_tolerated ... ok
+test journal::tests::target_mismatch_rejected_but_case_equal_ok ... ok
+test packer::manifest::tests::manifest_roundtrips_through_the_parser ... ok
+test journal::tests::parse_ok_and_stages ... ok
+test pkg::handle::tests::share_read_only_excludes_writers_and_deleters ... ok
+test packer::tests::version_mismatch_and_signing_are_rejected_before_touching_disk ... ok
+test packer::manifest::tests::manifest_lines_and_order ... ok
+test gc::tests::gc_keeps_newest_previous ... ok
+test gc::tests::gc_ttl_zero_purges_non_newest ... ok
+test gc::tests::gc_skips_referenced_generation ... ok
+test packer::zip_write::tests::writes_and_reads_back_with_streamed_sizes ... ok
+test packer::walk::tests::walk_skips_excluded_and_detects_empty_dirs ... ok
+test verify::sha256::tests::hash_file_matches_one_shot ... ok
+
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\bin\packer.rs (target\debug\deps\packer-cc83adf2fef02a89.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\updater-dd38f7c9216ebf33.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\capabilities.rs (target\debug\deps\capabilities-db3c88a5196d39c4.exe)
+
+running 20 tests
+test lockfile_no_stale_and_delete_on_close ... ok
+test previous_meta_from_authoritative_new ... ok
+test rollback_previous_none ... ok
+test help_and_version ... ok
+test removed_params_rejected ... ok
+test stale_gen_gc ... ok
+test manifest_missing_compat ... ok
+test gui_options_accepted ... ok
+test require_empty_file_ok ... ok
+test same_version_warn ... ok
+test progress_file_written_atomically ... ok
+test previous_ttl_zero_retracts ... ok
+test previous_retained_with_meta ... ok
+test downgrade_allowed ... ok
+test min_version_rejected ... ok
+test single_internal_dir_steadystate_and_hidden_attr ... ok
+test state_missing_first_install ... ok
+test runtime_dir_location ... ok
+test temp_file_not_hidden ... ok
+test exit_codes_matrix ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.57s
+
+     Running tests\crash_windows.rs (target\debug\deps\crash_windows-e0815b26a2da9229.exe)
+
+running 2 tests
+test crash_window_action_done_record_lost ... ok
+test crash_after_committed_before_launch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+
+     Running tests\e2e.rs (target\debug\deps\e2e-0d47aca4efeb17c4.exe)
+
+running 13 tests
+
+正在 Ping 127.0.0.1 具有 32 字节的数据:
+来自 127.0.0.1 的回复: 字节=32 时间<1ms TTL=64
+test watchdog_rolls_back_applying ... ok
+
+正在 Ping 127.0.0.1 具有 32 字节的数据:
+来自 127.0.0.1 的回复: 字节=32 时间<1ms TTL=64
+来自 127.0.0.1 的回复: 字节=32 时间<1ms TTL=64
+test watchdog_finalizes_committed ... ok
+test bad_zip_rejected_zero_touch ... ok
+test unknown_arg_rejected_exit_2 ... ok
+test recover_from_committed_journal_finalizes ... ok
+test recover_from_applying_journal_rolls_back ... ok
+test rollback_previous_reverts_to_retained_generation ... ok
+test dry_run_zero_touch ... ok
+test full_update_flow_with_manifest ... ok
+test reserved_names_and_keep_file_protected ... ok
+test wait_timeout_logs_the_sync_wait_hint_and_derives_the_gui_title ... ok
+test downgrade_rejected ... ok
+test self_update_in_target_via_shadow_worker ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.76s
+
+     Running tests\invariants.rs (target\debug\deps\invariants-841ed1e19a10532a.exe)
+
+running 9 tests
+test inv_I2_no_rollback_after_commit ... ok
+test inv_I3_journal_after_backup ... ok
+test inv_I4_gen_scoped_recovery ... ok
+test inv_I1_rollback_before_commit ... ok
+test inv_I6_no_journal_means_determined ... ok
+test inv_I10_rollback_idempotent ... ok
+test inv_I7_same_volume ... ok
+test inv_I5_tier2_isolated ... ok
+test inv_I9_reserved_names ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests\packer.rs (target\debug\deps\packer-7c7ec157e0cd43da.exe)
+
+running 7 tests
+test bad_arguments_exit_2_with_usage ... ok
+test build_info_reports_identity ... ok
+test bootclosure_override_changes_the_tail ... ok
+test summary_records_the_packer_identity_without_touching_the_manifest ... ok
+test packer_output_is_accepted_by_the_updater ... ok
+test overwrite_requires_force ... ok
+test equivalent_to_the_legacy_powershell_pipeline ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+
+     Running tests\pkg_guards.rs (target\debug\deps\pkg_guards-064e0bd7619d9a85.exe)
+
+running 9 tests
+test long_path ... ok
+test duplicate_entry_reject ... ok
+test join_escape_blocked ... ok
+test zip_handle_pinned ... ok
+test package_empty_dir_created ... ok
+test zip_method_reject ... ok
+test zipbomb_declared ... ok
+test zipbomb_legit_high_ratio ... ok
+test zipbomb_ratio ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.86s
+
+     Running tests\self_repair.rs (target\debug\deps\self_repair-4d0441b78dc3398f.exe)
+
+running 8 tests
+test help_still_wins_and_documents_the_repair_entry ... ok
+test no_args_without_journal_is_a_silent_noop ... ok
+test explicit_target_takes_precedence_over_own_directory ... ok
+test silent_suppresses_only_the_dialog_not_the_repair ... ok
+test no_args_rolls_back_an_interrupted_site ... ok
+test explicit_recover_without_target_uses_own_directory ... ok
+test foreign_journal_is_rejected_and_the_site_is_preserved ... ok
+test a_malformed_update_call_is_not_treated_as_self_repair ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s

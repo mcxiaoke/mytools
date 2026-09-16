@@ -98,7 +98,9 @@ REPAIR (no arguments needed - useful when the app itself no longer starts):
 
 REQUIRED (normal/dry-run): --zip --target --launch --target
 OPTIONS:
-  --pid <n>                 wait for this process to exit (after all prechecks)
+  --pid <n>                 wait for this process to exit (after all prechecks).
+                            The host must exit immediately after launching the
+                            updater - never wait for the updater's exit code
   --sig <FILE>              signature file (default: <zip>.sig)
   --args <RAW>              raw argument fragment appended to the launched app
   --keep <RULE>             extra keep rule (repeatable, glob supported)
@@ -130,19 +132,24 @@ OPTIONS:
                             unattended caller can never block on it
   --gui                     show native Win32 progress dialog
   --gui-title <TITLE>       custom GUI window title
+                            (default: [app name from --launch] - Updating...)
   --debug-console           attach to parent console for debugging
   --help / --version
 ";
 
+/// `--version` 输出：**既有前缀逐字节不变**，其后追加构建身份（`--version` 的契约是
+/// "前缀 + 可追加"，见 `CONTRACT.md` §2.1）。追加信息解决的是"同一版本号的哪一次构建"
+/// ——本项目 release 构建不可复现，没有它就无法从日志追溯到具体构建。
 pub fn version_line() -> String {
-    if crypto::signing_enabled() {
+    let base = if crypto::signing_enabled() {
         match crypto::fingerprint() {
             Some(fp) => format!("updater-rs {} pubkey:{}", VERSION, fp),
             None => format!("updater-rs {}", VERSION),
         }
     } else {
         format!("updater-rs {} (unsigned-build)", VERSION)
-    }
+    };
+    format!("{} {}", base, crate::buildinfo::suffix())
 }
 
 /// MSVCRT 规则的命令行参数引用：含空格/Tab/引号/空串时加引号；

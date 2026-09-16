@@ -54,11 +54,13 @@
 | **自动更新自身** | `updater.exe` 位于安装目录内时，通过影子 Worker 接棒，使 `target\updater.exe` 可随包更新（旧版只能无条件跳过自己） |
 | **占用者诊断** | 遇文件占用时用 Restart Manager **只读**列出占用者进程与 PID 写入日志（**不关闭任何进程**） |
 | **进度可见** | `--progress-file` 输出阶段与百分比，供宿主轮询显示 |
-| **原生进度窗** | `--gui` / `--gui-title`：跑马灯 → 平滑百分比，中英文自适应，独立 UI 线程防假死 |
+| **原生进度窗** | `--gui` / `--gui-title`：跑马灯 → 平滑百分比，中英文自适应，独立 UI 线程防假死。未传 `--gui-title` 时标题自动带应用标识（`<--launch 入口名> - 正在更新...`） |
 | **单句柄锁定** | 预检与事务锁定同一文件对象（`FILE_SHARE_READ`），从根上消灭"验签对象 ≠ 解压对象" |
 | **包防护加强** | 压缩方法约束（仅 Store/Deflate）、加密条目拒绝、大小写不敏感重复条目拒绝、Zip Slip、zip bomb 双层、Junction 越界识破 |
 | **跨会话并发锁** | `.updater\lock` 文件独占锁（旧版为按会话隔离的命名互斥量），并带 10s 容差轮询 |
-| **运维排障** | `--recover`、`--debug-console`、`--strict-path-check`、`--skip-hash-verify`、结构化 `END:` 日志行 |
+| **运维排障** | `--recover`、`--debug-console`、`--strict-path-check`、`--skip-hash-verify`、结构化 `END:` 日志行；等待 `--pid` 超时时给出"宿主是否同步等待了退出码"的 `hint:`；从终端直启 release 产物时 `--help` / `--version` / `--dry-run` 与参数错误**自动附加父控制台**（被重定向时语义不变） |
+| **打包工具（开发期）** | `packer`（`cargo run --release --features pack --bin packer -- --stage … --version … --out …`）：清单 → 压缩（启动闭包连续收尾）→ 回读自检 → 输出 sha256。**不依赖 PowerShell**，任意语言的 CI 都能调；**不进更新器发布产物**（`updater.exe` 大小与行为完全不受影响）。`-V` / `--build-info` 打印它自身的构建身份 |
+| **构建身份（可追溯）** | `updater.exe --version` 在**既有前缀之后追加** `build=<git 短哈希> built=<构建时间> target=… profile=… features=…`；**日志首行**同样带 `build=<哈希> <时间>`。同一版本号的任何一次构建从此都能区分（本项目 release 构建不可复现）。⚠️ 解析方请按"**前缀 + 可选追加**"处理（`CONTRACT.md` §2.1） |
 
 ---
 

@@ -23,6 +23,26 @@ Write-Host "[INFO] updater.exe = $kb KB ($size bytes)"
 if ($size -gt 750KB) { throw "体积超上限: $kb KB（检查是否误开 zip 的 deflate/zopfli）" }
 if ($size -lt 250KB) { throw "体积低于下限: $kb KB（检查 feature 是否被误裁）" }
 
+# 形态守卫（PROPOSAL-pack-subcommand.md D1）：发布产物**不得**包含 packer 的写侧。
+# 为什么需要：写 zip 的代码在 release profile 下约 +54 KB（同 crate 只读 218112 B vs 读+写 271872 B），
+# 而打包是**构建期**能力，没有理由让每个最终用户承担。
+# 判据用 packer CLI 独有的参数字面量：updater.exe 的 CLI 面根本不存在这两个开关，
+# 一旦它们出现在产物里，说明写侧被链了进来（例如有人把 pack 加进 default features 并从主链调用）。
+$bytes = [IO.File]::ReadAllBytes($exe)
+$ascii = [Text.Encoding]::ASCII.GetString($bytes)
+foreach ($marker in @('--min-upgradable-from', '--app-version')) {
+    if ($ascii.Contains($marker)) {
+        throw "发布产物内出现 packer 独有字面量 '$marker' —— 写侧被链进了 updater.exe（体积与攻击面双重放大）。检查 Cargo.toml 的 default features 与调用点。"
+    }
+}
+$packer = Join-Path $root "target\release\packer.exe"
+$packerNote = if (Test-Path $packer) {
+    "$([math]::Round((Get-Item $packer).Length / 1KB, 1)) KB（开发期工具，不计入发布预算）"
+} else {
+    "(未构建；cargo build --release --features pack --bin packer)"
+}
+Write-Host "[OK] 形态守卫：发布产物不含 packer 写侧（packer.exe $packerNote）"
+
 $art = Join-Path $root "docs\artifacts"
 New-Item -ItemType Directory -Force -Path $art | Out-Null
 
@@ -35,6 +55,7 @@ size_bytes = $size
 size_kb    = $kb
 threshold_min_kb = 250
 threshold_max_kb = 750
+packer_exe = $packerNote
 measured_at = $stamp
 "@
 

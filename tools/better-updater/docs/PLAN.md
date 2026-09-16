@@ -168,7 +168,17 @@ incremental = false
 
 ```text
 src/                     ← 括号内为 Tier；Tier 0 产品代码合计 ≤ 2600 行（终态）／≤ 1200 行（首发）
+├── lib.rs               # [T0] 库根：模块声明（供 updater 与 packer 两个 bin 共用，见 §3.2）
 ├── main.rs              # [T0] 启动序列编排（唯一流程）、GUI 声明、退出码、END 行
+├── buildinfo.rs         # [T1] 构建身份（git 短哈希 / 构建时间 / target / profile / features）
+├── bin/
+│   └── packer.rs        # [T1] 打包工具 CLI（`--features pack`，控制台程序；**不进发布产物**）
+├── packer/              # [T1] 打包实现（feature 门控，零 Win32 依赖 ⇒ 可跨平台构建）
+│   ├── mod.rs           #      编排：清单 → 顺序 → 压缩 → 回读自检 → 摘要；参数解析与 HELP
+│   ├── walk.rs          #      遍历 stage（排除 .updater\* 与 .bootclosure）、空目录判定
+│   ├── manifest.rs      #      生成 updater.manifest（与 pkg::manifest 的解析端成对）
+│   ├── closure.rs       #      启动闭包判定 + 条目排序 + 回读自检的尾部断言
+│   └── zip_write.rs     #      流式写 zip（仅 Deflate）
 ├── cli.rs               # [T1] pico-args 解析、路径绝对化与规范化、argv 重建与 quote_arg
 ├── journal.rs           # [T0] Journal 权威/建议集写入、fsync、三层恢复统一入口 recover()
 ├── restore.rs           # [T0] 从源目录还原的唯一例程（被回滚与 --rollback-previous 共同调用）
@@ -217,7 +227,47 @@ src/                     ← 括号内为 Tier；Tier 0 产品代码合计 ≤ 2
 
 **这条把 §1.4 的规模预算从"人工约定"变成"机械守卫"**——这是让复杂度不失控的唯一切实手段。
 
-### 3.2 日志规范
+### 3.2 crate 结构与 `packer` 的位置（2026-09-16 新增）
+
+同一 crate 内两个 bin + 一个 lib：
+
+| 目标 | 属性 | 说明 |
+| :--- | :--- | :--- |
+| `updater`（lib） | 无子系统属性 | 全部模块的唯一实现。`pub` 只是"给两个 bin 看得见"（内部 crate，不发布） |
+| `updater`（bin） | `windows_subsystem = "windows"`（release） | 更新器本体，启动序列编排 |
+| `packer`（bin） | 控制台程序；`required-features = ["pack"]` | 开发期打包工具，必须在终端输出 |
+
+三条约束：
+
+1. **`packer` 不进发布产物**：`pack` feature 刻意不进 `default`；`check_size.ps1` 另有一条形态守卫
+   （断言 `updater.exe` 内不存在 packer 独有字面量）。理由是体积：zip 写侧在 release profile 下约 **+54 KB**，
+   而它是构建期能力，没有理由让每个最终用户承担（`docs/PROPOSAL-pack-subcommand.md` §3.2 实测）。
+   - **实测补充（2026-09-16）**：带 `--features pack` 构建出的 `updater.exe` 与默认 feature
+     **大小完全相同**（479744 B）——写侧只被 `packer.exe` 引用，未被引用的代码由 LTO 丢弃；
+     那 +54 KB 是 `packer.exe` 自己的体积，**不构成对更新器的税**。
+   - **构建入口**：`cargo build --release --features pack` **一条命令即产出两个 bin**；
+     `scripts/build.ps1` 只是把输出收集到 `target\dist\` 并打印大小/sha256（内部同样只有这一条命令）。
+     `verify.ps1` 复用该脚本。**兜住"写侧不进 updater.exe"的是形态守卫，不是构建顺序**——
+     另需注意本项目的 release 构建**本身不可复现**（内容与 feature 不变、强制重编，sha256 仍不同），
+     因此"字节"从不作为判据，唯一稳定的量是大小。
+2. **`packer` 保持零 Win32 依赖**：它要能在任意构建容器里跑（当前只保证 Windows 可用，但代码可移植）。
+   它复用更新器的清单格式、zip 合法性判定（`pkg::zip_read::scan` 是泛型的）、保留名规则与流式哈希——
+   因此**没有第二套实现**（`SCOPE.md` §4.3）。
+3. **lib 拆分的唯一理由**就是第 2 条：把模块暴露给第二个 bin。`updater` 的行为不受影响
+   （`main.rs` 只剩入口与编排）。
+
+**构建身份（2026-09-16 新增）**：根目录的 `build.rs` 注入 git 短哈希（脏则 `-dirty`）/ 构建时间戳 /
+target / profile / features，由 `src/buildinfo.rs`（T1）在 `--version` 与**日志首行**呈现。
+两条设计约束：
+
+- **构建期脚本不进运行时**：`build.rs` 在 crate 根（不在 `src/`），**不参与**分层扫描；零依赖
+  （只用 `std::process::Command` 调 git），**永不失败**（取不到就写 `unknown`，绝不阻断构建）；
+- **时间格式化放在 lib 里**（`buildinfo::iso8601_utc`）而不是 build.rs：构建脚本里的 `#[cfg(test)]`
+  永远不会执行，放那里就等于没有测试。现在它有已知纪元点与闰年边界的单测。
+
+设置 `SOURCE_DATE_EPOCH` 时以它作为构建时间，于是"同一提交 + 同一 epoch"可得到相同的身份字段。
+
+### 3.3 日志规范
 
 | 项 | 规范 |
 | :--- | :--- |
@@ -244,6 +294,7 @@ src/                     ← 括号内为 Tier；Tier 0 产品代码合计 ≤ 2
 | **6** | **看门狗（L2）** + `--wait-derived` 实验开关 | L2 恢复、提交后崩溃窗口、`watchdog_pid_reuse` 通过 | **是**——它是"防 updater 自身被杀"的加固，不是可用性前提 | ✅ **已完成**（延后已解除，2026-09-14 21:05）；连同 `--rollback-previous` 一并落地 |
 | **7** | `authenticode`（可选 feature） | 三条用例通过 | **是**——需先有代码签名证书 | ⏸ **搁置**（无证书，条件不具备；`--verify-authenticode` 保持 fail-closed 拒绝） |
 | **8** | 端到端、体积与误报归档、灰度比对、发布说明 | §5 DoD 全部满足 | 否 | ⏳ 进行中（CI 接线 / `docs/artifacts/` 归档 / 调用方文档 / 测试补齐） |
+| **9** | **开发期打包工具 `packer`**（§3.2；`docs/PROPOSAL-pack-subcommand.md` 的 D1–D4） | packer 产出的包被更新器接受并跑通真实更新；与旧脚本语义等价（机械守卫）；发布产物不含写侧（形态守卫） | 否（它解的是"CI 不能再依赖 PowerShell"） | ✅ **已完成**（2026-09-16） |
 
 **关于"可延后"的判定原则**：延后项的共同特征是**其失效不会导致目录损坏**——看门狗缺失时，Worker 被杀只会让更新停在"未提交"状态，由 L3 在下次启动收敛；`authenticode` 缺失时，包签名仍是完整的安全边界。反之，Phase 3/4 的任何一项都不可延后，因为它们直接决定"失败是否可回滚"。
 

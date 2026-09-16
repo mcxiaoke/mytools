@@ -73,8 +73,15 @@
 5. **`updater.exe` 的部署位置**（2026-09-15 决策）：**随应用一起放进安装目录（方案 A）**。必须同时接受两个前提 —— ① 运行期目录（`%LOCALAPPDATA%` 或 `%TEMP%`）必须在**本地固定盘**且可写，否则更新**安全中止**（退出 2，目录零改动）；② 该形态会走影子 Worker 路径（自我复制到 `%LOCALAPPDATA%` + detached 派生），是杀软视角下最可疑的形态，已在个人版实时防护（火绒）实测通过，**企业级 EDR 仍待验证**。详见 `USAGE.md` §8.2、`RELEASE-READINESS.md` P1-4。
 6. **发布说明必须声明签名状态**（2026-09-15 决策）：本期**不启用包签名**（`RELEASE_PUBLIC_KEYS` 为空，`unsigned-build`），**安全边界为 0**，更新包的真伪仅依赖 HTTPS 通道；`--sha256` 只提供完整性、不可替代真实性。启用时必须走 `DESIGN.md` §6.1 的密钥轮换流程（**不得直接换钥**，否则所有旧客户端永久失联）。
 7. **打包必须遵守启动闭包顺序规则**（2026-09-16 新增）：启动闭包（根目录直系文件 + `data/*.so`/`data/*.dat`，
-   可由 `.bootclosure` 覆盖）必须**连续排在 zip 末尾**。`scripts/release_pack.ps1` 已实现该顺序并带机械守卫。
+   可由 `.bootclosure` 覆盖）必须**连续排在 zip 末尾**。
    违反的后果是"掉电后应用可能起不来"，而那是 L3 唯一还能救回来的场景。`USAGE.md` §13.3
+   - **实现现状（2026-09-16 起）**：`packer`（`cargo run --release --features pack --bin packer`）是**目标实现**；
+     `scripts/release_pack.ps1` 是**过渡期参照物**。两者由**等价性测试**守住
+     （`tests/packer.rs`：同一 stage 打包后条目集合与清单内容必须一致），因此并存期间不会漂移。
+   - **脚本退役条件**：`packer` 在**真实项目**（jigsawpuzzle 迁移）上打出包并跑通一次实际更新之后，
+     删除两个 `.ps1`，并同步 `USAGE.md` / `MANUAL-VERIFICATION.md` 里的引用。
+   - **`packer` 不是更新器的运行期部件**：由 `pack` feature 门控，不进发布产物，
+     也不出现在 `updater.exe` 的 CLI 面上（`PLAN.md` §3.2）。
 
 ---
 

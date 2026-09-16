@@ -39,6 +39,9 @@ function New-Sandbox([string]$Root) {
     Set-Content "$Root\stage\version.txt" "1.1.0" -NoNewline
 }
 # 打包（总是先写清单再压缩）
+# 目标实现（不依赖 PowerShell；等价性由 tests/packer.rs 守住）：
+#   cargo run --release --features pack --bin packer -- --stage "$Root\stage" --version 1.1.0 --out "$Root\update.zip" --force
+# 过渡期沿用脚本（stage 含 .bootclosure 时脚本会因清单/包内容不一致而拒绝出包，见 USAGE §2.1）：
 function New-Pkg([string]$Root) {
     & "C:\Home\Projects\mytools\tools\better-updater\scripts\release_pack.ps1" `
         -Stage "$Root\stage" -Version "1.1.0" -Out "$Root\update.zip" -Force | Out-Null
@@ -393,8 +396,39 @@ Copy-Item "$repo\tools\better-updater\.github\workflows\ci.yml" `
 # 提交 push 后，在 Actions 页面确认 workflow 跑绿，并下载 better-updater-docs-artifacts
 ```
 
-**预期**：`windows-latest` 上 `scripts/verify.ps1` 全绿；`docs/artifacts/` 里有 5 个快照文件。  
+**预期**：`windows-latest` 上 `scripts/verify.ps1` 全绿；`docs/artifacts/` 里有 6 个快照文件
+（`test-summary.txt`、`size.txt`、`deps.json`、`defender-scan.txt`、`console-visibility.txt`、`av-scan.txt`）。  
 `-RequireActiveAv` **不要**加进 CI（GitHub runner 没有实时防护，会导致空跑或失败）。
+
+---
+
+## 7A. 控制台可见性（1 项，**已自动化**，2026-09-16 新增）
+
+这一条**不需要人工判读**（判定是机械的），但它必须**从有真实控制台的终端**发起 —— 所以既进不了
+`cargo test`（测试总要捕获 stdio），也不适合放到 CLI 里做（CI 未必有控制台）。
+
+```powershell
+cd <项目根>
+cargo build --release
+python scripts\probe_console_visibility.py            # 或 py -3
+```
+
+**它做什么**：用 `close_fds=True` 拉起 `target\release\updater.exe`（Windows 上等价于
+"子进程无继承 std 句柄"，即 cmd / PowerShell 直启 GUI 子系统的形态），然后
+`ReadConsoleOutputCharacterW` **回读控制台屏幕缓冲区**，逐用例判定特征串是否新出现。
+
+**预期**：6/6 PASS，退出码 0。
+
+| 用例 | 为什么要它 |
+| :--- | :--- |
+| `--help` / `--version` 可见 | P1-5 的原始症状：release 下敲 `--help` 屏幕空白 |
+| 未知参数 / 漏 `--target` 的错误可见 | 参数错误发生在日志初始化之前，**没有日志文件可查**，只能靠控制台 |
+| `--dry-run` 被拒原因可见 | `--dry-run` 是排障入口，被拒却不说话等于入口不存在 |
+| `--dry-run` 计划清单可见 | 回归点：修复不得破坏"能重定向抓取"的既有契约 |
+
+**已在 `verify.ps1` 第 7 步自动执行**（`exit 1` 阻断、`exit 2` 无控制台则跳过），结果归档到
+`docs/artifacts/console-visibility.txt`。CI runner 若没有控制台，会记为 `exit=2` 跳过 —— 这不算失败，
+但要按"发布检查单"在有控制台的本机补跑一次。
 
 ---
 
@@ -425,6 +459,7 @@ Copy-Item "$repo\tools\better-updater\.github\workflows\ci.yml" `
 | 6.1 | 个人版实时防护（火绒）                             | ✅ PASS | `artifacts/av-scan.txt` |
 | 6.2 | 企业 EDR                                  | ⏸ 未验证  | 条件不具备                   |
 |  7  | CI 激活                                   |        |                         |
+| 7A | 控制台可见性（自动化探针）                           | ✅ PASS | `artifacts/console-visibility.txt` |
 
 **执行人 / 日期**：\______________
 
@@ -444,4 +479,4 @@ Copy-Item "$repo\tools\better-updater\.github\workflows\ci.yml" `
 | 长路径（>MAX_PATH）不再失败                                       | `tests/pkg_guards.rs::long_path` |
 | 自身修复入口（含"不阻塞"与"反误判"边界）                                    | `tests/self_repair.rs`           |
 | 个人版实时防护功能验证                                              | `scripts/check_av.ps1`           |
-| 打包顺序（启动闭包连续位于 zip 末尾）+ 机械守卫                              | `scripts/release_pack.ps1`（自带回读校验） |
+| 打包顺序（启动闭包连续位于 zip 末尾）+ 机械守卫                              | `packer`（`--features pack`，自带回读校验）与 `scripts/release_pack.ps1`；等价性见 `tests/packer.rs` |

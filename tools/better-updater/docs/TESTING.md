@@ -8,8 +8,10 @@
 
 ## 1. 测试矩阵
 
-> **覆盖状态（2026-09-15 18:20）**：矩阵共 **141 条**用例；已自动化 **80 条**
-> （28 单元 + 12 e2e + 9 不变量 + 20 能力 + 9 包防护 + 2 崩溃窗口），`cargo test --all-targets` 全绿、`clippy -D warnings` 0 警告。
+> **覆盖状态（2026-09-16 13:45）**：矩阵共 **141 条**用例；已自动化 **114 条**
+> —— 默认 feature 下 95 条（34 单元 + 13 e2e + 9 不变量 + 20 能力 + 9 包防护 + 2 崩溃窗口 + 8 自身修复），
+> 再加 `--features pack` 的 19 条（12 单元 + 7 集成，见 §2.2 第 8 条）。
+> `cargo test --all-targets` 与 `cargo test --all-targets --features pack` 均全绿、`clippy -D warnings` 0 警告。
 > **F 组（不变量 I1–I10）已全部覆盖**；**E 组的缩回开关与 Tier 2 隔离已覆盖**；
 > **崩溃窗口的"真实进程终止"已落地**（`tests/crash_windows.rs`，见 §5）。
 > 仍待补的是 A–D 组中依赖**交互式/并发夹具**的条目（UAC 会话、独占句柄 RM 诊断、多实例竞争、网络盘），
@@ -198,10 +200,13 @@
 
 | 脚本 | 职责 | 失败语义 |
 | :--- | :--- | :--- |
-| `scripts/verify.ps1` | 全量守卫编排：构建（含缩回开关）→ 测试 → clippy → 分层 → 体积 → Defender 归档 | 任一步失败即**就地停下**并返回非 0 |
+| `scripts/verify.ps1` | 全量守卫编排：构建（含缩回开关与 `build.ps1`）→ 测试（**默认 + `--features pack` 两轮**）→ clippy → 分层 → 体积与形态 → 控制台可见性 → Defender 归档 → AV | 任一步失败即**就地停下**并返回非 0 |
+| `scripts/build.ps1` | 只产出两个二进制（`target\dist\{updater,packer}.exe` + 大小与 sha256）；**不含守卫** | 硬失败 |
 | `scripts/check_tiers.ps1` | §2.3 分层守卫（Tier 声明 / 禁用构造 / 依赖数 / 行数 WARN） | 硬失败（行数仅 WARN） |
-| `scripts/check_size.ps1` | §2.1 体积守卫 + `docs/artifacts/` 快照归档 | 硬失败 |
-| `scripts/gen_manifest.ps1` | §4 的 `updater.manifest` 生成（打包流程，非守卫） | — |
+| `scripts/check_size.ps1` | §2.1 体积守卫 + **形态守卫**（发布产物不得含 packer 写侧）+ `docs/artifacts/` 快照归档 | 硬失败 |
+| `scripts/probe_console_visibility.py` | 控制台可见性（P1-5）：无继承 std 句柄 + 真实控制台时的输出可见性 | `1` 硬失败；`2`（无控制台）跳过 |
+| `scripts/check_av.ps1` | 杀软/EDR 干扰验证（最可疑形态的真实更新，9 条断言） | 检测到实时防护而失败即**阻断** |
+| `scripts/gen_manifest.ps1` / `release_pack.ps1` | §4 的打包流水线（**过渡期参照物**，目标实现是 `packer`；退役条件见 `SCOPE.md` §2.3 第 7 条） | — |
 
 > **CI 激活说明**：Actions **只读取仓库根目录**的 `.github/workflows/`，而本仓库是 monorepo。
 > 项目内的 `.github/workflows/ci.yml` 是**可评审的版本化定义**；要真正跑起来，需把它放到
@@ -234,7 +239,10 @@ if ($size -lt 250KB) { throw "体积低于下限: $kb KB（检查 feature 是否
 4. **E/F 两组为强制项**，未覆盖即视为构建失败——现由 `tests/invariants.rs` 与 `tests/capabilities.rs` 承担（进度见 §5）；
 5. `PLAN.md` §4.1 的**六项**实构建/实测结论已归档到 `REFERENCE.md` §1.2（5/6 通过，1 项随 Phase 7 搁置）；
 6. **禁止**引入 UPX 步骤；Defender 扫描结果归档到 `docs/artifacts/defender-scan.txt`（`SCANNED` / `UNAVAILABLE` / `SKIPPED` 三态，见该目录 README）；
-7. **分层守卫**（见 §2.3）。
+7. **分层守卫**（见 §2.3）；
+8. **packer 相关（`--features pack`）**：`cargo test --all-targets --features pack` 含 packer 的单测、
+   集成（产出包被 `updater.exe` 接受并跑通真实更新）与**与旧脚本的等价性守卫**；
+   另由 `check_size.ps1` 断言发布产物**不含** packer 写侧（`PLAN.md` §3.2 的承诺）。
 
 ### 2.3 分层守卫脚本
 
@@ -323,23 +331,28 @@ $lines -join "`n" | Set-Content -Path (Join-Path $stage 'updater.manifest') -Enc
 ```
 
 > 该脚本属**打包流程**，不是 updater 的一部分；但它是版本与降级防护生效的前提，应纳入发布检查单。
-> **已落地**为 `scripts/gen_manifest.ps1`（可直接调用，见脚本头部用法）。
+> **已落地**为 `scripts/gen_manifest.ps1`（过渡期参照物）与 **`packer`（目标实现**，
+> `cargo run --release --features pack --bin packer`；`docs/PROPOSAL-pack-subcommand.md`）。
+> 两者由 `tests/packer.rs` 的等价性用例守住不漂移；**stage 含 `.bootclosure` 时只能用 `packer`**
+> （旧脚本的清单会声明一个不入包的条目，导致其产物自检失败，见 `USAGE.md` §2.1）。
 
 ---
 
-## 5. 覆盖进度（2026-09-15 18:20）
+## 5. 覆盖进度（2026-09-16 13:45）
 
-自动化用例 **80 条**：`cargo test --all-targets` 全绿，`cargo clippy --all-targets` 0 警告。
-（原文归档见 `artifacts/test-summary.txt`）
+自动化用例 **114 条**（默认 feature 95 + `--features pack` 19）：两轮 `cargo test --all-targets` 全绿，
+`cargo clippy --all-targets` 0 警告。（原文归档见 `artifacts/test-summary.txt` 与 `artifacts/test-summary-packer.txt`）
 
 | 测试文件 | 条数 | 职责 |
 | :--- | :--- | :--- |
-| `src/**` 模块内测试 | 28 | `quote_arg` 往返、版本比较边界、keep 规则、Journal 解析/校验、路径规范化、**I8 同一文件对象**、**GC 三条规则**、**流式哈希等价性** |
-| `tests/e2e.rs` | 12 | 主流程：完整更新、`--dry-run` 零落盘、降级拒绝、L3 恢复、保留名拦截、影子自更新、看门狗接管、`--rollback-previous` |
+| `src/**` 模块内测试 | 34（默认）/ 46（含 pack） | `quote_arg` 往返、版本比较边界、keep 规则、Journal 解析/校验、路径规范化、**I8 同一文件对象**、**GC 三条规则**、**流式哈希等价性**、**双语文案与进度窗标题派生**、**构建身份（注入字段可用性 / ISO 8601 已知纪元与闰年 / 追加片段完整性）**、**packer**（闭包判定/排序/排除规则/清单往返/流式写 zip/参数校验/身份输出） |
+| `tests/e2e.rs` | 13 | 主流程：完整更新、`--dry-run` 零落盘、降级拒绝、L3 恢复、保留名拦截、影子自更新、看门狗接管、`--rollback-previous`、**等待 PID 超时的排障提示与标题接线** |
 | `tests/invariants.rs` | 9 | **F 组 I1–I7 / I9 / I10**（I8 在模块内测试） |
 | `tests/capabilities.rs` | 20 | **E 组**：缩回开关、Tier 2 隔离、版本防护矩阵、GC、锁、布局与属性、进度、退出码、CLI 契约、GUI 选项 |
 | `tests/pkg_guards.rs` | 9 | **C 组**：重复条目、压缩方法、zip bomb（比值/总量/合法高比值反向守卫）、Junction 越界、长路径、空目录创建、单句柄锁定（外部可观察） |
 | `tests/crash_windows.rs` | 2 | **A 组崩溃窗口**：`ReplaceFileW` 成功后 / `COMMITTED` 后**真实进程终止** |
+| `tests/self_repair.rs` | 8 | 自身修复入口：无参数自愈、外来 Journal 拒绝、显式 `--target` 优先、反误判、`--silent` 抑制提示框、无人值守不阻塞 |
+| `tests/packer.rs`（`--features pack`） | 7 | **packer**：产出包被更新器接受并跑通真实更新、`.bootclosure` 覆盖生效、`--force` 语义、参数错误退出 2、**与旧 PS 脚本的等价性**（条目集合 + 清单内容 + 闭包尾部性质）、**构建身份输出与"`--version` 不被身份查询吃掉"的回归守卫** |
 | `tests/common/mod.rs` | — | 共享夹具（跨测试二进制命名互斥量串行锁、真实终止夹具、zip 中央目录定点改写） |
 
 ### 已覆盖（矩阵条目 → 用例）

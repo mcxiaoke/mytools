@@ -29,7 +29,7 @@
 | **P0-3** CI | 🟡 **本机已跑通，根目录激活待办** | `scripts/verify.ps1` 全绿、`docs/artifacts/` 已归档；仓库根 `.github/workflows/` 仍需用户配置 |
 | **P0-4** 调用方文档 | ✅ 已产出 | `docs/USAGE.md`（7 项契约 + 参数 + 退出码 + 排障）；发布说明 `docs/RELEASE-NOTES.md` |
 | **P1-1** 自检流式化 | ✅ 已修复 | 新增 `verify::sha256::hash_file`（64 KiB 流式，常量内存）+ 等价性单元测试 |
-| **P1-5** release stdout 不可见 | ✅ 已修复 | `win32::console` 增 `stdout_usable` / `console_write_line`；重定向/管道场景语义**不变**。已实测：管道捕获下 `--help` 输出 39 行、`--version` 输出 `unsigned-build`；DETACHED（无 std 句柄）下退出 0 且**不挂起**。⚠️ **`CONOUT$` 兜底分支的实际可见性未能在本机验证**（需要真实控制台且无 std 句柄的组合），只能靠代码审查确认路径正确 |
+| **P1-5** release stdout 不可见 | ✅ **已修复 + 已实证** | `win32::console` 增 `stdout_usable` / `stderr_usable` / `console_write_line`；重定向/管道场景语义**不变**。已实测：管道捕获下 `--help` 输出 39 行、`--version` 输出 `unsigned-build`；DETACHED（无 std 句柄）下退出 0 且**不挂起**。✅ **`CONOUT$` 兜底分支的实际可见性已实证**（2026-09-16）：用"真实控制台 + 子进程无继承 std 句柄"的组合拉起 release 产物（`close_fds=True` 复现 cmd/PowerShell 直启 GUI 子系统的形态），回读控制台屏幕缓冲区确认 `--help` 的 39 行确实落在控制台上。⚠️ 同一次复核发现**残留缺口并已修**：参数错误走的是 `eprintln!`（`error: missing required --target`），既不进日志文件也不可见——现统一走 stderr 兜底 |
 | **P1-6** 可做夹具 | ✅ 已完成 | 新增 `tests/pkg_guards.rs` 9 条 |
 | **P2-1** 发布流水线 | ✅ 已产出 | `scripts/release_pack.ps1`（生成清单 → 压缩 → 产物自检 → 输出 sha256） |
 | **P2-3** 文档漂移 | ✅ 已回写 | 测试计数、`CONTRACT.md` §5 基线（Go → lite）已更正 |

@@ -4,26 +4,12 @@
 //! 写权限预检 → 取锁 → 提权 → 分身 → 恢复 → 预检 → 等待 → 计划落盘 → 事务 → 提交 → 拉起。
 //! 铁律 1：一次性标记，绝不重复派生；铁律 2：顺序固定，恢复早于预检；
 //! 铁律 3：先落盘计划（PLANNED + fsync），再改动任何文件。
+//!
+//! 模块实现全在 lib（`src/lib.rs`）里，本文件只保留**入口与编排** ——
+//! 这样 `packer`（开发期打包工具）能复用同一份实现，而本 bin 保持"GUI 子系统 + 干净启动序列"。
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-mod cli;
-mod gc;
-mod gui;
-mod journal;
-mod keep;
-mod logger;
-mod pkg;
-mod planner;
-mod progress;
-mod restore;
-mod runtime;
-mod selfcopy;
-mod state;
-mod strings;
-mod transaction;
-mod version;
-mod verify;
-mod win32;
+use updater::{cli, gc, gui, journal, logger, pkg, planner, progress, runtime, selfcopy, strings, transaction, verify, win32};
 
 use cli::{Args, Mode};
 use journal::{Journal, Stage};
@@ -65,6 +51,41 @@ fn emit_block(block: &str) {
             let _ = win32::console::console_write_line(l);
         }
     }
+}
+
+/// 错误的可见性保障（与 [`emit`] 对称，但走 stderr）。
+///
+/// 参数错误发生在**日志初始化之前**——既没有日志文件可查，release 构建下也没有
+/// 可见控制台，于是 `updater.exe --target`（漏参）这类调用会"静默退出 2"，
+/// 集成方敲错参数后得不到任何解释。这里补上 stderr 兜底：
+/// stderr 可用时保持原有 `eprintln!` 语义（`2>` 重定向与管道抓取行为不变），
+/// 否则回落到父控制台。
+fn emit_error(line: &str) {
+    if win32::console::stderr_usable() {
+        eprintln!("{}", line);
+    } else {
+        win32::console::attach();
+        let _ = win32::console::console_write_line(line);
+    }
+}
+
+/// 等待 PID 超时的排障提示（USAGE §10.2）。
+///
+/// 这是集成方最容易踩的坑，而且症状极具误导性：宿主用 `Process.runSync`（或终端里等待）
+/// 同步等 updater 的退出码 → **宿主自己不退出** → 这里永远等不到目标进程退出
+/// （同时文件锁始终被宿主持有）→ 60 秒后中止、退出 2。集成方看到的只是"更新没发生"。
+///
+/// 只写 "timeout waiting for pid" 太安静：那一行不解释"为什么"，也不说"改什么"。
+/// 因此把下一步动作直接写进日志。
+fn hint_wait_timeout(pid: u32, timeout_secs: u32) {
+    log::warn!(
+        "hint: pid {} did not exit within {}s. Did the host synchronously wait for the updater's \
+         exit code? The updater returns 0 as soon as the shadow worker takes over - that 0 means \
+         'handed off', not 'updated'. The host must exit immediately after launching the updater, \
+         never wait for its exit code (USAGE §2.2).",
+        pid,
+        timeout_secs
+    );
 }
 
 fn main() {
@@ -109,7 +130,7 @@ fn main() {
             code
         }
         Err(e) => {
-            eprintln!("error: {}", e);
+            emit_error(&format!("error: {}", e));
             2
         }
     };
@@ -189,7 +210,13 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
     for w in &args.ignored_warnings {
         log::warn!("{}", w);
     }
-    log::info!("updater-rs {} starting (mode={:?}, pid={})", cli::VERSION, args.mode, std::process::id());
+    log::info!(
+        "updater-rs {} starting (mode={:?}, pid={}, build={})",
+        cli::VERSION,
+        args.mode,
+        std::process::id(),
+        updater::buildinfo::id()
+    );
     if args.allow_unsigned && !verify::crypto::ALLOW_UNSIGNED_AT_BUILD {
         log::warn!("--allow-unsigned is only honored in debug (allow-unsigned) builds; ignored");
     }
@@ -451,6 +478,7 @@ fn recover_mode(args: &Args) -> i32 {
         match win32::process::wait_pid(args.pid, args.timeout, "") {
             WaitResult::Timeout => {
                 log::error!("timeout waiting for pid {}", args.pid);
+                hint_wait_timeout(args.pid, args.timeout);
                 end("ABORTED", "-", "-", "-", "-", "recover wait timeout");
                 return EXIT_ABORTED;
             }
@@ -496,6 +524,9 @@ fn dry_run(args: &Args) -> i32 {
     match planner::precheck(args) {
         Err(e) => {
             log::error!("precheck rejected: {}", e);
+            // 排障入口必须给出**被拒的原因**：只输出模式 stdout 语义保持不变（不写 stdout），
+            // 原因走 stderr —— 被重定向时进文件，否则落父控制台（见 emit_error）。
+            emit_error(&format!("error: precheck rejected: {}", e));
             end("ABORTED", "-", "-", "-", "-", "precheck failed");
             2
         }
@@ -533,8 +564,10 @@ fn dry_run(args: &Args) -> i32 {
 /// 普通更新主流程（Worker 上下文）：预检 → 等待 → 计划 → 事务 → 提交 → 收尾 → 拉起。
 fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
     let strings = strings::get();
-    let title = args.gui_title.as_deref().unwrap_or(strings.default_title);
-    let mut gui = gui::GuiProgress::new(args.gui, title);
+    // 标题：显式 --gui-title 优先，否则从 --launch 的入口名派生（免配置也有应用标识，USAGE §5.2）
+    let title = strings::gui_title(args.gui_title.as_deref(), args.launch.as_deref());
+    log::info!("gui title: {}", title);
+    let mut gui = gui::GuiProgress::new(args.gui, &title);
     gui.set_status(strings.verifying_package, true);
 
     let mut prog = progress::Progress::new(args.progress_file.clone());
@@ -560,6 +593,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
         match win32::process::wait_pid(args.pid, args.timeout, &expect) {
             WaitResult::Timeout => {
                 log::error!("timeout waiting for target process {}; aborting without changes", args.pid);
+                hint_wait_timeout(args.pid, args.timeout);
                 end("ABORTED", "-", "-", "-", "-", "wait timeout");
                 gui.close();
                 fallback_launch(args);

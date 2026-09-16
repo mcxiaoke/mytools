@@ -5,6 +5,13 @@
 > 想了解内部设计与不变量，见 `DESIGN.md` / `TRANSACTION.md` / `RUNTIME.md`；
 > 想知道交付前的剩余工作，见 `RELEASE-READINESS.md`。
 
+> **你会用到的两个二进制**（由 `pwsh -File scripts/build.ps1` 产出到 **`target\dist\`**）：
+>
+> | 二进制 | 用途 | 部署位置 |
+> | :--- | :--- | :--- |
+> | `target\dist\updater.exe` | 更新器本体 | **随应用放进安装目录**（§8.2） |
+> | `target\dist\packer.exe` | 打更新包（发布侧） | 留在发布机 / CI，**不随应用发布** |
+
 ---
 
 ## 1. 它是什么，以及不是什么
@@ -32,24 +39,46 @@
 
 ### 2.1 打包（发布侧）
 
-一条命令即可（清单 → 压缩 → 产物自检 → 输出 sha256）：
+两个二进制由 `pwsh -File scripts/build.ps1` 产出到 **`target\dist\`**：
+**`updater.exe` 随应用放进安装目录**，**`packer.exe` 留在发布机上打更新包**。
+
+一条命令即可（清单 → 压缩 → 产物自检 → 输出 sha256）。**推荐 `packer`**——不依赖 PowerShell，
+任意语言的 CI 都能调：
 
 ```powershell
-pwsh -File scripts/release_pack.ps1 -Stage <stage 目录> -Version <版本号> -Out <输出 zip>
+target\dist\packer.exe --stage <stage 目录> --version <版本号> --out <更新包.zip> [--min-upgradable-from <版本>]
 ```
+
+（`packer.exe` 需要先构建：`pwsh -File scripts/build.ps1`，或等价的
+`cargo build --release --features pack`，产物在 `target\release\`。它是**开发期工具**，
+不随 `updater.exe` 一起发布。）
+
+> `packer -V` / `packer --build-info` 打印**工具自身**的版本与构建身份（方便回答"这个包是谁用哪次构建打的"）。
+> 注意 `--version <VER>` 是**包版本**（必填），不是工具版本——两者拼写不同是刻意的。
+> 身份信息也会出现在打包摘要里，因此会自然留在 CI 日志中；**不会**写进 `updater.manifest`（清单格式是契约物）。
+
+过渡期仍可用等价的 PowerShell 流水线（产出与 `packer` 语义一致，由 `tests/packer.rs` 的等价性守卫保证）：
+
+```powershell
+pwsh -File scripts/release_pack.ps1 -Stage <stage 目录> -Version <版本号> -Out <更新包.zip>
+```
+
+> ⚠️ 旧脚本有一个已知缺陷：`gen_manifest.ps1` 会把 stage 里的打包配置 `.bootclosure` 写进清单，
+> 而 `release_pack.ps1` 又不把它打进包，导致脚本**自己的产物自检**报"清单声明了 .bootclosure，
+> 但包内不存在"并拒绝出包。**stage 里有 `.bootclosure` 时请用 `packer`**（它两边都排除）。
 
 手工分步则是：
 
 1. 组装 stage 目录（就是分发时要落到安装目录的内容）；
-2. 生成 `updater.manifest`（**强烈建议**，见 §7）：`scripts/gen_manifest.ps1`；
+2. 生成 `updater.manifest`（**强烈建议**，见 §7）：`packer` 或 `scripts/gen_manifest.ps1`；
 3. 把 stage 打成一个 zip（清单必须在**包内**，且先打清单后压缩）；
 4. 上传到你的分发通道。
 
-> **顺序规则（§13.3）**：`release_pack.ps1` 会把**启动闭包**（根目录直系文件 + `data/*.so`/`data/*.dat`）
-> **连续排在 zip 末尾**，并在打包后回读条目顺序做机械校验。手工打包时请遵守同一规则——
-> 它决定了"中断后应用还能不能启动"。
+> **顺序规则（§13.3）**：`packer` 与 `release_pack.ps1` 都会把**启动闭包**（根目录直系文件 +
+> `data/*.so`/`data/*.dat`）**连续排在 zip 末尾**，并在打包后回读条目顺序做机械校验。
+> 手工打包时请遵守同一规则——它决定了"中断后应用还能不能启动"。
 >
-> 调用方传 `--sha256`（值由本脚本输出）可以获得包完整性校验，见 §4.2。
+> 调用方传 `--sha256`（值由打包工具输出）可以获得包完整性校验，见 §4.2。
 
 ### 2.2 主程序集成（两步）
 
@@ -131,10 +160,9 @@ updater.exe [--silent]              # 无参数 = 自身修复：收敛本 exe �
 | `--silent` | 兼容性保留（本项目恒静默）。另有实际作用：**抑制自身修复失败提示框**（§12.4） | — |
 | `--delete-zip` | 成功后删除更新包（及其 `.sig`）；失败仅告警 | 关 |
 | `--gui` | 显示原生 Win32 进度窗（跑马灯 → 平滑百分比，双语自适应） | 关 |
-| `--gui-title <TITLE>` | 自定义进度窗标题 | 系统语言自动 |
+| `--gui-title <TITLE>` | 自定义进度窗标题 | 由 `--launch` 的入口名派生：`<AppName> - 正在更新...`（缺 `--launch` 时为系统的"正在更新应用..."） |
 | `--log <FILE>` | 日志路径 | `<base>\logs\updater-<ts>.log` |
-| `--silent` | 兼容性保留，无实际作用（GUI 子系统恒静默） | — |
-| `--help` / `-h` / `--version` | 打印用法 / 版本（含公钥指纹或 `unsigned-build`），退出 0 | — |
+| `--help` / `-h` / `--version` | 打印用法 / 版本（含公钥指纹或 `unsigned-build`），**并追加构建身份** `build=<git> built=<时间> target=… profile=… features=…`，退出 0 | — |
 
 ### 4.2 安全与版本
 
@@ -237,7 +265,7 @@ DIR:plugins
 - `DIR` → 计划期需要创建的目录；
 - 若包内**没有**清单：降级防护与哈希自检自动跳过，日志记 WARNING（兼容旧包）。
 
-用 `scripts/gen_manifest.ps1` 生成，**必须与 zip 一起构建**（先放清单，再压缩）。
+用 `packer` 或 `scripts/gen_manifest.ps1` 生成，**必须与 zip 一起构建**（先放清单，再压缩）。
 
 ---
 
@@ -335,10 +363,12 @@ DIR:plugins
 
 | 行 | 含义 |
 | :--- | :--- |
+| `updater-rs <版本> starting (mode=…, pid=…, build=<git> <时间>)` | **首行即身份**：这次跑的到底是哪一次构建（同一版本号会有无数次不同构建，本项目 release 构建不可复现）。报问题时请把这一行一起贴出来 |
 | `END: COMMITTED ver=... state=... previous=... hashes=...` | 正常结束。`hashes=verified` 表示逐文件哈希自检通过 |
 | `END: ROLLED_BACK ...` | 失败但已回滚 |
 | `END: ABORTED ...` | 中止，目录零改动 |
 | `END: DERIVED(worker) ...` | 已交接给影子 Worker（正常，主实例的 `0` 仅指此事） |
+| `hint: pid … did not exit within Ns …` | **上一行是 `timeout waiting for target process` 时**：宿主很可能同步等待了 updater 的退出码。见 §10.2 同现象一行 |
 | `recovery(L3): APPLYING journal found ... rolling back` | 上一次崩在替换中途，本次已收敛 |
 
 ### 10.2 常见现象
@@ -346,6 +376,8 @@ DIR:plugins
 | 现象 | 原因 | 处理 |
 | :--- | :--- | :--- |
 | 更新"没发生"，应用还是旧版 | 中止（退出 2）。查日志：目标不可写 / 运行期目录不可用 / 锁占用 / 等待 PID 超时 | 按日志具体原因处理 |
+| 日志里 `timeout waiting for target process <pid>`（默认 60 秒后出现），紧跟一条 `hint: pid … did not exit within Ns` | **宿主同步等待了 updater 的退出码**（`Process.runSync`、终端里等它结束、或脚本里 `start /wait`）。派生的 `0` 只表示"已交接"，宿主若据此以为更新结束、自己却不退出，目标进程就永不退出（文件锁也一直被它持有），Worker 只能等到超时 | 宿主必须**拉起后立即 `exit(0)`**，绝不等 updater 的退出码（§2.2、§3 契约 1）。日志里那条 `hint` 就是为此写的 |
+| 在 cmd / PowerShell 里敲 `updater.exe --help` / `--dry-run` / 参数写错，屏幕上没有任何输出 | release 是 **GUI 子系统**（`windows_subsystem = "windows"`），从终端直启时没有控制台、std 句柄无效 | 已修：`--help` / `--version` / `--dry-run` 的输出与参数错误**都会自动附加到父控制台**（§4.1，`RELEASE-READINESS.md` P1-5）。若宿主本身没有控制台（双击、GUI 启动器），则用 `--log` 指定的文件或 `--debug-console` 查看 |
 | 日志出现 `runtime dir unavailable` | `%LOCALAPPDATA%` 与 `%TEMP%` 都不在本地固定盘或不可写 | 修正环境；或把 `updater.exe` 放到 target 之外（则不走影子 Worker） |
 | 应用退出后再也不回来 | 更新失败且兜底拉起也失败；或影子 Worker 已被拦 | 看日志结尾；确认 `--launch` 路径存在且是有效 PE |
 | 更新被拒（退出 2），说 duplicate entry | 包内有仅大小写不同的重复路径（常见于跨平台打包） | 修打包流程 |
@@ -353,6 +385,7 @@ DIR:plugins
 | 杀软/EDR 报可疑行为 | `updater.exe` 会复制自身到 `%LOCALAPPDATA%` 并 detached 执行 | 已在**火绒（实时防护 + 系统加固开启）**下实测通过、隔离区零新增（`artifacts/av-scan.txt`、`artifacts/av-hr-forensics-20260915.txt`）；**企业级 EDR 仍未验证**，见 `RELEASE-READINESS.md` P1-2 |
 
 `--debug-console` 可把日志同时输出到父控制台；`--dry-run` 可先打印计划清单（零落盘）。
+从 cmd/PowerShell 直启 release 产物时，`--help` / `--version` / `--dry-run` 的输出与参数错误会**自动附加到父控制台**（无需加 `--debug-console`）；被管道/文件重定向捕获时语义不变（脚本与 CI 行为不受影响）。
 
 ---
 
@@ -451,7 +484,7 @@ release 构建是 GUI 子系统，**双击时没有任何控制台输出**。因
 把闭包整体**连续排在 zip 末尾**，可以把"中断落在致命组合上"的概率从**覆盖整个事务**
 压到**闭包自身那一小段**：闭包之前被中断 ⇒ 闭包整体仍是旧版 ⇒ 应用照常启动 ⇒ 能自愈。
 
-**闭包怎么定**（`scripts/release_pack.ps1` 已实现）：
+**闭包怎么定**（`packer` 与 `scripts/release_pack.ps1` 都实现了同一规则）：
 
 | 组成 | 规则 |
 | :--- | :--- |
@@ -467,7 +500,7 @@ resources/*.asar
 resources/*.pak
 ```
 
-**机械守卫**：`release_pack.ps1` 在打包后会**回读 zip 的真实条目顺序**并断言闭包构成连续结尾；
+**机械守卫**：打包工具在打包后会**回读 zip 的真实条目顺序**并断言闭包构成连续结尾；
 不满足就直接失败并列出"闭包成员 vs 实际尾部"，不会等到用户掉电才发现。
 
 > 先替换资源、最后替换启动闭包，是本工具与"原子整包替换"最接近的等价物。

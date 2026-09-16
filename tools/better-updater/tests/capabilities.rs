@@ -442,6 +442,16 @@ fn help_and_version() {
     let (code, out, _) = run_updater_raw(&["--version"]);
     assert_eq!(code, 0, "--version must exit 0");
     assert!(out.contains("unsigned-build"), "empty key list must be reported: {}", out);
+    // 构建身份：同一 CARGO_PKG_VERSION 会有无数次不同构建，`--version` 必须能区分它们。
+    // 这条断言的契约含义见 CONTRACT.md §2.1（前缀不变 + 可追加）。
+    for key in ["build=", "built=", "target=", "profile=", "features="] {
+        assert!(out.contains(key), "--version 必须带构建身份 {}: {}", key, out);
+    }
+    assert!(
+        out.contains("profile=debug"),
+        "测试跑的是 debug 产物，profile 字段应当如实反映: {}",
+        out
+    );
 }
 
 #[test]

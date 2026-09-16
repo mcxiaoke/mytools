@@ -398,3 +398,52 @@ fn rollback_previous_reverts_to_retained_generation() {
     );
     assert!(!up.join("journal").exists());
 }
+
+/// 等待 PID 超时：必须给出"宿主同步等待了退出码"这条排障提示（反馈 ①），
+/// 顺带锁定 GUI 标题的派生接线（`--launch` 的入口名，反馈 ③）。
+///
+/// 之所以为两条日志专门加集成测试：这条超时是集成方最常见的坑，而症状具有误导性
+/// （"更新没发生"，退出 2，看起来像更新器的问题）。日志是唯一能自证的线索，
+/// 一旦被重构掉，排查成本会立刻回到"排查半天"。且两者都**只能靠真实进程**验证：
+/// 一个需要真的等不到 pid，一个需要真的走到 `update_flow` 入口。
+#[test]
+fn wait_timeout_logs_the_sync_wait_hint_and_derives_the_gui_title() {
+    let tmp = TempDir::new("wait-hint");
+    let target = tmp.path().join("target");
+    make_target(&target);
+    let stage = tmp.path().join("stage");
+    make_stage(&stage);
+    let manifest = manifest_for(&stage, "1.0.1");
+    let zip = tmp.path().join("update.zip");
+    make_zip(&stage, &zip, Some(&manifest));
+
+    // 目标进程故意用"本测试进程自己"：它必然活过 --timeout 1，于是必然超时
+    let alive = std::process::id().to_string();
+    let log = tmp.path().join("updater.log");
+    let code = run_updater_log(
+        &target,
+        &[
+            "--zip", zip.to_str().unwrap(),
+            "--launch", "app.exe",
+            "--pid", &alive,
+            "--timeout", "1",
+        ],
+        &log,
+    );
+    assert_eq!(code, 2, "wait timeout must abort with exit 2 (zero changes)");
+    // 超时发生在任何文件动作之前：目录零改动，且不创建 Journal
+    assert_file_is(&target.join("app.exe"), &old_app_bytes());
+    assert!(!target.join(".updater\\journal").exists());
+
+    let text = read(&log);
+    assert!(text.contains("timeout waiting for target process"), "must log the timeout: {}", text);
+    assert!(text.contains("hint: pid"), "must log the troubleshooting hint: {}", text);
+    assert!(
+        text.contains("never wait for its exit code"),
+        "the hint must state the fix, not just the symptom: {}",
+        text
+    );
+    // 标题接线：未传 --gui-title ⇒ 由 --launch 的入口名派生（"app.exe" → "app"）。
+    // 只断言分隔符之前的部分，避免依赖测试机语言。
+    assert!(text.contains("gui title: app - "), "gui title must derive from --launch: {}", text);
+}

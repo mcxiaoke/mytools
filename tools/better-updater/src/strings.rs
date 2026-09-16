@@ -5,6 +5,10 @@ use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
 #[derive(Debug, Clone, Copy)]
 pub struct UiStrings {
     pub default_title: &'static str,
+    /// 有应用名时的**短**标题尾（`--gui` 未传 `--gui-title` 时拼成 `<应用名> - <本字段>`）。
+    /// 与 `default_title` 分开是必要的：`JigsawFox - 正在更新应用...` 里的"应用"是重述，
+    /// 读起来像机器拼接的；`JigsawFox - 正在更新...` 才是用户预期看到的东西。
+    pub updating_short: &'static str,
     pub preparing: &'static str,
     pub waiting_process: &'static str,
     pub verifying_package: &'static str,
@@ -14,6 +18,7 @@ pub struct UiStrings {
 
 pub const ZH_CN: UiStrings = UiStrings {
     default_title: "正在更新应用...",
+    updating_short: "正在更新...",
     preparing: "正在准备更新...",
     waiting_process: "正在等待旧版本退出...",
     verifying_package: "正在校验更新包...",
@@ -23,6 +28,7 @@ pub const ZH_CN: UiStrings = UiStrings {
 
 pub const EN: UiStrings = UiStrings {
     default_title: "Updating application...",
+    updating_short: "Updating...",
     preparing: "Preparing update...",
     waiting_process: "Waiting for previous version to exit...",
     verifying_package: "Verifying update package...",
@@ -93,6 +99,48 @@ pub fn repair_failed_message(code: i32, target: &str) -> String {
     repair_failed_message_for(unsafe { GetUserDefaultUILanguage() }, code, target)
 }
 
+// ---------------------------------------------------------------------------
+// GUI 窗口标题（`--gui` 未传 `--gui-title` 时的免配置默认值）
+// ---------------------------------------------------------------------------
+
+/// 从入口路径提取应用名（无扩展名的文件名主干）。空串 / 无效路径 ⇒ `None`。
+///
+/// 取**入口文件名**而不是安装目录名：目录名常带版本号（`JigsawFox-1.2.3`）或空格
+/// （`Program Files`），而 `--launch` 是调用方唯一稳定给出的应用标识。
+fn app_name_from(launch: &str) -> Option<String> {
+    let stem = std::path::Path::new(launch).file_stem()?.to_string_lossy().into_owned();
+    let stem = stem.trim();
+    if stem.is_empty() {
+        None
+    } else {
+        Some(stem.to_string())
+    }
+}
+
+/// 进度窗标题，指定 LANGID 版本（便于单测）。
+///
+/// 优先级：显式 `--gui-title`（非空白）> `<入口名> - <短标题>` > 纯默认标题。
+/// 最后那一档是"没有 `--launch`（例如 `--recover` 无拉起）"时的形态——
+/// 此时**绝不能**产出 ` - 正在更新...` 这种缺了应用名的残缺标题。
+pub fn gui_title_for(langid: u16, explicit: Option<&str>, launch: Option<&str>) -> String {
+    let s = get_for_langid(langid);
+    if let Some(t) = explicit {
+        let t = t.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    match launch.and_then(app_name_from) {
+        Some(name) => format!("{} - {}", name, s.updating_short),
+        None => s.default_title.to_string(),
+    }
+}
+
+/// 进度窗标题，按当前系统语言。
+pub fn gui_title(explicit: Option<&str>, launch: Option<&str>) -> String {
+    gui_title_for(unsafe { GetUserDefaultUILanguage() }, explicit, launch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +163,7 @@ mod tests {
     #[test]
     fn test_strings_validity() {
         assert!(!ZH_CN.default_title.is_empty());
+        assert!(!ZH_CN.updating_short.is_empty());
         assert!(!ZH_CN.preparing.is_empty());
         assert!(!ZH_CN.waiting_process.is_empty());
         assert!(!ZH_CN.verifying_package.is_empty());
@@ -122,6 +171,7 @@ mod tests {
         assert!(!ZH_CN.completing.is_empty());
 
         assert!(!EN.default_title.is_empty());
+        assert!(!EN.updating_short.is_empty());
         assert!(!EN.preparing.is_empty());
         assert!(!EN.waiting_process.is_empty());
         assert!(!EN.verifying_package.is_empty());
@@ -130,6 +180,44 @@ mod tests {
 
         let s = get();
         assert!(!s.default_title.is_empty());
+    }
+
+    /// 进度窗标题的免配置形态：必须**带上应用名**，否则用户看到一个没有软件标识的窗口。
+    /// 同时覆盖"绝不产出残缺标题"这条边界（无 `--launch` 时退回纯默认标题）。
+    #[test]
+    fn test_gui_title_derives_app_name() {
+        // 显式标题优先（原语义不变，含前后空白的裁剪）
+        assert_eq!(
+            gui_title_for(0x0804, Some("MyApp Updating..."), Some("C:\\App\\x.exe")),
+            "MyApp Updating..."
+        );
+        assert_eq!(gui_title_for(0x0804, Some("  Pad  "), None), "Pad");
+
+        // 未指定 ⇒ 从入口名派生；`\` 与 `/` 两种分隔符都要认
+        assert_eq!(
+            gui_title_for(0x0804, None, Some("C:\\App\\JigsawFox.exe")),
+            "JigsawFox - 正在更新..."
+        );
+        assert_eq!(gui_title_for(0x0409, None, Some("C:/App/JigsawFox.exe")), "JigsawFox - Updating...");
+        // 扩展名大小写无关；无扩展名也成立
+        assert_eq!(gui_title_for(0x0409, None, Some("C:\\App\\JigsawFox.EXE")), "JigsawFox - Updating...");
+        assert_eq!(gui_title_for(0x0409, None, Some("JigsawFox")), "JigsawFox - Updating...");
+
+        // 空白 explicit 视为未指定（不会产出全空白标题）
+        assert_eq!(
+            gui_title_for(0x0804, Some("   "), Some("JigsawFox.exe")),
+            "JigsawFox - 正在更新..."
+        );
+
+        // 缺应用名 ⇒ 纯默认标题，绝不出现 " - 正在更新..." 这种残缺形态
+        for launch in [None, Some(""), Some("   ")] {
+            let t = gui_title_for(0x0804, None, launch);
+            assert_eq!(t, ZH_CN.default_title, "launch={:?} 必须退回纯默认标题", launch);
+            assert!(!t.starts_with(" - "), "残缺标题: {}", t);
+        }
+        // 路径以分隔符结尾时 Windows 的 Path 会把它当作目录名（`C:\App\` → `App`）：
+        // 派生结果仍然是**可用**的标题（不是残缺标题），因此不特殊处理。
+        assert_eq!(gui_title_for(0x0409, None, Some("C:\\App\\")), "App - Updating...");
     }
 
     /// 修复提示必须把**目录与退出码**都带出来，且两种语言都不能残留占位符。
