@@ -33,6 +33,7 @@ project.nuget.cache
 *.nuget.dgspec.json
 *.nuget.g.props
 *.nuget.g.targets
+FodyWeavers.xsd
 
 # ============================================================
 # Node.js
