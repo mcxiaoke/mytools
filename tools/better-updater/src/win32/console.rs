@@ -71,3 +71,31 @@ pub fn console_write_line(s: &str) -> bool {
     unsafe { CloseHandle(h) };
     ok != 0
 }
+
+/// 人可见的阻塞提示框（**仅用于"自身修复"失败路径**）。
+///
+/// 背景：release 构建是 GUI 子系统，双击 `updater.exe` 时**没有控制台**，
+/// `println!` / `eprintln!` 与 `console_write_line` 全部拿不到输出。
+/// 而"自身修复"这个入口的**唯一**使用者就是看不到任何输出的那个人——
+/// 失败必须给出"接下来该做什么"，否则该入口等于不存在。
+///
+/// 只在 `main` 判定"目标由自身目录推断而来 且 退出码非 0"时调用，
+/// 因此不会出现在任何脚本路径上（脚本总是显式传 `--target`）。
+///
+/// Tier 2：调用失败仅忽略，绝不改变退出码（I5）。
+/// 用 `MB_SETFOREGROUND | MB_TOPMOST`：调用方通常刚双击完，窗口需要在最前。
+pub fn alert(title: &str, text: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    };
+    let t = crate::win32::wide(title);
+    let m = crate::win32::wide(text);
+    unsafe {
+        MessageBoxW(
+            core::ptr::null_mut(),
+            m.as_ptr(),
+            t.as_ptr(),
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST,
+        );
+    }
+}

@@ -49,10 +49,16 @@ pub struct Args {
     pub progress_file: Option<String>,
     pub allow_unsigned: bool,
     pub log: Option<String>,
+    /// 兼容性保留参数。本项目 GUI 子系统恒静默；此处另给一个**实际作用**：
+    /// 抑制"自身修复失败"提示框——无人值守调用需要一个保证不阻塞的开关。
+    pub silent: bool,
     pub debug_console: bool,
     pub gui: bool,
     pub gui_title: Option<String>,
     // 内部一次性标记
+    /// `--target` 未给出、由“自身所在目录”推断而来（双击 / `--recover` 无 target）。
+    /// main 用它决定失败时是否弹人可见的提示框。
+    pub self_repair: bool,
     pub worker: bool,
     pub elevated_worker: bool,
     pub watchdog: bool,
@@ -85,6 +91,11 @@ updater-rs - single-file crash-safe in-place updater for Windows
 USAGE:
   updater.exe --pid <PID> --zip <ZIP> --target <DIR> --launch <EXE> [options]
 
+REPAIR (no arguments needed - useful when the app itself no longer starts):
+  updater.exe [--recover]     converge the directory this exe lives in
+  updater.exe --rollback-previous --target <DIR>
+                              restore the retained previous generation
+
 REQUIRED (normal/dry-run): --zip --target --launch --target
 OPTIONS:
   --pid <n>                 wait for this process to exit (after all prechecks)
@@ -111,9 +122,12 @@ OPTIONS:
   --strict-path-check       reject when physical path resolution fails
   --progress-file <PATH>    write progress info for the app to display
   --recover                 self-heal from the journal, then optionally --launch
+                            (--target defaults to the updater's own directory)
   --allow-unsigned          (debug builds only) allow missing signature
   --log <FILE>              log file (default <base>\\logs\\updater-<ts>.log)
-  --silent                  kept for compatibility (GUI subsystem, always silent)
+  --silent                  kept for compatibility (GUI subsystem is always silent).
+                            Also suppresses the self-repair failure dialog, so an
+                            unattended caller can never block on it
   --gui                     show native Win32 progress dialog
   --gui-title <TITLE>       custom GUI window title
   --debug-console           attach to parent console for debugging
@@ -265,7 +279,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
     let allow_unsigned = flag(&mut ap, "--allow-unsigned");
     let debug_console = flag(&mut ap, "--debug-console");
     let gui = flag(&mut ap, "--gui");
-    flag(&mut ap, "--silent"); // 兼容性保留：GUI 子系统恒静默
+    let silent = flag(&mut ap, "--silent");
     let worker = flag(&mut ap, "--worker");
     let elevated_worker = flag(&mut ap, "--elevated-worker");
     let watchdog = flag(&mut ap, "--watchdog");
@@ -278,9 +292,35 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
         return Err(format!("unknown arguments: {}", names.join(", ")));
     }
 
-    // 模式矩阵（CONTRACT §2.3）；watchdog 与 rollback-previous 均已实现
+    // ---- 自身修复入口（USAGE §3.1）：给“应用已无法启动”提供一个人工可执行的动作 ----
+    // 判定依据是**语义**而不是 token 数量：没有 `--target`，也没有任何更新事务的输入
+    // （`--zip` / `--launch`），且没有选其它模式。
+    //
+    // 这样划分的原因：
+    // - 双击（完全无参数）落在这里；
+    // - `--silent` / `--debug-console` / `--log` 这类**纯修饰参数**也落在这里
+    //   —— 否则"抑制提示框"这个开关永远没法与"自身修复"同时出现；
+    // - 而 `--zip x` 不带 `--target` 这种**写错的更新调用**不会被误判：
+    //   它没有事务输入以外的特征，仍按原样报 `missing required --target`，
+    //   绝不会静默地跑去修 updater 自己所在的目录然后返回 0。
+    let bare_invocation = target.is_none()
+        && zip.is_none()
+        && launch.is_none()
+        && pid == 0
+        && !dry_run
+        && !watchdog
+        && !rollback_previous
+        && !worker
+        && !elevated_worker;
+    let self_repair = target.is_none() && (recover || bare_invocation);
     let target = match target {
         Some(t) => abs_cwd(&t),
+        None if self_repair => {
+            match std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+                Some(d) => abs_cwd(&d.to_string_lossy()),
+                None => return Err("cannot locate the updater's own directory for self-repair".to_string()),
+            }
+        }
         None => return Err("missing required --target".to_string()),
     };
 
@@ -301,7 +341,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
             ignored_warnings.push("--sig is not used in --rollback-previous mode, ignored".to_string());
         }
         Mode::RollbackPrevious
-    } else if recover {
+    } else if recover || bare_invocation {
         if zip.is_some() {
             ignored_warnings.push("--zip is not used in --recover mode, ignored".to_string());
         }
@@ -366,9 +406,11 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
         progress_file,
         allow_unsigned,
         log,
+        silent,
         debug_console,
         gui,
         gui_title,
+        self_repair,
         worker,
         elevated_worker,
         watchdog,

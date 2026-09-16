@@ -79,7 +79,35 @@ fn main() {
             emit(&v);
             0
         }
-        Ok(cli::Startup::Run(a)) => run(*a, raw),
+        Ok(cli::Startup::Run(a)) => {
+            // 自身修复入口（双击 = 无参数，或 --recover 缺 --target）失败时必须**人可见**：
+            // release 是 GUI 子系统，双击时没有任何控制台输出，而这条路径的唯一使用者
+            // 正是"看不到任何输出"的那个人。
+            //
+            // 但模态框会**阻塞主线程**（本项目并发原语为 0，不能开线程弹框），
+            // 因此必须严格限定为"确实没人在看输出"的场景，否则无人值守的调用会永久挂死：
+            //   ① 目标由自身目录推断而来（否则是脚本/正常更新，不是双击）；
+            //   ② 没有可用控制台 —— 脚本与 CI 会重定向或接管 stdio，此时判为"有人能看到"；
+            //   ③ 未显式 --silent，也未开 --debug-console（调试会话走控制台）。
+            // 缺了 ② 曾导致 self_repair 测试套被一个模态框卡住，见 tests/self_repair.rs
+            // 的 unattended_failure_never_blocks_on_a_dialog。
+            let dialog_target = if a.self_repair
+                && !a.silent
+                && !a.debug_console
+                && !win32::console::stdout_usable()
+            {
+                Some(a.target.clone())
+            } else {
+                None
+            };
+            let code = run(*a, raw);
+            if let Some(t) = dialog_target {
+                if code != 0 {
+                    repair_failed_alert(&t, code);
+                }
+            }
+            code
+        }
         Err(e) => {
             eprintln!("error: {}", e);
             2
@@ -87,6 +115,17 @@ fn main() {
     };
     logger::sync();
     std::process::exit(code);
+}
+
+/// 自身修复失败的人可见提示（USAGE §3.1）。
+///
+/// 调用的是 Tier 2 的 `console::alert`：弹框失败一律忽略，**绝不改变退出码**。
+/// 先把日志刷盘再弹框——用户可能让对话框一直开着，日志不能因此滞留在缓冲区。
+fn repair_failed_alert(target: &str, code: i32) {
+    let body = strings::repair_failed_message(code, target);
+    log::warn!("self-repair failed (exit {}); notifying the user via dialog", code);
+    logger::sync();
+    win32::console::alert(strings::repair_failed_title(), &body);
 }
 
 fn end(kind: &str, ver: &str, state: &str, previous: &str, hashes: &str, reason: &str) {
