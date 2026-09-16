@@ -1,0 +1,17 @@
+d9f29dc2a1024abce384185f5b39a93240258a65d414f6a7cb831c14c034672c *./docs/CHANGES-20260914.md
+c2f9cbcbeae28da463de373204531531f86a9bb039ccf29ad74508da73e0a1c0 *./docs/CHANGES-20260915.md
+27d58f8dc9c44ac9ecb306933a215b2c2ac95049eca8e52ba6ce0c8575c45300 *./docs/rust-updater-architecture-design-lite.md
+25e262bb68b390031d31b387dcfbc64405efa212374ce3747cf9d48a4eb041fe *./docs/updater-vs-better-updater-compatibility.md
+90fdcfc0795e41baff553a6d4c8afc725858dbd7501a118fd49ba81976d65e3a *./rust-src/Cargo.lock
+763bb6b20c609f02e2410c9227554f1d24fdd6c05fc0223a67700052ca588322 *./rust-src/Cargo.toml
+0dc938f92fc2dc848981e6d633529d47b3cafbda75127582a8465ac5e5ba09e3 *./rust-src/README.md
+fd5dabbeb69e983c881d89a987536b978b3034663fdfdda01dc1e6a3e5309c83 *./rust-src/examples/mock_host.rs
+60766d5e89e64286687c76d4c66e4ba122a72505e037ce8084439afcd0ad12f1 *./rust-src/src/args.rs
+c3942f41bdcdc4e4f0e00e3ad394a0ab8744c54fb1b8df54f407c150fea28128 *./rust-src/src/gui.rs
+67ae9df5de4f2373244cf5c552a65c0a4ac393c2d54019551dc97f9eb9d4dee3 *./rust-src/src/keep.rs
+8d6d74f53cbf3a838335434eb38de13770ad33a72c35c364c4c369b0b4dead1a *./rust-src/src/main.rs
+a057f41bef9a835a9f3951fcc3a18cc1a1ed1297d5a42928a371ce8766449e68 *./rust-src/src/preflight.rs
+c626dd6df347fe03730cf00d9e1d0e16bef960dedff2fb321e00f2442bba1f00 *./rust-src/src/process.rs
+334a3a334dc9017c732247812e8e1d3bcae76dc7c725801df177c4607a1a1295 *./rust-src/src/strings.rs
+f2ec862e28c31dc693b568d9dfa1668186a9b54b5bddb32d920c3993faacf056 *./rust-src/src/transaction.rs
+24c803e912681753e82157de3e737c256c15ebe4a50cfc8b8aaf1d69d4c2882b *./rust-src/src/winutil.rs

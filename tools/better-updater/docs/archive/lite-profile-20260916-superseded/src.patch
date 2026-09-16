@@ -1,0 +1,699 @@
+diff --git a/tools/better-updater/src/cli.rs b/tools/better-updater/src/cli.rs
+index a195cd7..0380265 100644
+--- a/tools/better-updater/src/cli.rs
++++ b/tools/better-updater/src/cli.rs
+@@ -1,6 +1,7 @@
+ // Tier: 1
+ //! pico-args 解析、路径绝对化与规范化、argv 重建与 quote_arg（RUNTIME §3.3 / CONTRACT §2）。
+ #![allow(dead_code)]
++use crate::profile::{self, Profile};
+ use crate::verify::crypto;
+ use crate::win32::path_guard::{is_abs, normalize};
+ use pico_args::Arguments;
+@@ -21,6 +22,8 @@ pub enum Mode {
+ #[derive(Debug, Clone)]
+ pub struct Args {
+     pub mode: Mode,
++    /// 运行档位（`--lite` = 过渡档位：单进程 + Journal 仅内存）。
++    pub profile: Profile,
+     pub pid: u32,
+     pub zip: Option<String>,
+     pub sig: Option<String>,
+@@ -111,6 +114,9 @@ OPTIONS:
+   --strict-path-check       reject when physical path resolution fails
+   --progress-file <PATH>    write progress info for the app to display
+   --recover                 self-heal from the journal, then optionally --launch
++  --lite                    transition profile: single process, memory-only journal,
++                            zero residue. No shadow worker, no watchdog, no
++                            crash self-healing (no --recover / --rollback-previous)
+   --allow-unsigned          (debug builds only) allow missing signature
+   --log <FILE>              log file (default <base>\\logs\\updater-<ts>.log)
+   --silent                  kept for compatibility (GUI subsystem, always silent)
+@@ -254,6 +260,7 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
+     let gui_title = get_str(&mut ap, "--gui-title")?;
+ 
+     let flag = |ap: &mut Arguments, name: &'static str| -> bool { ap.contains(name) };
++    let lite = flag(&mut ap, "--lite");
+     let delete_zip = flag(&mut ap, "--delete-zip");
+     let dry_run = flag(&mut ap, "--dry-run");
+     let elevate = flag(&mut ap, "--elevate");
+@@ -337,8 +344,23 @@ pub fn parse(argv: Vec<String>) -> Result<Startup, String> {
+     // watchdog 是内部派生标记，不再与一次性标记冲突
+     let _ = (worker, elevated_worker);
+ 
++    // 档位解析与冲突检查（profile.rs）：lite 档与"派生/持久化"相关模式互斥。
++    // 判据见 profile::check_conflicts 的文档注释；Err ⇒ 用法错误，退出 2。
++    let profile = if lite { Profile::Lite } else { Profile::Full };
++    let profile_warns = profile::check_conflicts(
++        profile,
++        &mode,
++        worker,
++        previous_ttl_days,
++        wait_derived,
++        allow_downgrade,
++        gen.is_some(),
++    )?;
++    ignored_warnings.extend(profile_warns);
++
+     Ok(Startup::Run(Box::new(Args {
+         mode,
++        profile,
+         pid,
+         zip,
+         sig,
+diff --git a/tools/better-updater/src/journal.rs b/tools/better-updater/src/journal.rs
+index c9a3159..8718f75 100644
+--- a/tools/better-updater/src/journal.rs
++++ b/tools/better-updater/src/journal.rs
+@@ -59,8 +59,17 @@ pub fn gen_new() -> String {
+ 
+ /// 创建 Journal 并写入权威集 + STAGE:PLANNED，fsync 后返回句柄。
+ /// 铁律 3：先落盘计划，再改动任何文件。
++///
++/// # 档位（`--lite`）
++///
++/// `file: None` 即「内存档」：不创建文件、不 fsync。这是 `SCOPE.md` §4.3
++/// 「禁止第二套实现」下的**唯一**持久化开关点——
++/// 内存档与落盘档共用同一个 `JournalWriter` 类型、同一段 `apply_file` / `rollback`
++/// 调用序列，区别仅在"字节是否到达磁盘"。**不存在第二条事务路径。**
++///
++/// 内存档的代价是明确的：进程被杀后没有 Journal 可读，目录停在半新半旧。
+ pub struct JournalWriter {
+-    file: std::fs::File,
++    file: Option<std::fs::File>,
+     pending_advisory: String,
+ }
+ 
+@@ -93,21 +102,41 @@ impl JournalWriter {
+         }
+         f.write_all(head.as_bytes()).map_err(|e| format!("write journal: {}", e))?;
+         f.sync_data().map_err(|e| format!("fsync journal: {}", e))?;
+-        Ok(JournalWriter { file: f, pending_advisory: String::new() })
++        Ok(JournalWriter { file: Some(f), pending_advisory: String::new() })
++    }
++
++    /// 内存档：零落盘。`j` 不参与——档位下 Journal 的全部字段对调用方而言仍可用
++    /// （`build_journal` 的内存副本承载计划），只是永不序列化。
++    pub fn create_memory() -> JournalWriter {
++        JournalWriter { file: None, pending_advisory: String::new() }
++    }
++
++    /// 是否为内存档（`--lite`）。
++    pub fn is_memory(&self) -> bool {
++        self.file.is_none()
+     }
+ 
+     /// 建议性记录（MOVED/ADDED/DIRDONE）：追加缓冲，不逐行 fsync，不承载正确性。
++    /// 内存档下直接丢弃——没有读者，缓冲只是白占内存。
+     pub fn advisory(&mut self, line: &str) {
++        if self.file.is_none() {
++            return;
++        }
+         self.pending_advisory.push_str(line);
+         self.pending_advisory.push('\n');
+     }
+ 
+     /// 阶段迁移：flush 建议集 + 追加 STAGE 行 + fsync。成功后才执行对应的文件动作。
++    /// 内存档永不失败——它的 `STAGE` 全程只存在于调用方的控制流中。
+     pub fn stage(&mut self, s: Stage) -> Result<(), String> {
++        let f = match self.file.as_mut() {
++            Some(f) => f,
++            None => return Ok(()),
++        };
+         let mut buf = core::mem::take(&mut self.pending_advisory);
+         buf.push_str(&format!("STAGE:{}\n", s.as_str()));
+-        self.file.write_all(buf.as_bytes()).map_err(|e| format!("write journal: {}", e))?;
+-        self.file.sync_data().map_err(|e| format!("fsync journal: {}", e))
++        f.write_all(buf.as_bytes()).map_err(|e| format!("write journal: {}", e))?;
++        f.sync_data().map_err(|e| format!("fsync journal: {}", e))
+     }
+ }
+ 
+diff --git a/tools/better-updater/src/main.rs b/tools/better-updater/src/main.rs
+index f80a5e6..6f0bec2 100644
+--- a/tools/better-updater/src/main.rs
++++ b/tools/better-updater/src/main.rs
+@@ -14,6 +14,7 @@ mod keep;
+ mod logger;
+ mod pkg;
+ mod planner;
++mod profile;
+ mod progress;
+ mod restore;
+ mod runtime;
+@@ -79,7 +80,16 @@ fn main() {
+             emit(&v);
+             0
+         }
+-        Ok(cli::Startup::Run(a)) => run(*a, raw),
++        Ok(cli::Startup::Run(a)) => {
++            let code = run(&a, raw);
++            // lite 档：兑现"零残留"。必须在 run 返回**之后**执行——独占锁句柄带
++            // DELETE_ON_CLOSE，句柄未关闭时 `lock` 文件仍然存在，remove_dir_all 必失败。
++            // 退出 3 例外：现场被刻意保留，backup\ 可能是用户被覆盖文件的唯一副本，绝不可清。
++            if code != EXIT_CATASTROPHIC && a.profile.purges_state_dir() {
++                profile::purge_state_dir(&a.target);
++            }
++            code
++        }
+         Err(e) => {
+             eprintln!("error: {}", e);
+             2
+@@ -89,8 +99,17 @@ fn main() {
+     std::process::exit(code);
+ }
+ 
+-fn end(kind: &str, ver: &str, state: &str, previous: &str, hashes: &str, reason: &str) {
+-    log::info!("END: {} ver={} state={} previous={} hashes={} reason={}", kind, ver, state, previous, hashes, reason);
++fn end(kind: &str, ver: &str, state: &str, previous: &str, hashes: &str, reason: &str, profile: &str) {
++    log::info!(
++        "END: {} ver={} state={} previous={} hashes={} profile={} reason={}",
++        kind,
++        ver,
++        state,
++        previous,
++        hashes,
++        profile,
++        reason
++    );
+     logger::sync();
+ }
+ 
+@@ -136,7 +155,7 @@ fn launch_app(args: &Args) -> Result<(), &'static str> {
+     }
+ }
+ 
+-fn run(args: Args, raw: Vec<String>) -> i32 {
++fn run(args: &Args, raw: Vec<String>) -> i32 {
+     if args.debug_console {
+         win32::console::attach();
+     }
+@@ -150,7 +169,21 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+     for w in &args.ignored_warnings {
+         log::warn!("{}", w);
+     }
+-    log::info!("updater-rs {} starting (mode={:?}, pid={})", cli::VERSION, args.mode, std::process::id());
++    log::info!(
++        "updater-rs {} starting (mode={:?}, profile={}, pid={})",
++        cli::VERSION,
++        args.mode,
++        args.profile.as_str(),
++        std::process::id()
++    );
++    // 档位足迹（footgun 缓解）：一次更新只有一份日志，banner + END 行共同构成
++    // 事后取证所需的完整档位记录，任何一条都可单独 grep。
++    if args.profile.is_lite() {
++        log::warn!(
++            "--lite profile active: single process, memory-only journal, no shadow worker/watchdog. \
++             A force-kill mid-update leaves the target half-applied with no automatic recovery."
++        );
++    }
+     if args.allow_unsigned && !verify::crypto::ALLOW_UNSIGNED_AT_BUILD {
+         log::warn!("--allow-unsigned is only honored in debug (allow-unsigned) builds; ignored");
+     }
+@@ -167,28 +200,28 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+ 
+     // ---- --dry-run：零落盘（跳过写权限预检与取锁）----
+     if args.mode == Mode::DryRun {
+-        return dry_run(&args);
++        return dry_run(args);
+     }
+ 
+     // ---- --watchdog：先等 Worker，再取锁接管收尾/回滚（TRANSACTION §1.4）----
+     if args.mode == Mode::Watchdog {
+-        return watchdog_mode(&args);
++        return watchdog_mode(args);
+     }
+ 
+     // ---- 1. 写权限预检：MkdirAll(.updater) + 探针文件 ----
+-    let probe = probe_target(&args);
++    let probe = probe_target(args);
+     if let Err(c) = probe {
+         // 提权分支：仅“非任何派生标记”的写权限预检失败 且 显式 --elevate（DESIGN §4.3）
+         if args.elevate && !args.is_derived() {
+             log::info!("target not writable (win32 error {}), requesting elevation", c);
+             let mut flags: Vec<String> = vec!["--elevated-worker".to_string()];
+-            let params = cli::rebuild_tokens(&args, &raw, &flags);
++            let params = cli::rebuild_tokens(args, &raw, &flags);
+             let _ = &mut flags;
+             match win32::elevate::elevate_self(&params) {
+                 ElevateResult::Launched(h) => {
+                     log::info!("elevated instance launched; exiting (DERIVED/elevate)");
+-                    end("DERIVED(elevate)", "-", "-", "-", "-", "elevation requested");
+-                    if args.wait_derived && planner::self_rel_in_target(&args).is_none() {
++                    end("DERIVED(elevate)", "-", "-", "-", "-", "elevation requested", args.profile.as_str());
++                    if args.wait_derived && planner::self_rel_in_target(args).is_none() {
+                         win32::process::wait_forever(h.get());
+                         return win32::process::exit_code(h.get()).unwrap_or(0) as i32;
+                     }
+@@ -196,21 +229,21 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+                 }
+                 ElevateResult::Cancelled => {
+                     log::warn!("UAC cancelled by user");
+-                    end("ABORTED", "-", "-", "-", "-", "uac cancelled");
+-                    fallback_launch(&args);
++                    end("ABORTED", "-", "-", "-", "-", "uac cancelled", args.profile.as_str());
++                    fallback_launch(args);
+                     return EXIT_ABORTED;
+                 }
+                 ElevateResult::Failed(e) => {
+                     log::warn!("elevation failed (win32 error {})", e);
+-                    end("ABORTED", "-", "-", "-", "-", "elevation failed");
+-                    fallback_launch(&args);
++                    end("ABORTED", "-", "-", "-", "-", "elevation failed", args.profile.as_str());
++                    fallback_launch(args);
+                     return EXIT_ABORTED;
+                 }
+             }
+         }
+         log::error!("target not writable (win32 error {}); aborting without changes", c);
+-        end("ABORTED", "-", "-", "-", "-", "target not writable");
+-        fallback_launch(&args);
++        end("ABORTED", "-", "-", "-", "-", "target not writable", args.profile.as_str());
++        fallback_launch(args);
+         return EXIT_ABORTED;
+     }
+ 
+@@ -224,8 +257,8 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+                 win32::lockfile::LockError::Win32(c) => format!("lock open failed (win32 error {})", c),
+             };
+             log::error!("{}", msg);
+-            end("ABORTED", "-", "-", "-", "-", "lock busy");
+-            fallback_launch(&args);
++            end("ABORTED", "-", "-", "-", "-", "lock busy", args.profile.as_str());
++            fallback_launch(args);
+             return EXIT_ABORTED;
+         }
+     };
+@@ -233,7 +266,7 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+ 
+     // ---- --recover 模式：取锁 → 等待 pid → 恢复 → 按需拉起 ----
+     if args.mode == Mode::Recover {
+-        return recover_mode(&args);
++        return recover_mode(args);
+     }
+ 
+     // ---- --rollback-previous：取锁 → 自愈优先 → 回退到保留的上一版本 ----
+@@ -241,7 +274,7 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+         let retr = RetryParams::new(args.write_retries, args.write_delay_ms);
+         if let Ok(journal::RecoverResult::RollbackIncomplete) = journal::recover(&args.target, args.previous_ttl_days, retr) {
+             log::error!("unresolved journal; refusing to start a rollback transaction");
+-            end("ABORTED", "-", "-", "-", "-", "unresolved journal");
++            end("ABORTED", "-", "-", "-", "-", "unresolved journal", args.profile.as_str());
+             return EXIT_CATASTROPHIC;
+         }
+         return match transaction::rollback_previous(
+@@ -252,7 +285,7 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+             retr,
+         ) {
+             Ok(transaction::RollbackPreviousOutcome::NoGeneration) => {
+-                end("COMMITTED", "-", "-", "-", "-", "no retained generation to roll back to");
++                end("COMMITTED", "-", "-", "-", "-", "no retained generation to roll back to", args.profile.as_str());
+                 EXIT_OK
+             }
+             Ok(transaction::RollbackPreviousOutcome::Reverted { version }) => {
+@@ -260,20 +293,29 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+                 if args.worker {
+                     let _ = selfcopy::rename_self_del();
+                 }
+-                end("COMMITTED", &v, "written", "retained", "unverified", "rolled back to previous generation");
++                end("COMMITTED", &v, "written", "retained", "unverified", "rolled back to previous generation", args.profile.as_str());
+                 EXIT_OK
+             }
+             Err(e) => {
+                 log::error!("rollback-previous failed: {}", e);
+-                end("ABORTED", "-", "-", "-", "-", "rollback-previous failed");
++                end("ABORTED", "-", "-", "-", "-", "rollback-previous failed", args.profile.as_str());
+                 EXIT_CATASTROPHIC
+             }
+         };
+     }
+ 
+-    // ---- 3. 影子分身：自身在 target 内 且 未带 --worker ----
+-    let self_in = planner::self_rel_in_target(&args).is_some();
+-    if self_in && !args.worker {
++    // ---- 3. 影子分身：自身在 target 内 且 未带 --worker 且 档位允许派生 ----
++    // lite 档就地执行：不把自身复制到运行期目录、不派生 Worker。
++    // 副作用（正向）：运行期目录找不到可写位置时不再 ABORT——日志自动回退 %TEMP%，
++    // 影子 Worker 整段跳过（这正是复核文档 A1 门槛与风险 2 的来源）。
++    let self_in = planner::self_rel_in_target(args).is_some();
++    if self_in && !args.profile.forks() {
++        log::info!(
++            "--lite: running in place (no shadow worker); {} stays protected by the self-rel invariant",
++            planner::self_rel_in_target(args).unwrap_or_default()
++        );
++    }
++    if self_in && !args.worker && args.profile.forks() {
+         if args.wait_derived {
+             log::warn!("--wait-derived conflicts with self-in-target; forcing no-wait to keep self-update ability");
+         }
+@@ -281,58 +323,63 @@ fn run(args: Args, raw: Vec<String>) -> i32 {
+             Some(b) => b,
+             None => {
+                 log::error!("no usable runtime directory for shadow worker");
+-                end("ABORTED", "-", "-", "-", "-", "runtime dir unavailable");
+-                fallback_launch(&args);
++                end("ABORTED", "-", "-", "-", "-", "runtime dir unavailable", args.profile.as_str());
++                fallback_launch(args);
+                 return EXIT_ABORTED;
+             }
+         };
+         let gen = journal::gen_new();
+-        match selfcopy::spawn_worker(&args, &raw, &b.runtime, &gen) {
++        match selfcopy::spawn_worker(args, &raw, &b.runtime, &gen) {
+             Ok(child) => {
+                 log::info!("shadow worker spawned (pid {}); releasing image of target/updater.exe", child.pid);
+                 // 不提前释放锁：创建成功后主实例直接退出，锁句柄由内核关闭（DELETE_ON_CLOSE），
+                 // Worker 依靠 10s 容差轮询承接——无主窗口已消除（DESIGN §4.3）
+-                end("DERIVED(worker)", "-", "-", "-", "-", "handed off to shadow worker");
++                end("DERIVED(worker)", "-", "-", "-", "-", "handed off to shadow worker", args.profile.as_str());
+                 return EXIT_OK;
+             }
+             Err(e) => {
+                 log::error!("failed to spawn shadow worker ({}); aborting without changes", e);
+-                end("ABORTED", "-", "-", "-", "-", "worker spawn failed");
+-                fallback_launch(&args);
++                end("ABORTED", "-", "-", "-", "-", "worker spawn failed", args.profile.as_str());
++                fallback_launch(args);
+                 return EXIT_ABORTED;
+             }
+         }
+     }
+ 
+     // ---- 4. 崩溃恢复优先介入（恢复早于预检，自愈现场优先于新事务）----
++    // lite 档整段跳过：没有落盘 Journal 可读，"恢复"这一概念在档位下不存在。
+     let retr = RetryParams::new(args.write_retries, args.write_delay_ms);
+-    match journal::recover(&args.target, args.previous_ttl_days, retr) {
+-        Ok(journal::RecoverResult::NoJournal) => {}
+-        Ok(journal::RecoverResult::RollbackIncomplete) => {
+-            log::error!("rollback from previous run incomplete; refusing to start a new transaction");
+-            end("ABORTED", "-", "-", "-", "-", "unresolved journal");
+-            return EXIT_CATASTROPHIC;
+-        }
+-        Ok(r) => {
+-            let what = match r {
+-                journal::RecoverResult::Cleaned => "stale PLANNED journal cleaned up",
+-                journal::RecoverResult::RolledBack => "previous transaction rolled back",
+-                journal::RecoverResult::Finalized => "previous committed transaction finalized",
+-                _ => "recovery pass complete",
+-            };
+-            log::info!("recovery pass: {}", what);
+-        }
+-        Err(e) => {
+-            log::error!("journal rejected: {} (site preserved)", e);
+-            end("ABORTED", "-", "-", "-", "-", "journal rejected");
+-            return EXIT_CATASTROPHIC;
++    if !args.profile.durable() {
++        log::info!("--lite: no on-disk journal; skipping recovery pass and stale-generation GC");
++    } else {
++        match journal::recover(&args.target, args.previous_ttl_days, retr) {
++            Ok(journal::RecoverResult::NoJournal) => {}
++            Ok(journal::RecoverResult::RollbackIncomplete) => {
++                log::error!("rollback from previous run incomplete; refusing to start a new transaction");
++                end("ABORTED", "-", "-", "-", "-", "unresolved journal", args.profile.as_str());
++                return EXIT_CATASTROPHIC;
++            }
++            Ok(r) => {
++                let what = match r {
++                    journal::RecoverResult::Cleaned => "stale PLANNED journal cleaned up",
++                    journal::RecoverResult::RolledBack => "previous transaction rolled back",
++                    journal::RecoverResult::Finalized => "previous committed transaction finalized",
++                    _ => "recovery pass complete",
++                };
++                log::info!("recovery pass: {}", what);
++            }
++            Err(e) => {
++                log::error!("journal rejected: {} (site preserved)", e);
++                end("ABORTED", "-", "-", "-", "-", "journal rejected", args.profile.as_str());
++                return EXIT_CATASTROPHIC;
++            }
+         }
+-    }
+ 
+-    // 陈世代 GC（Tier 2）
+-    gc::run(&args.target, args.previous_ttl_days);
++        // 陈世代 GC（Tier 2）
++        gc::run(&args.target, args.previous_ttl_days);
++    }
+ 
+-    update_flow(&args, raw, retr)
++    update_flow(args, raw, retr)
+ }
+ 
+ /// 恢复看门狗（L2，TRANSACTION §1.4）：等 Worker 退出（句柄绑定 + 映像核验 PID 复用 +
+@@ -361,7 +408,7 @@ fn watchdog_mode(args: &Args) -> i32 {
+                         safety_timeout
+                     );
+                     let _ = selfcopy::rename_self_del();
+-                    end("ABORTED", "-", "-", "-", "-", "watchdog safety timeout, degraded to L3");
++                    end("ABORTED", "-", "-", "-", "-", "watchdog safety timeout, degraded to L3", args.profile.as_str());
+                     return EXIT_OK;
+                 }
+                 log::info!("watchdog: worker exited");
+@@ -375,7 +422,7 @@ fn watchdog_mode(args: &Args) -> i32 {
+         Err(_) => {
+             log::info!("watchdog: lock still held (another updater instance took over); exiting");
+             let _ = selfcopy::rename_self_del();
+-            end("ABORTED", "-", "-", "-", "-", "lock held by another instance");
++            end("ABORTED", "-", "-", "-", "-", "lock held by another instance", args.profile.as_str());
+             return EXIT_OK;
+         }
+     };
+@@ -384,7 +431,7 @@ fn watchdog_mode(args: &Args) -> i32 {
+         Ok(journal::RecoverResult::RollbackIncomplete) | Err(_) => {
+             log::error!("watchdog: recovery incomplete; site preserved");
+             let _ = selfcopy::rename_self_del();
+-            end("ABORTED", "-", "-", "-", "-", "watchdog recovery incomplete");
++            end("ABORTED", "-", "-", "-", "-", "watchdog recovery incomplete", args.profile.as_str());
+             EXIT_CATASTROPHIC
+         }
+         Ok(r) => {
+@@ -400,7 +447,7 @@ fn watchdog_mode(args: &Args) -> i32 {
+             };
+             log::info!("watchdog: {}", what);
+             let _ = selfcopy::rename_self_del();
+-            end("COMMITTED", "-", "-", "-", "-", what);
++            end("COMMITTED", "-", "-", "-", "-", what, args.profile.as_str());
+             EXIT_OK
+         }
+     }
+@@ -412,7 +459,7 @@ fn recover_mode(args: &Args) -> i32 {
+         match win32::process::wait_pid(args.pid, args.timeout, "") {
+             WaitResult::Timeout => {
+                 log::error!("timeout waiting for pid {}", args.pid);
+-                end("ABORTED", "-", "-", "-", "-", "recover wait timeout");
++                end("ABORTED", "-", "-", "-", "-", "recover wait timeout", args.profile.as_str());
+                 return EXIT_ABORTED;
+             }
+             WaitResult::Exited => {}
+@@ -422,11 +469,11 @@ fn recover_mode(args: &Args) -> i32 {
+     match journal::recover(&args.target, args.previous_ttl_days, retr) {
+         Err(e) => {
+             log::error!("journal rejected: {} (site preserved)", e);
+-            end("ABORTED", "-", "-", "-", "-", "journal rejected");
++            end("ABORTED", "-", "-", "-", "-", "journal rejected", args.profile.as_str());
+             EXIT_CATASTROPHIC
+         }
+         Ok(journal::RecoverResult::RollbackIncomplete) => {
+-            end("ABORTED", "-", "-", "-", "-", "rollback incomplete");
++            end("ABORTED", "-", "-", "-", "-", "rollback incomplete", args.profile.as_str());
+             EXIT_CATASTROPHIC
+         }
+         Ok(r) => {
+@@ -447,7 +494,7 @@ fn recover_mode(args: &Args) -> i32 {
+                 journal::RecoverResult::RolledBack => "ROLLED_BACK",
+                 _ => "ABORTED",
+             };
+-            end(kind, "-", "-", "-", "-", what);
++            end(kind, "-", "-", "-", "-", what, args.profile.as_str());
+             EXIT_OK
+         }
+     }
+@@ -457,7 +504,7 @@ fn dry_run(args: &Args) -> i32 {
+     match planner::precheck(args) {
+         Err(e) => {
+             log::error!("precheck rejected: {}", e);
+-            end("ABORTED", "-", "-", "-", "-", "precheck failed");
++            end("ABORTED", "-", "-", "-", "-", "precheck failed", args.profile.as_str());
+             2
+         }
+         Ok(pc) => {
+@@ -485,7 +532,7 @@ fn dry_run(args: &Args) -> i32 {
+                 log::info!("{}", line.trim());
+             }
+             let ver = pc.tover.clone().unwrap_or_else(|| "-".to_string());
+-            end("COMMITTED", &ver, "-", "-", "-", "dry-run plan only");
++            end("COMMITTED", &ver, "-", "-", "-", "dry-run plan only", args.profile.as_str());
+             EXIT_OK
+         }
+     }
+@@ -505,7 +552,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         Ok(pc) => pc,
+         Err(e) => {
+             log::error!("precheck rejected: {} (target untouched)", e);
+-            end("ABORTED", "-", "-", "-", "-", "precheck failed");
++            end("ABORTED", "-", "-", "-", "-", "precheck failed", args.profile.as_str());
+             gui.close();
+             fallback_launch(args);
+             return EXIT_ABORTED;
+@@ -521,7 +568,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         match win32::process::wait_pid(args.pid, args.timeout, &expect) {
+             WaitResult::Timeout => {
+                 log::error!("timeout waiting for target process {}; aborting without changes", args.pid);
+-                end("ABORTED", "-", "-", "-", "-", "wait timeout");
++                end("ABORTED", "-", "-", "-", "-", "wait timeout", args.profile.as_str());
+                 gui.close();
+                 fallback_launch(args);
+                 return EXIT_ABORTED;
+@@ -551,6 +598,10 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+     }
+ 
+     // ---- 8. 写 Journal PLANNED + fsync（先落盘计划，再改动任何文件）----
++    // lite 档：Journal 只存在于内存（`create_memory`），不落盘、不 fsync。
++    // 注意 `tover` 在非持久化档位置 None —— 于是 `finalize_committed` 自动跳过
++    // `.updater\state` 写入（`transaction.rs` §1 的 `match &j.tover { None => "skipped" }`），
++    // 版本/降级防护随之关闭，无需第二套收尾逻辑。
+     let gen = args.gen.clone().unwrap_or_else(journal::gen_new);
+     let up = format!("{}\\.updater", args.target.trim_end_matches('\\'));
+     let j = Journal {
+@@ -558,7 +609,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         target: normalize(&args.target),
+         backup: format!("{}\\backup\\{}", up, gen),
+         tmpdir: format!("{}\\tmp\\{}", up, gen),
+-        tover: tover.clone(),
++        tover: if args.profile.records_version_state() { tover.clone() } else { None },
+         stage: Stage::Planned,
+         exist: plan.files.iter().filter(|f| f.overwrite).map(|f| f.rel.clone()).collect(),
+         new: plan.files.iter().filter(|f| !f.overwrite).map(|f| f.rel.clone()).collect(),
+@@ -566,23 +617,33 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         moved: Vec::new(),
+         added: Vec::new(),
+     };
+-    let mut jw = match journal::JournalWriter::create(&j) {
+-        Ok(w) => w,
+-        Err(e) => {
+-            log::error!("failed to write journal: {}", e);
+-            end("ABORTED", "-", "-", "-", "-", "journal write failed");
+-            return EXIT_ABORTED;
++    let mut jw = if args.profile.durable() {
++        match journal::JournalWriter::create(&j) {
++            Ok(w) => w,
++            Err(e) => {
++                log::error!("failed to write journal: {}", e);
++                end("ABORTED", "-", "-", "-", "-", "journal write failed", args.profile.as_str());
++                return EXIT_ABORTED;
++            }
+         }
++    } else {
++        log::info!("--lite: memory-only journal; no PLANNED record persisted, rollback is in-process only");
++        journal::JournalWriter::create_memory()
+     };
+     // 备份/临时目录预创建 + 隐藏属性（隐藏只加在目录上，文件保持 NORMAL）
++    // 两个目录**两个档位都需要**：它们承载 ReplaceFileW 的备份与解压落点，
++    // 是回滚能力的物质基础，与 Journal 是否落盘无关。lite 档在收尾时整体清除。
+     let _ = std::fs::create_dir_all(&j.backup);
+     let _ = std::fs::create_dir_all(&j.tmpdir);
+     win32::set_hidden_sys(&j.backup);
+     win32::set_hidden_sys(&j.tmpdir);
+ 
+     // ---- 9. 派生恢复看门狗（L2，TRANSACTION §1.4）：PLANNED fsync 之后、APPLYING 之前，
+-    //         看门狗在任何文件动作之前即已存在。派生失败仅 WARNING，降级 L3，不阻断更新。----
+-    if let Some(b) = runtime::locate(&args.target) {
++    //         看门狗在任何文件动作之前即已存在。派生失败仅 WARNING，降级 L3，不阻断更新。
++    //         lite 档不派生：档位已明示放弃"强杀后收敛"，看门狗失去存在前提。----
++    if !args.profile.forks() {
++        log::info!("--lite: no watchdog (L2) spawned; crash self-healing is not available in this profile");
++    } else if let Some(b) = runtime::locate(&args.target) {
+         let worker_image = std::env::current_exe()
+             .map(|p| p.to_string_lossy().into_owned())
+             .unwrap_or_default();
+@@ -605,7 +666,7 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         let _ = std::fs::remove_dir_all(&j.backup);
+         let _ = std::fs::remove_dir_all(&j.tmpdir);
+         let _ = std::fs::remove_file(journal::journal_path(&args.target));
+-        end("ABORTED", "-", "-", "-", "-", "journal fsync failed");
++        end("ABORTED", "-", "-", "-", "-", "journal fsync failed", args.profile.as_str());
+         return EXIT_ABORTED;
+     }
+ 
+@@ -681,7 +742,16 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+     drop(jw);
+ 
+     // ---- 12b/12c/13. 收尾：state 原子写入 → _meta.txt → 备份转移 → 删 Journal ----
+-    let stats = transaction::finalize_committed(&args.target, &j, args.previous_ttl_days, retr, false, None);
++    // lite 档 `ttl_days` 由档位强制为 0 ⇒ 直接走 `finalize_committed` 既有的"删除备份目录"
++    // 分支；`j.tover` 为 None ⇒ 自动跳过 `state` 写入。收尾逻辑一行未改。
++    let stats = transaction::finalize_committed(
++        &args.target,
++        &j,
++        args.profile.ttl_days(args.previous_ttl_days),
++        retr,
++        false,
++        None,
++    );
+     gui.set_status(strings.completing, true);
+ 
+     // ---- 14. --delete-zip（zip 句柄已关闭；失败仅 WARNING）----
+@@ -709,11 +779,11 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
+         if args.worker {
+             let _ = selfcopy::rename_self_del();
+         }
+-        end("COMMITTED", &ver, stats.state, stats.previous, hashes, "updated and launched");
++        end("COMMITTED", &ver, stats.state, stats.previous, hashes, "updated and launched", args.profile.as_str());
+         EXIT_OK
+     } else {
+         // 已提交但拉起失败 → 退出码 3（新版已就位但用户看不到）
+-        end("COMMITTED", &ver, stats.state, stats.previous, hashes, "committed but launch failed");
++        end("COMMITTED", &ver, stats.state, stats.previous, hashes, "committed but launch failed", args.profile.as_str());
+         EXIT_CATASTROPHIC
+     }
+ }
+@@ -734,12 +804,12 @@ fn finish_rollback(args: &Args, j: &Journal, retr: RetryParams, hashes: &str) ->
+     match transaction::rollback(&args.target, j, retr) {
+         Ok(()) => {
+             let ver = j.tover.clone().unwrap_or_else(|| "-".to_string());
+-            end("ROLLED_BACK", &ver, "skipped", "deleted", hashes, "update failed, old version restored");
++            end("ROLLED_BACK", &ver, "skipped", "deleted", hashes, "update failed, old version restored", args.profile.as_str());
+             fallback_launch(args);
+             EXIT_ROLLED_BACK
+         }
+         Err(()) => {
+-            end("ABORTED", "-", "-", "failed", hashes, "rollback incomplete; site preserved");
++            end("ABORTED", "-", "-", "failed", hashes, "rollback incomplete; site preserved", args.profile.as_str());
+             EXIT_CATASTROPHIC
+         }
+     }
+@@ -775,6 +845,17 @@ fn self_check(
+                 log::warn!("--skip-hash-verify: per-file hash self-check skipped; run marked unverified");
+                 return Ok("unverified");
+             }
++            // lite 档：跳过逐文件重新读盘复核（复核文档 A3）。
++            // 注意只跳过"重新读盘比对"这一段——`--require` 存在性、`--launch` PE 头、
++            // 解压总量一致这三项**仍然执行**：它们廉价且直接反映本次事务成败，
++            // 与"是否持久化 Journal"无关。
++            if !args.profile.durable() {
++                log::info!(
++                    "--lite: per-file hash re-read skipped ({} file(s)); total-bytes / --require / PE checks still enforced",
++                    plan.files.len()
++                );
++                return Ok("unverified");
++            }
+             for f in &plan.files {
+                 let key = f.rel.to_lowercase();
+                 let me = m
+diff --git a/tools/better-updater/src/planner.rs b/tools/better-updater/src/planner.rs
+index da70b4e..4fb127a 100644
+--- a/tools/better-updater/src/planner.rs
++++ b/tools/better-updater/src/planner.rs
+@@ -25,8 +25,10 @@ pub struct PrecheckOut {
+ 
+ impl PrecheckOut {
+     /// 提交前自检是否启用逐文件哈希复核。
++    /// 与 `main::self_check` 的实际行为必须保持一致（lite 档不重新读盘比对）——
++    /// 否则日志会声称 `hashes=verified` 而实际未验。
+     pub fn hashes_verified(&self, args: &Args) -> bool {
+-        self.manifest.is_some() && !args.skip_hash_verify
++        self.manifest.is_some() && !args.skip_hash_verify && args.profile.durable()
+     }
+ }
+ 
