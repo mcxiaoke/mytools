@@ -41,16 +41,42 @@ const EXIT_ROLLED_BACK: i32 = 1;
 const EXIT_ABORTED: i32 = 2;
 const EXIT_CATASTROPHIC: i32 = 3;
 
+/// 只输出模式的可见性保障（RELEASE-READINESS P1-5）。
+///
+/// release 构建是 GUI 子系统，从终端直接启动时**没有控制台、std 句柄无效**，
+/// `println!` 会被静默丢弃（`--dry-run` 的逐条比对因此拿不到输出）。
+/// std 句柄可用时（被重定向/管道捕获、或 debug 构建）保持原有 stdout 语义**完全不变**——
+/// 脚本与 CI 的抓取行为不受影响。
+fn emit(line: &str) {
+    if win32::console::stdout_usable() {
+        println!("{}", line);
+    } else {
+        win32::console::attach();
+        let _ = win32::console::console_write_line(line);
+    }
+}
+
+fn emit_block(block: &str) {
+    if win32::console::stdout_usable() {
+        println!("{}", block);
+    } else {
+        win32::console::attach();
+        for l in block.lines() {
+            let _ = win32::console::console_write_line(l);
+        }
+    }
+}
+
 fn main() {
     let raw: Vec<String> =
         std::env::args_os().skip(1).map(|s| s.to_string_lossy().into_owned()).collect();
     let code = match cli::parse(raw.clone()) {
         Ok(cli::Startup::Help(h)) => {
-            println!("{}", h);
+            emit_block(&h);
             0
         }
         Ok(cli::Startup::Version(v)) => {
-            println!("{}", v);
+            emit(&v);
             0
         }
         Ok(cli::Startup::Run(a)) => run(*a, raw),
@@ -445,17 +471,17 @@ fn dry_run(args: &Args) -> i32 {
             log::info!("plan: {} file(s) to write, {} dir(s) to create, {} skipped", plan.files.len(), plan.dirs.len(), plan.skipped.len());
             for f in &plan.files {
                 let line = format!("  {} {} ({} bytes)", if f.overwrite { "OVERWRITE" } else { "ADD" }, f.rel, f.size);
-                println!("{}", line);
+                emit(&line);
                 log::info!("{}", line.trim());
             }
             for d in &plan.dirs {
                 let line = format!("  MKDIR {}", d);
-                println!("{}", line);
+                emit(&line);
                 log::info!("{}", line.trim());
             }
             for (r, why) in &plan.skipped {
                 let line = format!("  SKIP {} ({})", r, why);
-                println!("{}", line);
+                emit(&line);
                 log::info!("{}", line.trim());
             }
             let ver = pc.tover.clone().unwrap_or_else(|| "-".to_string());
@@ -581,6 +607,23 @@ fn update_flow(args: &Args, raw: Vec<String>, retr: RetryParams) -> i32 {
         let _ = std::fs::remove_file(journal::journal_path(&args.target));
         end("ABORTED", "-", "-", "-", "-", "journal fsync failed");
         return EXIT_ABORTED;
+    }
+
+    // ---- 10b. 创建计划内的目录（parents-first；plan.dirs 已按层级深度排序）----
+    // 覆盖"包内含空目录"（zip 目录条目 / 清单 DIR 行）这一情形——文件自身的父目录由
+    // apply_file 的 MkdirAll 兜底，但**空目录不会**被任何文件动作顺带创建。
+    // 位置固定在 APPLYING 之后：回滚的 R1.D 按逆序删除这些空目录，语义与此严格对称。
+    {
+        let t = args.target.trim_end_matches('\\');
+        for d in &plan.dirs {
+            let p = format!("{}\\{}", t, d);
+            if let Err(e) = std::fs::create_dir_all(&p) {
+                log::error!("failed to create directory {} ({}); rolling back", d, e);
+                drop(jw);
+                gui.close();
+                return finish_rollback(args, &j, retr, hashes_planned);
+            }
+        }
     }
 
     // ---- 11. 事务替换：按 zip 条目顺序串行逐文件（提取 → 替换 → 建议性记录）----
@@ -740,11 +783,14 @@ fn self_check(
                     .find(|x| x.rel.to_lowercase() == key)
                     .ok_or_else(|| format!("planned file {} missing from updater.manifest (package inconsistent)", f.rel))?;
                 let p = format!("{}\\{}", target, f.rel);
-                let bytes = std::fs::read(&p).map_err(|e| format!("re-read {} failed: {}", f.rel, e))?;
-                if bytes.len() as u64 != me.size {
-                    return Err(format!("size mismatch for {}: on disk {} manifest {}", f.rel, bytes.len(), me.size));
+                // 流式哈希（64 KiB 缓冲，常量内存）：整包可达 GB 级，
+                // 一次性 fs::read 会在峰值内存上失败并让整包白白回滚。
+                // 实际字节数与摘要一次读盘同时得到，无额外 stat、无 TOCTOU 窗口。
+                let (on_disk, h) =
+                    verify::sha256::hash_file(&p).map_err(|e| format!("re-read {} failed: {}", f.rel, e))?;
+                if on_disk != me.size {
+                    return Err(format!("size mismatch for {}: on disk {} manifest {}", f.rel, on_disk, me.size));
                 }
-                let h = verify::sha256::hex_of_bytes(&bytes);
                 if h != me.sha256 {
                     return Err(format!("hash mismatch for {} (disk write corrupted or modified)", f.rel));
                 }

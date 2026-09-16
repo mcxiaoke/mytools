@@ -147,11 +147,11 @@ impl Drop for GuiProgress {
 
 fn run_gui_thread(title: String, init_tx: Sender<Option<isize>>, rx: Receiver<GuiMsg>) {
     unsafe {
-        let mut icce = INITCOMMONCONTROLSEX {
+        let icce = INITCOMMONCONTROLSEX {
             dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
             dwICC: ICC_PROGRESS_CLASS,
         };
-        InitCommonControlsEx(&mut icce);
+        InitCommonControlsEx(&icce);
 
         let class_name = wide("UpdaterProgressWindowClass");
         let h_instance = GetModuleHandleW(std::ptr::null());
@@ -223,7 +223,7 @@ fn run_gui_thread(title: String, init_tx: Sender<Option<isize>>, rx: Receiver<Gu
             386,
             22,
             hwnd,
-            101 as isize as _,
+            101 as _,
             h_instance,
             std::ptr::null(),
         );
@@ -242,7 +242,7 @@ fn run_gui_thread(title: String, init_tx: Sender<Option<isize>>, rx: Receiver<Gu
             386,
             20,
             hwnd,
-            102 as isize as _,
+            102 as _,
             h_instance,
             std::ptr::null(),
         );
@@ -261,7 +261,7 @@ fn run_gui_thread(title: String, init_tx: Sender<Option<isize>>, rx: Receiver<Gu
             386,
             22,
             hwnd,
-            103 as isize as _,
+            103 as _,
             h_instance,
             std::ptr::null(),
         );

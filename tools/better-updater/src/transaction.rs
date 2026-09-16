@@ -34,7 +34,11 @@ fn retryable_code(c: u32) -> bool {
 pub fn replace_file(dst: &str, src: &str, backup: Option<&str>, retr: RetryParams) -> Result<(), u32> {
     let wdst = wide(&to_verbatim(dst));
     let wsrc = wide(&to_verbatim(src));
-    let wbak = backup.map(wide);
+    // 备份路径同样必须走单一路径构造（DESIGN §7.3）。
+    // 曾经漏了这一步：短路径下看不出问题，一旦 `dst`/`bak` 合计超过 MAX_PATH，
+    // ReplaceFileW 就按裸 ANSI 路径解析备份参数并返回 ERROR_PATH_NOT_FOUND(3)——
+    // 表现为"长路径下所有覆盖类更新必然失败并回滚"。由 tests/pkg_guards.rs::long_path 覆盖。
+    let wbak = backup.map(|b| wide(&to_verbatim(b)));
     let mut last = 0u32;
     for attempt in 0..=retr.retries {
         let bptr = wbak.as_ref().map(|v| v.as_ptr()).unwrap_or(core::ptr::null());

@@ -374,6 +374,109 @@ pub fn write_journal(
     fs::write(up.join("journal"), s).unwrap();
 }
 
+// ---------------------------------------------------------------------------
+// 真实终止（崩溃窗口）夹具
+// ---------------------------------------------------------------------------
+
+/// 以"允许读共享、允许写共享、**拒绝删除共享**"打开文件。
+/// ReplaceFileW 需要移走旧文件 ⇒ 必然得到 ERROR_SHARING_VIOLATION(32)，
+/// 从而让事务停在"某个文件已替换成功、下一个文件反复重试"的状态。
+pub fn hold_deny_delete(p: &Path) -> fs::File {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    let w: Vec<u16> = p.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+    let h = unsafe {
+        CreateFileW(
+            w.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            core::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            core::ptr::null_mut(),
+        )
+    };
+    assert!(!h.is_null() && h != INVALID_HANDLE_VALUE, "hold_deny_delete: open {} failed", p.display());
+    unsafe { fs::File::from_raw_handle(h) }
+}
+
+/// 以"仅允许读共享"打开（必要时创建）文件：任何写入者与删除者都会被拒。
+/// 用于把收尾阶段的原子写（如 `state.tmp`）拖入 3×200ms 的重试窗口。
+pub fn hold_deny_write(p: &Path) -> fs::File {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+    };
+    if !p.exists() {
+        fs::write(p, b"").unwrap();
+    }
+    let w: Vec<u16> = p.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+    let h = unsafe {
+        CreateFileW(
+            w.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            core::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            core::ptr::null_mut(),
+        )
+    };
+    assert!(!h.is_null() && h != INVALID_HANDLE_VALUE, "hold_deny_write: open {} failed", p.display());
+    unsafe { fs::File::from_raw_handle(h) }
+}
+
+/// 以**显式条目顺序**打包（zip 条目顺序即 apply 顺序）：用于精确构造崩溃窗口现场。
+pub fn make_zip_ordered(entries: &[(&str, &[u8])], zip_path: &Path) {
+    let file = fs::File::create(zip_path).unwrap();
+    let mut w = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, data) in entries {
+        w.start_file(*name, opts).unwrap();
+        std::io::Write::write_all(&mut w, data).unwrap();
+    }
+    w.finish().unwrap();
+}
+
+/// 枚举 `.updater\backup\<GEN>\` 下的全部文件（"ReplaceFileW 已成功"的物证）。
+pub fn backup_files(target: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let root = target.join(".updater\\backup");
+    let rd = match fs::read_dir(&root) {
+        Ok(r) => r,
+        Err(_) => return out,
+    };
+    for g in rd.flatten() {
+        if let Ok(inner) = fs::read_dir(g.path()) {
+            for f in inner.flatten() {
+                out.push(f.path());
+            }
+        }
+    }
+    out
+}
+
+/// 拉起 updater 并返回子进程句柄（供真实终止用）。**不获取全局锁**，由调用方持有。
+pub fn spawn_updater(target: &Path, args: &[&str], log: Option<&Path>) -> std::process::Child {
+    let mut cmd = Command::new(exe_path());
+    cmd.arg("--target").arg(target);
+    if let Some(l) = log {
+        cmd.arg("--log").arg(l);
+    }
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn updater")
+}
+
 /// 判断路径是否带 HIDDEN 或 SYSTEM 属性（Tier 2 布局断言用）。
 pub fn is_hidden_or_system(p: &Path) -> bool {
     use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};

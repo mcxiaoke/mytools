@@ -282,12 +282,15 @@ pub fn build(entries: &[Entry], args: &Args, rules: &KeepRules, self_rel: Option
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut total = 0u64;
     {
-        let chain = |rel: &str, dirs: &mut Vec<String>, seen: &mut HashSet<String>| {
+        // 登记"需要创建的目录链"。`include_last=false` 用于**文件**条目：
+        // 否则文件自身的名字会被当成目录登记进 DIR 集合（既有缺陷，长期被"plan.dirs
+        // 从不真正创建"掩盖；一旦开始创建目录就会凭空造出一个与文件同名的目录，
+        // 使 place_file 报 DstIsDir 并整包回滚）。目录条目与清单 DIR 行则需包含末段。
+        let chain = |rel: &str, include_last: bool, dirs: &mut Vec<String>, seen: &mut HashSet<String>| {
+            let segs: Vec<&str> = rel.split('\\').filter(|s| !s.is_empty()).collect();
+            let take = if include_last { segs.len() } else { segs.len().saturating_sub(1) };
             let mut cur = String::new();
-            for seg in rel.split('\\') {
-                if seg.is_empty() {
-                    continue;
-                }
+            for seg in segs.iter().take(take) {
                 if cur.is_empty() {
                     cur = seg.to_string();
                 } else {
@@ -307,7 +310,7 @@ pub fn build(entries: &[Entry], args: &Args, rules: &KeepRules, self_rel: Option
                     skipped.push((e.rel.clone(), "internal reserved name".to_string()));
                     continue;
                 }
-                chain(&e.rel, &mut dirs, &mut seen);
+                chain(&e.rel, true, &mut dirs, &mut seen);
                 continue;
             }
             if e.rel.eq_ignore_ascii_case("updater.manifest") {
@@ -330,13 +333,13 @@ pub fn build(entries: &[Entry], args: &Args, rules: &KeepRules, self_rel: Option
                 skipped.push((e.rel.clone(), "keep rule".to_string()));
                 continue;
             }
-            chain(&e.rel, &mut dirs, &mut seen);
+            chain(&e.rel, false, &mut dirs, &mut seen);
             let overwrite = exists(&e.rel);
             total += e.size;
             files.push(FileOp { rel: e.rel.clone(), idx: e.idx, size: e.size, overwrite });
         }
         for d in manifest_dirs {
-            chain(d, &mut dirs, &mut seen);
+            chain(d, true, &mut dirs, &mut seen);
         }
     }
     // parents-first（创建顺序）；回滚时逆序删除
