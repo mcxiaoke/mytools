@@ -27,7 +27,7 @@
 | **P0-1** 签名决策 | ✅ **已决策：本期不启用** | 已记入 `DESIGN.md` §6.1、`USAGE.md` §9、`RELEASE-NOTES.md` §1；补偿义务（HTTPS + 显式声明）已写入 |
 | **P0-2** 真实强杀验证 | ✅ **已完成** | `tests/crash_windows.rs` 两个窗口均为**真实进程终止**（非模拟），并带证据输出 |
 | **P0-3** CI | 🟡 **本机已跑通，根目录激活待办** | `scripts/verify.ps1` 全绿、`docs/artifacts/` 已归档；仓库根 `.github/workflows/` 仍需用户配置 |
-| **P0-4** 调用方文档 | ✅ 已产出 | `docs/USAGE.md`（8 项契约 + 参数 + 退出码 + 排障）；发布说明 `docs/RELEASE-NOTES.md` |
+| **P0-4** 调用方文档 | ✅ 已产出 | `docs/USAGE.md`（7 项契约 + 参数 + 退出码 + 排障）；发布说明 `docs/RELEASE-NOTES.md` |
 | **P1-1** 自检流式化 | ✅ 已修复 | 新增 `verify::sha256::hash_file`（64 KiB 流式，常量内存）+ 等价性单元测试 |
 | **P1-5** release stdout 不可见 | ✅ 已修复 | `win32::console` 增 `stdout_usable` / `console_write_line`；重定向/管道场景语义**不变**。已实测：管道捕获下 `--help` 输出 39 行、`--version` 输出 `unsigned-build`；DETACHED（无 std 句柄）下退出 0 且**不挂起**。⚠️ **`CONOUT$` 兜底分支的实际可见性未能在本机验证**（需要真实控制台且无 std 句柄的组合），只能靠代码审查确认路径正确 |
 | **P1-6** 可做夹具 | ✅ 已完成 | 新增 `tests/pkg_guards.rs` 9 条 |

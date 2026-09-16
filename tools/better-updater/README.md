@@ -34,7 +34,7 @@ updater.exe --pid <PID> --zip <UPDATE.zip> --target <INSTALL_DIR> --launch <APP.
 
 ## 快速开始
 
-- **要接进自己的应用** → [`docs/USAGE.md`](docs/USAGE.md)（含 8 项集成契约、参数表、退出码、排障）
+- **要接进自己的应用** → [`docs/USAGE.md`](docs/USAGE.md)（含 7 项集成契约、参数表、退出码、排障）
 - **要发版** → `docs/USAGE.md` §2.1 + `scripts/gen_manifest.ps1`
 - **想知道与旧版（lite）差在哪** → [`docs/updater-vs-better-updater-reliability-recheck.md`](docs/updater-vs-better-updater-reliability-recheck.md)
 
@@ -98,8 +98,26 @@ cargo test --all-targets                     # 仅测试
 | 项目 | 定位 |
 | :--- | :--- |
 | **本项目（better-updater）** | 完整基线：Journal + 三层自愈 + 看门狗 + 版本防护 + 回退引擎 |
-| `../../updater/rust`（**lite 版**） | 极简路线：内存回滚栈，无崩溃自愈入口。**参数与单位兼容**，但有 9 处行为差异 |
+| `../../updater/rust`（**lite 版**） | 极简路线：内存回滚栈，无崩溃自愈入口。**参数与单位兼容**，但有 9 处行为差异。**已停止维护**，源码与参照二进制冻结在 [`docs/archive/lite-baseline-20260916/`](docs/archive/lite-baseline-20260916/) |
 | `../../updater/go`（Go 版） | 历史版本，纯静默；作为 `.updatekeep` 语义的对照基线 |
+
+### 恢复能力与人工入口
+
+**承诺 L1 + L2**：进程内失败会整包回滚；施工进程被强杀时**看门狗接管并收敛**。
+掉电/重启一类（看门狗亦亡）为**尽力而为**——因为被中断的更新可能让应用**起不来**，
+此时调用方的启动自检代码也跑不到，"能收敛"无从触发。
+
+因此另给两条**不依赖宿主**的路径：
+
+```text
+updater.exe            # 无参数 = 自身修复：收敛本 exe 所在目录（安装目录里双击即可）
+```
+
+并把**更新包保留**写成兜底契约，配合打包时的**启动闭包排在末尾**规则，
+把"中断落在致命组合上"的概率从覆盖整个事务压到启动闭包那一小段。
+
+> 完整说明见 [`docs/USAGE.md`](docs/USAGE.md) §8.3（能力边界）、§12（自身修复入口）、§13（更新包与打包规范）。
+> 打包用 `scripts/release_pack.ps1`——它已实现顺序规则并带回读校验。
 | `../../updater/docs/rust-updater-architecture-design-lite.md` | lite 版设计文档（另一条路线，`SCOPE.md` §5 已决定不再推进） |
 
 ---
@@ -112,7 +130,7 @@ cargo test --all-targets                     # 仅测试
 | 2 | 内部状态收进唯一隐藏目录 `<target>\.updater\`，稳态只有 `state` 一个常驻文件 |
 | 3 | 用 `ReplaceFileW` 做原子替换，它同时产出回滚所需的备份 ⇒ 备份对账式回滚 |
 | 4 | Journal 分权威集 / 阶段记录 / 建议集；只有前两类承载正确性，且计划在任何文件动作**之前** fsync |
-| 5 | 三层恢复 L1（进程内）/ L2（看门狗）/ L3（冷启动），共用同一段恢复逻辑，天然幂等 |
+| 5 | 三层恢复 L1（进程内）/ L2（看门狗）/ L3（冷启动，**尽力而为不承诺**），共用同一段恢复逻辑，天然幂等。L3 之外另给不依赖宿主的自身修复入口 |
 | 6 | 预检与事务锁定**同一个文件句柄**，从根上消灭验签与解压之间的 TOCTOU |
 | 7 | 签名 fail-closed，公钥为列表以支持轮换（**当前未启用**） |
 | 8 | 可信内核分层 Tier 0/1/2：Tier 2 任何失败一律降级为 WARNING，绝不改变退出码或事务结果 |

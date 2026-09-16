@@ -20,7 +20,7 @@
 | 2 | 所有内部状态收进**唯一隐藏目录 `<target>/.updater/`**，稳态只有 `state` 一个常驻文件 | `DESIGN.md` §2 |
 | 3 | 用 `ReplaceFileW` 做**原子替换**，它同时产出回滚所需的备份 ⇒ 可**备份对账式回滚** | `TRANSACTION.md` §3 |
 | 4 | Journal 分**权威集 / 阶段记录 / 建议集**三类，只有前两类承载正确性，且计划在任何文件动作**之前** fsync | `TRANSACTION.md` §1 |
-| 5 | **三层恢复 L1/L2/L3**（进程内 / 看门狗 / 冷启动），共用同一段 `journal::recover`，天然幂等 | `TRANSACTION.md` §1 |
+| 5 | **三层恢复 L1/L2/L3**（进程内 / 看门狗 / 冷启动），共用同一段 `journal::recover`，天然幂等。**承诺范围是 L1+L2**，L3 为尽力而为 | `TRANSACTION.md` §1、`USAGE.md` §8.3 |
 | 6 | 预检与事务**锁定同一个文件句柄**（`FILE_SHARE_READ`），从根上消灭验签与解压之间的 TOCTOU | `DESIGN.md` §5 |
 | 7 | 签名 **fail-closed**，公钥为列表以支持密钥轮换；签名是"真实性"边界，与 `--sha256` 不可互替 | `DESIGN.md` §6 |
 | 8 | **可信内核分层** Tier 0/1/2：Tier 2 任何失败一律降级为 WARNING，**绝不改变退出码或事务结果** | `PLAN.md` §1 |
@@ -37,7 +37,7 @@
 | :--- | :--- |
 | **第一次接触这个项目** | `README.md` 一页纸 → `SCOPE.md` → `DESIGN.md` |
 | **要开始写代码** | `SCOPE.md` → `PLAN.md`（阶段与预算）→ `DESIGN.md` → `TRANSACTION.md` → `RUNTIME.md` |
-| **要接进自己的应用（调用方）** | **`USAGE.md` 全文**（8 项集成契约、参数、退出码、排障）→ `CONTRACT.md` 全文（差异与迁移）→ `RELEASE-NOTES.md`（⚠️ 变化清单） |
+| **要接进自己的应用（调用方）** | **`USAGE.md` 全文**（7 项集成契约、参数、退出码、排障）→ `CONTRACT.md` 全文（差异与迁移）→ `RELEASE-NOTES.md`（⚠️ 变化清单） |
 | **要写测试** | `TESTING.md` → `TRANSACTION.md`（不变量与恢复语义） |
 | **只想查一个具体问题** | 见下方"文件清单"的"回答什么问题"列 |
 | **想知道某个决策为什么是这样** | 源文档 `rust-updater-architecture-design-v4.2.md`，本目录各文件头部有章节映射 |
@@ -75,7 +75,9 @@
 | :--- | :--- | :--- |
 | `rust-updater-architecture-design-v4.2.md` | **v4.3.0 源文档**（2242 行，含 §0 全部改动说明、§0.4 未采纳意见、§0.5 三方评审合并 34 项与三处技术裁定） | **史料存档，只读**（就在本目录）。本目录不重复其中"改动总览 / 评审对话 / 历史版本备查"部分 |
 | `updater-prior-art-and-design-recheck.md` | 主流 updater（Omaha / Squirrel / Velopack / MSIX / Tauri 等）先例调研与缺口分析 | v4.2 新增能力（N1–N11）的来源，索引见 `REFERENCE.md`（就在本目录） |
-| `../../updater/docs/rust-updater-architecture-design-lite.md` | **极简版**（v1.0，2026-09-14 17:52）：砍掉 Journal / 看门狗 / 版本/降级防护 / 签名，改内存回滚栈，目标 500–700 行 | **另一条路线**，与本目录构成"完整基线 vs 精简基线"的二选一，见 `SCOPE.md` §5 |
+| `archive/lite-baseline-20260916/docs/rust-updater-architecture-design-lite.md` | **极简版**（v1.0，2026-09-14 17:52）：砍掉 Journal / 看门狗 / 版本/降级防护 / 签名，改内存回滚栈，目标 500–700 行 | **另一条路线**，与本目录构成"完整基线 vs 精简基线"的二选一，见 `SCOPE.md` §5。**已于 2026-09-16 冻结归档**（原位于兄弟项目 `updater/`） |
+| `archive/lite-baseline-20260916/` | **lite 基线冻结目录**：lite 全部源码（9 文件 / 1821 行）+ 4 份文档 + `MANIFEST.sha256`（17 项，覆盖全部归档文件） | `updater/` 归档删除后的**唯一留存**，回答"lite 到底做了什么"。**只读，禁止修改**（见其 `README.md`）。参照二进制未入库，可按其说明重建 |
+| `archive/lite-profile-20260916-superseded/` | **被否决的 `--lite` 实现**留档：档位模块 + 集成测试 + src patch + 只读说明 | 供将来若需重建时少走弯路。**不要应用**，撤销理由见 `CHANGES-20260916.md` §5 |
 | `../../updater/go/README.md` | Go 版实现文档（已可用） | 行为对照基线，差异清单见 `CONTRACT.md` §4 |
 | `../../updater/docs/temp/` | 历史版本（v1–v4.1）与三份评审原文、逐条核验记录 | 考古资料，实现时**不必读** |
 | `temp/`（本目录上级） | 本项目的过程脚本与局部备份（`*.py`、`temp/backups/`） | 非文档，随时可清理 |

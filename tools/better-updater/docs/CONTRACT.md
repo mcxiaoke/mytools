@@ -9,6 +9,8 @@
 
 ```text
 updater.exe --pid <PID> --zip <ZIP> --target <DIR> --launch <EXE> [options]
+
+updater.exe [--silent]     # 无参数 = 自身修复：收敛本 exe 所在目录（USAGE §12）
 ```
 
 **唯一需要调用方特别注意的实现细节**：必须以 **detached 模式**启动，否则主程序退出时可能连带终止 updater。
@@ -27,7 +29,7 @@ Future<void> applyUpdate(String downloadedZip) async {
       '--target', targetDir,
       '--launch', p.basename(exePath),
       '--args', '--updated',
-      '--delete-zip',
+      // 注意：不要加 --delete-zip。更新包要留到确认成功之后（§3.2）
     ],
     mode: ProcessStartMode.detached,
   );
@@ -75,7 +77,7 @@ Future<void> applyUpdate(String downloadedZip) async {
 | `--verify-authenticode` | string | "" | 校验包内每个 EXE/DLL 的 Authenticode 签名，且签名者须包含该子串（**Phase 7 搁置**：无代码签名证书，当前唯一行为是 fail-closed 拒绝） |
 | `--allow-unsigned` | bool | false | 允许缺失签名。**仅调试构建生效**，发布构建忽略并告警 |
 | `--log` | string | "" | 日志路径，默认 `<base>\logs\updater-<ts>.log` |
-| `--silent` | bool | false | 兼容性保留参数（GUI 子系统无窗口，恒静默） |
+| `--silent` | bool | false | 兼容性保留参数（GUI 子系统无窗口，恒静默）。**另有实际作用**：抑制自身修复失败提示框，供无人值守调用使用（`USAGE.md` §12.4） |
 | `--gui` | bool | false | 开启原生 Win32 极简进度对话框（独立 UI 线程防假死、双模式动效、双语自适应） |
 | `--gui-title` | string | 自动自适应 | 自定义 GUI 窗口标题（优先于系统自适应标题） |
 | `--debug-console` | bool | false | 调试：`AttachConsole(ATTACH_PARENT_PROCESS)` |
@@ -137,6 +139,13 @@ END: <COMMITTED|ROLLED_BACK|ABORTED|DERIVED(角色)> ver=<目标版本> state=<w
 
 > **"不使用"的含义**：这些模式**不读取**相应参数；若调用方仍传了，按忽略处理并记 WARNING，**不报错**（与 `--allow-unsigned` 的口径一致——保证跨版本脚本不会因多传参数而失败）。
 
+> **无参数 / `--recover` 省略 `--target`**（2026-09-16 新增）：**自身修复入口**——
+> 以 `updater.exe` **自身所在目录**为目标执行一次收敛，`--recover` 照常，成功后按需拉起。
+> 判定条件是"没有事务输入"（无 `--target` 且无 `--zip`/`--launch`、未选其它模式），
+> 因此 `updater.exe --zip x.zip` 这类**写错的更新调用仍报 `missing required --target`（退出 2）**，
+> 不会被静默改判为修复动作。`--silent` 抑制其失败提示框。
+> 详见 `USAGE.md` §12。
+
 ---
 
 ## 3. 保护清单与更新包约定（调用方视角）
@@ -170,6 +179,13 @@ settings.json
 - 打包时尽量让条目直接以安装目录为根，避免多一层顶层目录；如有，用 `--strip 1` 解决；
 - 建议在 CI 里加一步 `updater.exe ... --dry-run`，人工核对写入/跳过清单；
 - 需要版本与降级防护时，必须包含 `updater.manifest`（生成脚本见 `TESTING.md` §4），且**必须与 zip 一起构建、一起签名**（顺序不可颠倒）。
+- **启动闭包必须连续排在 zip 末尾**（2026-09-16 新增，`USAGE.md` §13.3）。
+  闭包 = 根目录直系文件 + `data/*.so` / `data/*.dat`，可由打包目录根的 `.bootclosure` 覆盖。
+  理由：loader 在任何用户代码之前加载入口 exe 的 import 表，闭包被"半新半旧"地中断会让应用
+  **起不来**，从而断掉唯一的人工恢复入口。`scripts/release_pack.ps1` 已实现该顺序并带回读校验。
+- **包的保留**（2026-09-16 新增）：调用方必须在**确认更新成功之前**保留更新包，并放在可预期的
+  固定位置。它是"应用起不来"时的兜底材料（`USAGE.md` §13.1）。
+  注意 **手工解压不遵守 `.updatekeep`**，仅当包内不含受保护路径时才可作为兜底（§13.2）。
 
 ---
 
@@ -182,7 +198,7 @@ settings.json
 | `.updatekeep` 语义 | 三类规则 | **逐条一致** | ✅ |
 | 保护清单 / 自身保护 | — | 一致，新增内部保留名层 | ✅ 加强 |
 | 更新失败 | 部分更新（逐文件继续，日志记录） | **全量回滚**（重试次数由 `--write-retries` 控制） | ⚠️ 语义变化 |
-| 中止后一致性 | 无恢复机制 | 三层自愈（看门狗 + 冷启动 + `--recover`） | ✅ 加强 |
+| 中止后一致性 | 无恢复机制 | 三层自愈（看门狗 + 冷启动 + `--recover`）；**承诺 L1+L2**，冷启动为尽力而为 | ✅ 加强 |
 | `target` 内 updater 自更新 | 不支持（强制跳过自己） | **支持**（影子 Worker） | ✅ 加强 |
 | `--args` 处理 | `splitArgs` 分词 + `quoteArgs` 再加引号（双处理） | **原始片段直拼**，不二次转义 | ⚠️ 行为修正（对正确用法等价） |
 | 提权后主程序权限 | 继承管理员 | 默认降权为 Medium，`--keep-elevation` 可保留 | ⚠️ 语义变化 |

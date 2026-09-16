@@ -238,6 +238,63 @@ journal、backup、tmp 全部消失；日志出现 `recovery(L3): PLANNED journa
 
 ---
 
+## 3A. 自身修复入口（3 项，2026-09-16 新增）
+
+> `tests/self_repair.rs` 已覆盖 8 条断言（无 journal 无操作 / APPLYING 现场回滚 / 外来 journal 拒绝 /
+> `--silent` 只抑制提示框 / 反误判 / 显式 `--target` 优先 / `--help` 优先 / **不阻塞**）。
+> 这里补的是**自动化测不到**的部分：**提示框在真·双击下必须出现**。
+
+### 3A.1 `self_repair_dialog_on_double_click` — 真·双击时必须看到提示
+
+**为什么必须人工**：提示框的门条件是"**没有可用控制台**"。而所有自动化测试都会捕获或重定向 stdio，
+判为"有人能看到输出"，因此**永远走不到弹框分支**。只有真·双击（或从资源管理器启动）才会命中。
+
+```powershell
+# 1) 造一个必然修复失败的现场：Journal 的 TARGET 指向别处 ⇒ recover 拒绝，退出 3
+New-Sandbox "C:\MANUALTEST\sr"
+$SR = "C:\MANUALTEST\sr\app"; Copy-Item $U "$SR\updater.exe"
+New-Item -ItemType Directory -Force -Path "$SR\.updater\backup\g1","$SR\.updater\tmp\g1" | Out-Null
+Set-Content "$SR\.updater\backup\g1\app.exe" "OLD"
+@"
+JOURNAL:3
+GEN:g1
+TARGET:C:\Somewhere\Else
+BACKUP:C:\Somewhere\Else\.updater\backup\g1
+TMPDIR:C:\Somewhere\Else\.updater\tmp\g1
+STAGE:APPLYING
+EXIST:app.exe
+"@ | Set-Content "$SR\.updater\journal"
+
+# 2) 用资源管理器打开 $SR，双击 updater.exe（不要用命令行！）
+explorer $SR
+```
+
+**预期**：
+
+1. 弹出提示框，标题为「自动修复未完成 / Automatic repair did not complete」（随系统语言）；
+2. 正文明文写出**退出码 3**、**目录路径**，以及"重新下载完整的更新包，解压覆盖到上面的目录"；
+3. 点确定后进程退出；**不点就一直等**——这是模态框的预期行为（无人值守场景请用 `--silent`）；
+4. 目录**未被改动**（`app.exe` 仍是旧内容，journal 仍在）。
+
+### 3A.2 `self_repair_silent_never_blocks` — `--silent` 下必须静默退出
+
+同 3A.1 的现场，改为命令行执行：
+
+```powershell
+& "$SR\updater.exe" --silent ; "exit=$LASTEXITCODE"
+```
+
+**预期**：**无任何窗口弹出**，立即返回 `exit=3`。
+
+### 3A.3 `self_repair_success_is_silent` — 修复成功不打扰
+
+用一个正常的 APPLYING 现场（照 §3.1 造），然后双击 `updater.exe`。
+
+**预期**：无提示框；`app.exe` 回到旧版；journal 消失。**成功路径刻意保持静默**——
+用户看到的是"应用又能打开了"，而不是一个弹框。
+
+---
+
 ## 4. 网络盘 / 不支持的文件系统（2 项）
 
 前提：有一个可写的网络共享（`\\server\share`）。**注意这是唯一会走"物理路径解析失败"分支的场景。**
@@ -359,6 +416,9 @@ Copy-Item "$repo\tools\better-updater\.github\workflows\ci.yml" `
 | 2.4 | `recover_lock_busy`                     |        |                         |
 | 3.1 | `crash_midway_L3`                       |        |                         |
 | 3.2 | `crash_before_watchdog_spawn`           |        |                         |
+| 3A.1 | `self_repair_dialog_on_double_click`   |        | 真·双击，不可自动化             |
+| 3A.2 | `self_repair_silent_never_blocks`      |        |                         |
+| 3A.3 | `self_repair_success_is_silent`        |        |                         |
 | 4.1 | `fs_unsupported_default_continue`       |        |                         |
 | 4.2 | `fs_unsupported_strict_reject`          |        |                         |
 |  5  | `rm_diagnose_names_holder`              |        |                         |
@@ -382,4 +442,6 @@ Copy-Item "$repo\tools\better-updater\.github\workflows\ci.yml" `
 | 退出码四态矩阵、版本防护矩阵、GC、布局与属性、进度文件                             | `tests/capabilities.rs`          |
 | zip bomb / 压缩方法 / 重复条目 / Junction 越界 / 长路径 / 空目录 / 单句柄锁定 | `tests/pkg_guards.rs`            |
 | 长路径（>MAX_PATH）不再失败                                       | `tests/pkg_guards.rs::long_path` |
+| 自身修复入口（含"不阻塞"与"反误判"边界）                                    | `tests/self_repair.rs`           |
 | 个人版实时防护功能验证                                              | `scripts/check_av.ps1`           |
+| 打包顺序（启动闭包连续位于 zip 末尾）+ 机械守卫                              | `scripts/release_pack.ps1`（自带回读校验） |
