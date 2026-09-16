@@ -1,0 +1,68 @@
+# 杀软/EDR 干扰验证记录（由 scripts/check_av.ps1 生成）
+# 生成时间: 2026-09-15 19:09:28 +08:00
+# 形态: 方案 A（updater.exe 位于安装目录内）—— 影子 Worker + 自更新 + 看门狗，最可疑形态
+
+## 1. 实时防护检测
+  - 火绒 HipsDaemon (PID 54840)
+  - 火绒 HipsTray (PID 55652)
+  - 火绒 wsctrlsvc (PID 18620)
+  火绒版本: 6.0.11.3
+
+  基线隔离区条目: 火绒=0  Defender威胁记录=0
+
+## 2. 构造现场（updater.exe 在安装目录内）
+  打包: rc=0
+
+## 3. 在实时防护下执行更新
+  主实例退出码 = 0（0 只表示「已交接/已提交」，不承载最终结果）
+  收尾完成（journal 与 lock 均已消失）= True
+
+## 4. 功能断言（实时防护不得干扰任何一步）
+  [PASS] 更新已收尾（无残留 journal/lock）
+  [PASS] 新版 app.exe 就位
+  [PASS] 新增文件 plugins\p.dll 已落盘
+  [PASS] updater.exe 自身已更新（自更新）
+  [PASS] 用户数据未被覆盖
+  [PASS] 更新包已被 --delete-zip 删除
+  [PASS] 日志出现影子 Worker 交接
+  [PASS] 日志出现看门狗派生
+  [PASS] 日志出现提交成功
+
+## 5. 事后取证（隔离区不得新增）
+  火绒隔离区: 0 -> 0
+  Defender威胁记录: 0 -> 0
+  运行期目录: C:\Users\mcxiaoke\AppData\Local\app-updater
+
+## 6. 结论
+状态: PASS —— 实时防护开启下，影子 Worker + 自更新 + 看门狗全链路均正常，隔离区零新增。
+
+## 附：更新器日志原文
+```
+2026-09-15 19:09:29.387 [INFO] updater-rs 1.0.0 starting (mode=Normal, pid=57148)
+2026-09-15 19:09:29.387 [INFO] runtime base: C:\Users\mcxiaoke\AppData\Local\app-updater\2f2aa0d2
+2026-09-15 19:09:29.387 [INFO] log file: C:\Users\mcxiaoke\AppData\Local\Temp\bu-av-190929\updater.log
+2026-09-15 19:09:29.388 [INFO] lock acquired
+2026-09-15 19:09:29.398 [INFO] shadow worker spawned (pid 51000); releasing image of target/updater.exe
+2026-09-15 19:09:29.398 [INFO] END: DERIVED(worker) ver=- state=- previous=- hashes=- reason=handed off to shadow worker
+2026-09-15 19:09:29.409 [INFO] updater-rs 1.0.0 starting (mode=Normal, pid=51000)
+2026-09-15 19:09:29.409 [INFO] runtime base: C:\Users\mcxiaoke\AppData\Local\app-updater\2f2aa0d2
+2026-09-15 19:09:29.409 [INFO] log file: C:\Users\mcxiaoke\AppData\Local\Temp\bu-av-190929\updater.log
+2026-09-15 19:09:29.410 [INFO] lock acquired
+2026-09-15 19:09:29.410 [WARN] unsigned build (empty release key list): package signature check skipped
+2026-09-15 19:09:29.410 [WARN] no installed state; treating as first install
+2026-09-15 19:09:29.411 [INFO] plan: 4 file(s) to write (2363411 bytes), 1 dir(s) to create, 1 skipped
+2026-09-15 19:09:29.411 [INFO] skip updater.manifest (package metadata (never written))
+2026-09-15 19:09:29.424 [INFO] watchdog spawned (pid 45932)
+2026-09-15 19:09:29.435 [INFO] updater-rs 1.0.0 starting (mode=Watchdog, pid=45932)
+2026-09-15 19:09:29.435 [INFO] runtime base: C:\Users\mcxiaoke\AppData\Local\app-updater\2f2aa0d2
+2026-09-15 19:09:29.435 [INFO] log file: C:\Users\mcxiaoke\AppData\Local\Temp\bu-av-190929\updater.log
+2026-09-15 19:09:29.435 [INFO] watchdog: guarding worker pid 51000 (image C:\Users\mcxiaoke\AppData\Local\app-updater\2f2aa0d2\runtime\upd-worker-20260915T190929-57148.exe)
+2026-09-15 19:09:29.451 [INFO] self-check: 4 file(s) hash+size verified
+2026-09-15 19:09:29.456 [INFO] previous version retained: C:\Users\mcxiaoke\AppData\Local\Temp\bu-av-190929\app\.updater\previous\20260915T190929-57148
+2026-09-15 19:09:29.458 [WARN] failed to delete C:\Users\mcxiaoke\AppData\Local\Temp\bu-av-190929\update.zip.sig (系统找不到指定的文件。 (os error 2))
+2026-09-15 19:09:29.466 [INFO] END: COMMITTED ver=1.1.0 state=written previous=retained hashes=verified reason=updated and launched
+2026-09-15 19:09:29.469 [INFO] watchdog: worker exited
+2026-09-15 19:09:29.473 [INFO] watchdog: nothing to do
+2026-09-15 19:09:29.474 [INFO] END: COMMITTED ver=- state=- previous=- hashes=- reason=nothing to do
+
+```

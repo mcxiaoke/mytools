@@ -1,0 +1,47 @@
+火绒（Huorong Internet Security 6.0.11.3）深度取证记录
+================================================================
+生成时间: 2026-09-15 19:05 +08:00
+验证形态: 方案 A —— updater.exe 位于安装目录内
+          （影子 Worker 自我复制到 %LOCALAPPDATA% 并 detached 执行 + 自更新 + 看门狗）
+前提: 火绒实时防护与系统加固均处于开启状态
+      HipsDaemon(PID 54840) / HipsTray(PID 55652) / wsctrlsvc(PID 18620) 均在运行
+
+取证方式
+--------
+只读复制火绒的 SQLite 日志库到临时目录后查询（火绒以独占方式持有这些库，
+直接以 mode=ro 打开会得到 disk I/O error）。
+脚本: scripts/hr_snapshot.py（已随项目版本化，可复现）
+      用法: python scripts/hr_snapshot.py <输出文件>
+
+表含义
+------
+  log.db.HrLogV3_60       火绒的告警/事件日志（fid 区分事件类型，如 c_malinfo=网址拦截）
+  hips.db.HipsSysAuto_60  火绒系统加固的**自动决策**记录（power=1 拦截 / 0 放行）
+  hips.db.HipsUser_60     用户自定义 HIPS 规则
+  Quarantine/             隔离区目录（文件系统级枚举）
+
+前后对比
+--------
+| 观测项                              | 基 线 | 更新后 | 变化 |
+| :---------------------------------- | ----: | -----: | ---: |
+| log.db.HrLogV3_60 行数（告警日志）   |   111 |    111 |   +0 |
+| hips.db.HipsSysAuto_60 行数（加固）  |     4 |      4 |   +0 |
+| Quarantine/ 条目数（隔离区）         |     0 |      0 |   +0 |
+| 告警日志命中 upd-worker/upd-watchdog |     0 |      0 |   +0 |
+| HIPS 决策命中本工具进程              |     0 |      0 |   +0 |
+
+结论
+----
+PASS —— 火绒对本工具的全部可疑行为（进程自我复制到 %LOCALAPPDATA%、detached 派生、
+覆盖安装目录内的可执行文件、把 target\updater.exe 自身替换成新版本）**未产生任何
+告警、未做任何拦截决策、未隔离任何文件**。更新功能在全链路（9/9 断言）全部通过。
+
+残留不确定性（必须如实记录）
+----------------------------
+1. 本机只有火绒一款实时防护（Defender 的 AM 服务未运行），
+   因此本记录**不能**代表企业级 EDR（如 CrowdStrike / SentinelOne / 卡巴斯基 EDROptimum）
+   的行为。EDR 的规则集与启发式远比个人版杀软激进。
+2. 本机跑的是**未签名的 debug/release 构建**。生产环境若补做 Authenticode 签名，
+   行为特征会有变化（通常更宽松）；若不签名，企业环境仍可能触发 SmartScreen 或 EDR 策略。
+3. 复现该验证：scripts/check_av.ps1（自动化部分，功能断言 + 隔离区前后对比）
+   + 本文件所述的 SQLite 取证（手工部分）。

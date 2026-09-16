@@ -138,6 +138,13 @@ if ($mp) {
 }
 
 Write-Host ""
+Write-Host "=== 杀软/EDR 干扰验证 ==="
+# 用"最可疑形态"（updater 在安装目录内 ⇒ 影子 Worker 自我复制 + detached 派生 + 自更新）
+# 跑一次真实更新。未检测到实时防护时退化为 NO_ACTIVE_AV 空跑，不阻断；
+# 一旦检测到实时防护而功能失败，则**阻断**——更新器在真实防护环境下不可用属于发布阻断问题。
+Invoke-Step "scripts/check_av.ps1" { & (Join-Path $PSScriptRoot "check_av.ps1") } | Out-Null
+
+Write-Host ""
 Write-Host "全部守卫通过。产物快照见 docs/artifacts/"
 # 复位退出码：上面可能有"不阻断"的原生调用失败（如 Defender），不得污染本脚本的退出状态
 exit 0

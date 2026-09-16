@@ -8,7 +8,13 @@
 
 ## 1. 测试矩阵
 
-> **覆盖状态（2026-09-15）**：矩阵共 **141 条**用例；已自动化 **65 条**（25 单元 + 12 e2e + 9 不变量 + 19 能力），`cargo test` 全绿。**F 组（不变量 I1–I10）已全部覆盖**；**E 组的缩回开关与 Tier 2 隔离已覆盖**。仍待补的是 A–D 组中依赖**交互式/并发夹具**的条目（真实强杀、UAC 会话、独占句柄、多实例竞争），以及因**条件不具备**而暂不可达的 `sig_*`（公钥列表为空）与 `authenticode_*`（Phase 7 搁置）。未被自动化覆盖的条目**不视为已通过**，逐条进度见 §6"覆盖进度"。
+> **覆盖状态（2026-09-15 18:20）**：矩阵共 **141 条**用例；已自动化 **80 条**
+> （28 单元 + 12 e2e + 9 不变量 + 20 能力 + 9 包防护 + 2 崩溃窗口），`cargo test --all-targets` 全绿、`clippy -D warnings` 0 警告。
+> **F 组（不变量 I1–I10）已全部覆盖**；**E 组的缩回开关与 Tier 2 隔离已覆盖**；
+> **崩溃窗口的"真实进程终止"已落地**（`tests/crash_windows.rs`，见 §5）。
+> 仍待补的是 A–D 组中依赖**交互式/并发夹具**的条目（UAC 会话、独占句柄 RM 诊断、多实例竞争、网络盘），
+> 以及因**条件不具备**而暂不可达的 `sig_*`（公钥列表为空）与 `authenticode_*`（Phase 7 搁置）。
+> 未被自动化覆盖的条目**不视为已通过**，逐条进度见 §6"覆盖进度"。
 
 ### A. 事务与崩溃恢复（重点）
 
@@ -321,17 +327,20 @@ $lines -join "`n" | Set-Content -Path (Join-Path $stage 'updater.manifest') -Enc
 
 ---
 
-## 5. 覆盖进度（2026-09-15）
+## 5. 覆盖进度（2026-09-15 18:20）
 
-自动化用例 **65 条**：`cargo test` 全绿，`cargo clippy --all-targets` 0 警告。
+自动化用例 **80 条**：`cargo test --all-targets` 全绿，`cargo clippy --all-targets` 0 警告。
+（原文归档见 `artifacts/test-summary.txt`）
 
 | 测试文件 | 条数 | 职责 |
 | :--- | :--- | :--- |
-| `src/**` 模块内测试 | 25 | `quote_arg` 往返、版本比较边界、keep 规则、Journal 解析/校验、路径规范化、**I8 同一文件对象**、**GC 三条规则** |
+| `src/**` 模块内测试 | 28 | `quote_arg` 往返、版本比较边界、keep 规则、Journal 解析/校验、路径规范化、**I8 同一文件对象**、**GC 三条规则**、**流式哈希等价性** |
 | `tests/e2e.rs` | 12 | 主流程：完整更新、`--dry-run` 零落盘、降级拒绝、L3 恢复、保留名拦截、影子自更新、看门狗接管、`--rollback-previous` |
 | `tests/invariants.rs` | 9 | **F 组 I1–I7 / I9 / I10**（I8 在模块内测试） |
-| `tests/capabilities.rs` | 19 | **E 组**：缩回开关、Tier 2 隔离、版本防护矩阵、GC、锁、布局与属性、进度、退出码、CLI 契约 |
-| `tests/common/mod.rs` | — | 共享夹具（含**跨测试二进制**的 Win32 命名互斥量串行锁） |
+| `tests/capabilities.rs` | 20 | **E 组**：缩回开关、Tier 2 隔离、版本防护矩阵、GC、锁、布局与属性、进度、退出码、CLI 契约、GUI 选项 |
+| `tests/pkg_guards.rs` | 9 | **C 组**：重复条目、压缩方法、zip bomb（比值/总量/合法高比值反向守卫）、Junction 越界、长路径、空目录创建、单句柄锁定（外部可观察） |
+| `tests/crash_windows.rs` | 2 | **A 组崩溃窗口**：`ReplaceFileW` 成功后 / `COMMITTED` 后**真实进程终止** |
+| `tests/common/mod.rs` | — | 共享夹具（跨测试二进制命名互斥量串行锁、真实终止夹具、zip 中央目录定点改写） |
 
 ### 已覆盖（矩阵条目 → 用例）
 
@@ -362,13 +371,28 @@ $lines -join "`n" | Set-Content -Path (Join-Path $stage 'updater.manifest') -Enc
 
 | 条目 | 阻塞因素 |
 | :--- | :--- |
-| `crash_window_*` / `crash_midway_L3` / `crash_before_watchdog_spawn`（**真实进程终止**，DoD 第 2 条） | 需"在 `ReplaceFileW` 成功后、`MOVED` 落盘前"精确插入强杀的夹具；需按 PID/进程树定位 `upd-worker-<GEN>.exe` |
+| `crash_midway_L3` / `crash_before_watchdog_spawn` | 需"同时杀死 Worker 与看门狗"以及"看门狗派生之前"的精确时序夹具（本轮已落地另外两个窗口，见上） |
 | `elevate_*` / `de_elevate_*` / `elevate_cancel` / `elevate_still_unwritable_no_recursion` | 需交互式 UAC 会话与第二个管理员上下文，无法在无人值守 CI 中稳定复现 |
 | `lock_busy_main_and_worker` / `fork_no_lock_gap` / `lockfile_cross_session` / `recover_lock_busy` | 需可控的多实例竞争夹具（当前串行锁下不可并发发起） |
-| `zip_handle_pinned` / `manifest_parsed_same_handle`（外部观察） | 机制已由 `pkg::handle` 模块内测试证明；外部观察需在事务窗口内并发替换 zip，夹具未就位 |
-| `rm_diagnose_names_holder` / `rm_feature_disabled` | 需真实独占句柄持有者；无默认 feature 构建需在 CI 单独跑一条 `--no-default-features` |
-| `sig_missing_fail_closed` / `sig_tampered` / `sig_hex_and_bin` | **当前构建公钥列表为空**（`unsigned-build`），签名强制分支不可达；填真实公钥后即可自动化 |
+| `rm_diagnose_names_holder` / `rm_feature_disabled` | 需真实独占句柄持有者 + 重试耗尽才能触发 RM 诊断输出并断言持有者进程名；无默认 feature 构建需单独跑一条 `--no-default-features` |
+| `sig_missing_fail_closed` / `sig_tampered` / `sig_hex_and_bin` | **当前构建公钥列表为空**（`unsigned-build`），签名强制分支不可达；填真实公钥后即可自动化（已决策本期不启用，见 `RELEASE-READINESS.md` P0-1） |
 | `authenticode_*` | **Phase 7 搁置**（无代码签名证书） |
 | `de_elevate_session0_no_launch` | 需在 Session 0 服务上下文启动 |
-| `zipbomb_*` / `zip_method_reject` / `duplicate_entry_reject` / `join_escape_blocked` / `long_path` / `fs_unsupported_*` / `keep_rules_parity` | 夹具可做，尚未编写（`keep_rules_parity` 另需 Go 版 `verify.py` 对照） |
+| `fs_unsupported_default_continue` / `fs_unsupported_strict_reject` | 需一个不支持 `GetFinalPathNameByHandleW` 的文件系统（网络盘）；本机无此环境 |
+| `keep_rules_parity` | 夹具可做（基线脚本在 `../../updater/go/temp/verify.py`），尚未编写 |
+| `zipbomb_streamed` | **当前依赖下不可达**：`zip` 2.x 读取侧强制按中央目录声明大小截断，"实际 > 声明"无法构造。理由见 `tests/pkg_guards.rs` 文件末尾 |
+
+> **本轮新增覆盖（2026-09-15）**：`crash_window_action_done_record_lost`、`crash_after_committed_before_launch`（真实进程终止）、
+> `zip_handle_pinned`、`zipbomb_declared` / `zipbomb_ratio` / `zipbomb_legit_high_ratio`、`zip_method_reject`、
+> `duplicate_entry_reject`、`join_escape_blocked`、`long_path`、`package_empty_dir_created`。
+>
+> **这轮补测当场查出并修掉了两个真实缺陷**（这正是"未自动化覆盖的条目不视为已通过"这条纪律的价值）：
+>
+> 1. **长路径下所有覆盖类更新必然失败**：`transaction::replace_file` 的**备份路径**绕过了 `to_verbatim()`，
+>    目标路径超过 MAX_PATH 时 `ReplaceFileW` 以裸 ANSI 路径解析备份参数并返回 `ERROR_PATH_NOT_FOUND(3)`。
+>    由 `long_path` 暴露。修复：备份路径同样走单一路径构造（`DESIGN.md` §7.3 的规则本来就是这个要求）。
+> 2. **包内空目录被静默丢弃**：`plan.dirs` 只被打印与写入 Journal，**从未在磁盘上创建**
+>    （有文件的目录被 `apply_file` 的 MkdirAll 顺带建出来，所以问题只对空目录显形）。
+>    修复时又暴露出 `planner::build` 的 `chain` 会把**文件自身**登记为"待建目录"，
+>    一旦真的开始建目录就会造出与文件同名的目录并使整个更新回滚。两处一并修复，由 `package_empty_dir_created` 覆盖。
 
