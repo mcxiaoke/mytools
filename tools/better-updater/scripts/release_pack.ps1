@@ -49,7 +49,7 @@ $outDir = Split-Path -Parent $Out
 if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 if ((Test-Path $Out) -and -not $Force) { throw "输出已存在: $Out（确认要覆盖请加 -Force）" }
 
-Write-Host "=== 1/5 生成 updater.manifest ==="
+Write-Host "=== 1/6 生成 updater.manifest ==="
 if ($MinUpgradableFrom) {
     & $genManifest -Stage $Stage -Version $Version -MinUpgradableFrom $MinUpgradableFrom
 } else {
@@ -57,7 +57,46 @@ if ($MinUpgradableFrom) {
 }
 
 Write-Host ""
-Write-Host "=== 2/5 压缩（zip 内条目一律用 '/'，与更新器的归一化规则对齐）==="
+Write-Host "=== 2/6 启动闭包判定（决定 zip 条目顺序）==="
+#
+# 为什么需要它（详见 docs/USAGE.md §3.1）：
+# Windows 的 loader 在**任何用户代码之前**加载 exe 的 import 表。若一次更新在"启动闭包"
+# 内部被中断（掉电、或施工进程与看门狗都被杀），应用会**起不来**——于是调用方的启动自检
+# 跑不到，只剩"双击 updater.exe"这一条人工入口。
+#
+# 把闭包整体**连续排在 zip 末尾**，能把"中断落在致命组合上"的概率从"覆盖整个事务"
+# 压到"闭包自身那一小段"：闭包之前被中断 ⇒ 闭包整体仍是旧版 ⇒ 应用照常启动 ⇒ 能自愈。
+#
+# 判定规则（可覆盖）：
+#   基 线：**根目录直系文件**（相对路径不含 '/'）——入口 exe 与各 DLL 都在此；
+#   附加项：默认 data/*.so 与 data/*.dat（Flutter 的 Dart AOT 快照与 ICU 数据）。
+#   覆盖  ：在 Stage 根放 `.bootclosure`（每行一条 glob，'#' 注释）即**替换**默认附加项；
+#           该文件本身是打包配置，不入包。
+$closureCfg = Join-Path $Stage '.bootclosure'
+if (Test-Path $closureCfg) {
+    $patterns = @()
+    foreach ($line in (Get-Content $closureCfg -Encoding UTF8)) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        $patterns += ($t -replace '\\', '/')
+    }
+    Write-Host "  [CFG] .bootclosure 生效：$($patterns.Count) 条附加模式"
+} else {
+    $patterns = @('data/*.so', 'data/*.dat')
+    Write-Host "  [CFG] 无 .bootclosure，使用默认附加模式：$($patterns -join ', ')"
+}
+
+function Test-BootClosure([string]$Rel, [string[]]$Pats) {
+    $n = $Rel -replace '\\', '/'
+    # 包元数据永不落盘（更新器把它当作元数据拦掉），不属于"启动时会被替换的文件"
+    if ($n -eq 'updater.manifest') { return $false }
+    if ($n -notlike '*/*') { return $true }
+    foreach ($p in $Pats) { if ($n -like $p) { return $true } }
+    return $false
+}
+
+Write-Host ""
+Write-Host "=== 3/6 压缩（条目顺序：非闭包 → 空目录 → 启动闭包连续收尾）==="
 Add-Type -AssemblyName System.IO.Compression | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
 
@@ -66,24 +105,42 @@ function Get-Rel([string]$Base, [string]$Full) {
 }
 
 $files = Get-ChildItem $Stage -Recurse -File | Sort-Object FullName
+$pack = @()
+foreach ($f in $files) {
+    $rel = Get-Rel $Stage $f.FullName
+    # 包元数据自身 + 内部保留名（含裸 .updater）不入包：更新器会把它们拦掉，白占体积
+    if ($rel -eq '.updater' -or $rel -like '.updater\*') {
+        Write-Host "  [SKIP] $rel（内部保留名）"
+        continue
+    }
+    if ($rel -eq '.bootclosure') {
+        Write-Host "  [SKIP] $rel（打包配置，不入包）"
+        continue
+    }
+    $pack += [pscustomobject]@{
+        Rel     = $rel
+        Full    = $f.FullName
+        Closure = (Test-BootClosure $rel $patterns)
+    }
+}
+# 非闭包条目保持"全路径字母序"（可复现），闭包条目紧随其后、同样按字母序，整体构成 zip 尾部。
+$ordered = @($pack | Where-Object { -not $_.Closure }) + @($pack | Where-Object { $_.Closure })
+$nClosure = @($pack | Where-Object { $_.Closure }).Count
+Write-Host "  条目 $($pack.Count) 个，其中启动闭包 $nClosure 个（排在最后）"
+
 $fs = [IO.File]::Create($Out)
 try {
     $zip = New-Object IO.Compression.ZipArchive($fs, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        foreach ($f in $files) {
-            # 包元数据自身 + 内部保留名（含裸 .updater）不入包：更新器会把它们拦掉，白占体积
-            $rel = Get-Rel $Stage $f.FullName
-            if ($rel -eq '.updater' -or $rel -like '.updater\*') {
-                Write-Host "  [SKIP] $rel（内部保留名）"
-                continue
-            }
-            $entryName = $rel -replace '\\', '/'
+        foreach ($e in $ordered) {
+            $entryName = $e.Rel -replace '\\', '/'
             $entry = $zip.CreateEntry($entryName, [IO.Compression.CompressionLevel]::Optimal)
             $es = $entry.Open()
-            $src = [IO.File]::OpenRead($f.FullName)
+            $src = [IO.File]::OpenRead($e.Full)
             try { $src.CopyTo($es) } finally { $src.Dispose(); $es.Dispose() }
         }
-        # 空目录也写目录条目（以 '/' 结尾），保证更新器能识别并创建
+        # 空目录也写目录条目（以 '/' 结尾），保证更新器能识别并创建。
+        # 位置在闭包**之前**：中断时目录已就位，而闭包尚未被触碰。
         foreach ($d in (Get-ChildItem $Stage -Recurse -Directory)) {
             $rel = Get-Rel $Stage $d.FullName
             if ($rel -eq '.updater' -or $rel -like '.updater\*') { continue }
@@ -96,7 +153,7 @@ try {
 Write-Host "  [OK] $Out（$([math]::Round((Get-Item $Out).Length / 1KB, 1)) KB）"
 
 Write-Host ""
-Write-Host "=== 3/5 产物自检：清单必须存在，且每个 FILE 条目的声明大小与包内实际一致 ==="
+Write-Host "=== 4/6 产物自检：清单必须存在，且每个 FILE 条目的声明大小与包内实际一致 ==="
 $zr = [IO.Compression.ZipFile]::OpenRead($Out)
 try {
     $names = @($zr.Entries | ForEach-Object { $_.FullName })
@@ -134,18 +191,38 @@ try {
     }
     if ($bad -gt 0) { throw "清单与包内容不一致（$bad 处）—— 提交前哈希自检会失败并触发全量回滚" }
     Write-Host "  [OK] 清单条目 $($declared.Count) 个，全部与包内一致；VERSION=$mversion"
+
+    # ---- 启动闭包必须构成 zip 的**连续结尾** ----
+    # 这是本脚本顺序规则的机械守卫：写错了就在这里失败，而不是等用户掉电之后才发现。
+    $seq = @($zr.Entries | Where-Object { -not $_.FullName.EndsWith('/') } | ForEach-Object { $_.FullName })
+    $clos = @($seq | Where-Object { Test-BootClosure $_ $patterns })
+    if ($clos.Count -ne $nClosure) {
+        throw "启动闭包计数不一致：打包时 $nClosure 个，包内回读 $($clos.Count) 个"
+    }
+    if ($seq.Count -gt 1 -and $clos.Count -gt 1) {
+        $tail = @($seq[($seq.Count - $clos.Count)..($seq.Count - 1)])
+        if ((($tail | Sort-Object) -join "`n") -ne (($clos | Sort-Object) -join "`n")) {
+            throw @"
+启动闭包未构成 zip 的连续结尾 —— 中断可能落在“半新半旧且起不来”的组合上。
+  闭包成员（$($clos.Count) 个）：$($clos -join ', ')
+  实际尾部（$($tail.Count) 个）：$($tail -join ', ')
+修复：检查 .bootclosure 的模式是否覆盖了全部启动关键文件，或改用更宽的 glob。
+"@
+        }
+    }
+    Write-Host "  [OK] 启动闭包 $($clos.Count) 个，全部连续位于 zip 末尾（被中断时应用仍可启动）"
 } finally { $zr.Dispose() }
 
 Write-Host ""
-Write-Host "=== 4/5 产物摘要 ==="
+Write-Host "=== 5/6 产物摘要 ==="
 $hash = (Get-FileHash $Out -Algorithm SHA256).Hash.ToLower()
 Write-Host "  zip      : $Out"
 Write-Host "  sha256   : $hash"
-Write-Host "  条目数   : $($files.Count) 个文件 + 空目录条目"
+Write-Host "  条目数   : $($pack.Count) 个文件（其中启动闭包 $nClosure 个，连续位于末尾）+ 空目录条目"
 Write-Host "  应用侧应传: --sha256 $hash"
 
 Write-Host ""
-Write-Host "=== 5/5 签名 ==="
+Write-Host "=== 6/6 签名 ==="
 Write-Host "  [SKIP] 本期未启用包签名（unsigned-build）。安全边界为 0，真伪仅依赖 HTTPS 通道。"
 Write-Host "         详见 docs/USAGE.md §9 与 docs/RELEASE-READINESS.md P0-1。"
 
