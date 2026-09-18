@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -27,17 +29,32 @@ func ptyAvailable() bool { return false }
 // degrades to terminating the shell directly.
 func setProcAttrs(c *exec.Cmd) {}
 
-// killProcessGroup terminates the process. Grandchildren are not
-// reaped here; the one-shot path is the supported mode on Windows.
+// killProcessGroup terminates the process and its descendants.
+//
+// os.Process.Kill only reaches the direct child. The command runs as
+// `cmd.exe /C ...`, so the program the operator actually started is a
+// grandchild and would survive — `tail -f` in particular would keep
+// running after the panel reported it stopped. taskkill with /T walks
+// the tree, which is the closest Windows equivalent to signalling a
+// Unix process group.
 func killProcessGroup(pid int, grace time.Duration) {
 	if pid <= 0 {
 		return
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return
+
+	// /T includes the child tree, /F skips the polite request. There is
+	// no SIGTERM equivalent to try first: Windows has no signal that a
+	// console application can catch for a graceful shutdown.
+	cmd := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
+	// Suppress the console window and any output; a failure here is
+	// not actionable (the process may already be gone).
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = cmd.Run()
+
+	// Fall back to a direct kill in case taskkill is unavailable.
+	if proc, err := os.FindProcess(pid); err == nil {
+		_ = proc.Kill()
 	}
-	_ = proc.Kill()
 }
 
 // sendSignal is unsupported on Windows; the client's stop button

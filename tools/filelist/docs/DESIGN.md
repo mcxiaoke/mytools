@@ -262,7 +262,25 @@ Indexer.Start() goroutine:
 防护：`web_placeholders_test.go`（断言注入值是合法 JSON 且位于赋值右侧）与
 `tests/e2e/specs/ops.spec.js`（断言页面无 console 错误）双重覆盖。
 
-**2. 不得依赖 `alpine:init` 事件注册组件**
+**2. exec 必须流式输出，且超时须终止进程组**
+
+两条硬性约束，违反会导致面板不可用：
+
+- **不得缓冲到进程结束**：`RunExec` 若把输出指向 `bytes.Buffer` 并等
+  `cmd.Run()` 返回，长驻命令（`tail -f`、`journalctl -f`、`ping`）
+  的**输出一帧都不会到达前端**，面板会永久停在「执行中」。必须用
+  `StdoutPipe`/`StderrPipe` 边读边推送。
+- **不得用 `exec.CommandContext` 做超时**：其取消只杀直接子进程，
+  `bash -c "a | b"` 的其余成员会存活成孤儿。必须走 `killProcessGroup`
+  （Unix：`Setpgid` + 负 PID；Windows：`taskkill /F /T` 遍历进程树）。
+- **读取方需可被释放**：终止后应关闭管道读端（`closePipes`），
+  否则 Windows 上孙进程持有写端会让读取永不返回 EOF。
+
+`handleSignal` 必须同时支持两种会话：exec 走 `stopProc`，
+PTY 走 `sendSignal`。且 exec 会话也要下发 `ready` 帧携带 `sid`，
+否则前端的 ⏹ 没有可作用的对象。
+
+**3. 不得依赖 `alpine:init` 事件注册组件**
 
 `ops.js` 与 `alpine.min.js` 均为 `defer`，按文档顺序执行，
 因此 `ops.js` 运行时 Alpine 已经触发过 `alpine:init`。模块必须直接调用

@@ -29,14 +29,23 @@ func TestRunExec_Success(t *testing.T) {
 
 // TestRunExec_ExitCodeIsReal is why one-shot mode uses pipes instead of
 // a PTY: the real exit status is available without a sentinel.
+//
+// The command avoids shell metacharacters, which the policy refuses —
+// a script file is used instead so the exit code is still deliberate.
 func TestRunExec_ExitCodeIsReal(t *testing.T) {
 	if isWindows() {
-		t.Skip("uses a POSIX shell to produce a specific exit code")
+		t.Skip("uses a POSIX shell")
 	}
-	p := newTestPanel(t, Config{Allow: []string{`^sh -c exit \d+$`}})
-	dir := t.TempDir()
 
-	res, err := p.RunExec(context.Background(), "sh -c exit 3", dir)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "exit3.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newTestPanel(t, Config{Allow: []string{`^sh exit3\.sh$`}})
+
+	res, err := p.RunExec(context.Background(), "sh exit3.sh", dir)
 	if err != nil {
 		t.Fatalf("RunExec: %v", err)
 	}
@@ -126,31 +135,39 @@ func TestRunExec_TimeoutKillsProcessGroup(t *testing.T) {
 }
 
 // TestRunExec_NoOrphanedChildren is the process-group test. Without
-// Setpgid and a group-directed kill, the `sleep` spawned by the shell
-// survives and leaks.
+// Setpgid and a group-directed kill, the background process spawned by
+// the script survives and leaks.
+//
+// The script is a file rather than an inline command because the policy
+// rejects shell metacharacters, and job control needs them.
 func TestRunExec_NoOrphanedChildren(t *testing.T) {
 	if isWindows() {
 		t.Skip("process-group semantics are Unix-only")
 	}
 
 	marker := "ops-orphan-check-" + newID()
-	p := newTestPanel(t, Config{
-		Timeout: 1 * time.Second,
-		Allow:   []string{`^sh -c .*$`},
-	})
 	dir := t.TempDir()
 
-	// The shell backgrounds a long sleep whose command line carries a
-	// unique marker, then waits. Killing only the shell would leave
-	// the sleep running.
-	cmd := "sh -c 'sleep 300 # " + marker + " & wait'"
-	_, err := p.RunExec(context.Background(), cmd, dir)
-	if err != nil {
+	// The script backgrounds a long sleep whose command line carries a
+	// unique marker, then waits. Killing only the shell would leave the
+	// sleep running.
+	script := filepath.Join(dir, "orphan.sh")
+	body := "#!/bin/sh\nsleep 300 # " + marker + " &\nwait\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newTestPanel(t, Config{
+		Timeout: 1 * time.Second,
+		Allow:   []string{`^sh orphan\.sh$`},
+	})
+
+	if _, err := p.RunExec(context.Background(), "sh orphan.sh", dir); err != nil {
 		t.Fatalf("RunExec: %v", err)
 	}
 
 	// Give the group a moment to be reaped.
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	if pid := findProcessByMarker(marker); pid != "" {
 		t.Errorf("orphaned child survived the timeout (pid %s)", pid)
@@ -291,6 +308,169 @@ func runShell(cmd string) (string, error) {
 	c := shellTestCommand(cmd)
 	out, err := c.Output()
 	return string(out), err
+}
+
+// ── Streaming behaviour ─────────────────────────────────────────
+
+// TestStreamExec_DeliversOutputBeforeExit is the regression test for
+// the defect that made the panel unusable for long-running commands.
+//
+// The previous implementation buffered everything and sent it after
+// the process exited, so a command that never exits produced no
+// visible output and left the panel stuck on "executing". Output must
+// arrive while the command is still running.
+//
+// A script file supplies the pause, because the policy refuses the
+// shell separators an inline version would need.
+func TestStreamExec_DeliversOutputBeforeExit(t *testing.T) {
+	if isWindows() {
+		t.Skip("uses a POSIX shell for line-buffered output")
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "two-steps.sh")
+	body := "#!/bin/sh\necho first\nsleep 2\necho second\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newTestPanel(t, Config{
+		Timeout: 10 * time.Second,
+		Allow:   []string{`^sh two-steps\.sh$`},
+	})
+
+	h, err := p.StartExec(context.Background(), "sh two-steps.sh", dir)
+	if err != nil {
+		t.Fatalf("StartExec: %v", err)
+	}
+	defer h.Close()
+
+	type chunk struct {
+		text string
+		at   time.Duration
+	}
+	got := make(chan chunk, 8)
+
+	go func() {
+		stream := h.Stream()
+		buf := make([]byte, 1024)
+		start := time.Now()
+		for {
+			n, err := stream.Read(buf)
+			if n > 0 {
+				got <- chunk{text: string(buf[:n]), at: time.Since(start)}
+			}
+			if err != nil {
+				close(got)
+				return
+			}
+		}
+	}()
+
+	var firstAt time.Duration
+	var all strings.Builder
+	for c := range got {
+		if firstAt == 0 && strings.Contains(c.text, "first") {
+			firstAt = c.at
+		}
+		all.WriteString(c.text)
+	}
+	info := h.Wait()
+
+	if firstAt == 0 {
+		t.Fatalf("never received 'first'; output was %q", all.String())
+	}
+	if firstAt > 1*time.Second {
+		t.Errorf("'first' arrived after %v; output is still buffered until exit", firstAt)
+	}
+	if !strings.Contains(all.String(), "second") {
+		t.Errorf("missing 'second' in output: %q", all.String())
+	}
+	if info.Code != 0 {
+		t.Errorf("exit code = %d, want 0", info.Code)
+	}
+}
+
+// TestRunExec_InfiniteOutputIsCutOff is the test that hung the suite
+// before the fix: `yes` never exits, so a reader that waits for EOF
+// waits forever. The deadline must terminate the command and the
+// stream must end.
+func TestRunExec_InfiniteOutputIsCutOff(t *testing.T) {
+	if isWindows() {
+		t.Skip("uses a POSIX shell to produce unbounded output")
+	}
+
+	p := newTestPanel(t, Config{
+		Timeout:   1 * time.Second,
+		MaxOutput: 4096,
+		Allow:     []string{`^yes$`},
+	})
+	dir := t.TempDir()
+
+	start := time.Now()
+	res, err := p.RunExec(context.Background(), "yes", dir)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("RunExec: %v", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("took %v; the deadline did not terminate the command", elapsed)
+	}
+	if !res.Truncated {
+		t.Error("Truncated = false, want true for unbounded output")
+	}
+	if int64(len(res.Output)) > 4096 {
+		t.Errorf("Output length = %d, want <= 4096", len(res.Output))
+	}
+	if !res.TimedOut {
+		t.Error("TimedOut = false, want true")
+	}
+	if res.ExitCode != -1 {
+		t.Errorf("ExitCode = %d, want -1 to mark the timeout", res.ExitCode)
+	}
+}
+
+// TestRunExec_KillStopsCommand covers the stop button's server side.
+func TestRunExec_KillStopsCommand(t *testing.T) {
+	if isWindows() {
+		t.Skip("uses a POSIX shell")
+	}
+
+	p := newTestPanel(t, Config{
+		Timeout: 60 * time.Second, // long, so only the kill can end it
+		Allow:   []string{`^sleep 60$`},
+	})
+	dir := t.TempDir()
+
+	h, err := p.StartExec(context.Background(), "sleep 60", dir)
+	if err != nil {
+		t.Fatalf("StartExec: %v", err)
+	}
+	defer h.Close()
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		h.Kill(1 * time.Second)
+	}()
+
+	done := make(chan ExitInfo, 1)
+	go func() {
+		_, _ = drainAll(h.Stream(), 4096)
+		done <- h.Wait()
+	}()
+
+	select {
+	case info := <-done:
+		if !info.Killed {
+			t.Error("Killed = false, want true")
+		}
+		if info.Code != -1 {
+			t.Errorf("Code = %d, want -1", info.Code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("kill did not terminate the command")
+	}
 }
 
 // ── SanitizeCWD ─────────────────────────────────────────────────

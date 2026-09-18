@@ -166,6 +166,7 @@
 
         ws: null,
         currentSID: '',
+        watchdog: null,
         history: [],
         historyIdx: -1,
         term: null,
@@ -304,12 +305,18 @@
 
             case 'exit':
               this.running = false;
+              this.clearLocalWatchdog();
               if (this.mode === 'cmd' && this.entries.length) {
                 var e = this.entries[this.entries.length - 1];
                 var code = (f.code === null || f.code === undefined) ? 0 : f.code;
                 e.ok = code === 0;
                 var parts = ['exit ' + code];
                 if (f.durationMs) parts.push(f.durationMs + 'ms');
+                // Name the reason the command stopped rather than
+                // showing a bare code: -1 is what a timeout and an
+                // operator stop both report.
+                if (f.timedOut) parts.push('\u8d85\u65f6\u5df2\u7ec8\u6b62');
+                else if (f.killed) parts.push('\u5df2\u4e2d\u65ad');
                 if (f.truncated) parts.push('\u8f93\u51fa\u5df2\u622a\u65ad');
                 e.status = parts.join(' \u00b7 ');
                 this.scrollOutput();
@@ -361,9 +368,11 @@
           this.rememberHistory(cmd);
           this.input = '';
           this.scrollOutput();
+          this.startLocalWatchdog();
 
           if (!this.send({ type: 'exec', cmd: cmd, cwd: this.cwd })) {
             this.running = false;
+            this.clearLocalWatchdog();
             this.notice = '\u672a\u8fde\u63a5';
           }
         },
@@ -372,6 +381,46 @@
           if (this.currentSID) {
             this.send({ type: 'signal', sid: this.currentSID, name: 'INT' });
           }
+          // Free the input straight away rather than waiting for the
+          // exit frame. The server acknowledges a stop by ending the
+          // command, but if that acknowledgement never arrives the
+          // panel would otherwise stay busy with no way out.
+          this.releaseBusy('\u5df2\u8bf7\u6c42\u4e2d\u65ad');
+        },
+
+        // startLocalWatchdog arms a client-side deadline. The server
+        // enforces its own timeout, but a lost frame or a dead socket
+        // would leave the panel stuck on "executing" forever; this
+        // guarantees the input comes back.
+        startLocalWatchdog: function () {
+          var self = this;
+          this.clearLocalWatchdog();
+          var grace = (cfg.timeoutSeconds ? cfg.timeoutSeconds * 1000 : 30000) + 10000;
+          this.watchdog = setTimeout(function () {
+            if (!self.running) return;
+            self.releaseBusy('\u7b49\u5f85\u54cd\u5e94\u8d85\u65f6\uff0c\u9762\u677f\u5df2\u91ca\u653e');
+          }, grace);
+        },
+
+        clearLocalWatchdog: function () {
+          if (this.watchdog) {
+            clearTimeout(this.watchdog);
+            this.watchdog = null;
+          }
+        },
+
+        // releaseBusy clears the running flag and annotates the entry.
+        releaseBusy: function (reason) {
+          this.running = false;
+          this.clearLocalWatchdog();
+          if (this.mode === 'cmd' && this.entries.length) {
+            var e = this.entries[this.entries.length - 1];
+            if (e.status.indexOf('\u6267\u884c\u4e2d') === 0) {
+              e.ok = false;
+              e.status = reason;
+            }
+          }
+          if (reason) this.notice = reason;
         },
 
         scrollOutput: function () {

@@ -4,7 +4,6 @@ package ops
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -119,16 +118,6 @@ func (p *Panel) handleOpenPTY(ctx context.Context, conn *websocket.Conn, f clien
 
 // sendRaw writes a frame without a fresh timeout, used from the PTY
 // reader goroutine where the session context already bounds it.
-func (p *Panel) sendRaw(ctx context.Context, conn *websocket.Conn, f serverFrame) error {
-	b, err := json.Marshal(f)
-	if err != nil {
-		return err
-	}
-	wctx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
-	defer cancel()
-	return conn.Write(wctx, websocket.MessageText, b)
-}
-
 // ptySessions maps session id to live PTY state.
 var (
 	ptyMu       sync.Mutex

@@ -23,6 +23,11 @@ type ExitInfo struct {
 	Code       int   `json:"code"`
 	DurationMS int64 `json:"durationMs"`
 	Truncated  bool  `json:"truncated"`
+	// TimedOut is set when the deadline stopped the command, so the
+	// client can say "timed out" rather than showing a bare code.
+	TimedOut bool `json:"timedOut,omitempty"`
+	// Killed is set when the operator stopped the command.
+	Killed bool `json:"killed,omitempty"`
 }
 
 // Session is one running (or recently finished) command.

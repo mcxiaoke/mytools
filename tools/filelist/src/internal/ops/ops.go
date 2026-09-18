@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -71,6 +72,10 @@ type Config struct {
 	IdleTimeout    time.Duration
 	ScrollbackSize int
 
+	// KillGrace is how long a process group may take to exit on
+	// SIGTERM before SIGKILL is sent.
+	KillGrace time.Duration
+
 	// PTYAvailable is false on platforms without pseudo-terminal
 	// support (Windows). It is reported to the client so the terminal
 	// entry point can be hidden.
@@ -88,6 +93,7 @@ func Defaults() Config {
 		MaxSessions:    2,
 		IdleTimeout:    30 * time.Minute,
 		ScrollbackSize: 256 << 10, // 256 KiB
+		KillGrace:      3 * time.Second,
 		PTYAvailable:   ptyAvailable(),
 	}
 }
@@ -101,6 +107,48 @@ type Panel struct {
 	policy      *Policy
 	sessions    *SessionRegistry
 	accessToken string
+
+	// killGrace is how long a process group gets to exit on SIGTERM
+	// before SIGKILL follows.
+	killGrace time.Duration
+
+	// procs maps a session id to its live one-shot process, so the
+	// signal and kill frames can reach a command that is still
+	// running. Without it the stop button had nothing to act on and
+	// the panel stayed busy until the command finished on its own.
+	procsMu sync.Mutex
+	procs   map[string]*execHandle
+}
+
+// registerProc associates a running command with its session.
+func (p *Panel) registerProc(sid string, h *execHandle) {
+	p.procsMu.Lock()
+	p.procs[sid] = h
+	p.procsMu.Unlock()
+}
+
+// unregisterProc drops the association once the command is reaped.
+func (p *Panel) unregisterProc(sid string) {
+	p.procsMu.Lock()
+	delete(p.procs, sid)
+	p.procsMu.Unlock()
+}
+
+// lookupProc returns the live command for a session, if any.
+func (p *Panel) lookupProc(sid string) *execHandle {
+	p.procsMu.Lock()
+	defer p.procsMu.Unlock()
+	return p.procs[sid]
+}
+
+// stopProc terminates a one-shot command's process group.
+func (p *Panel) stopProc(sid string) bool {
+	h := p.lookupProc(sid)
+	if h == nil {
+		return false
+	}
+	h.Kill(p.killGrace)
+	return true
 }
 
 // New builds a panel. It returns an error when the configuration is
@@ -147,6 +195,11 @@ func New(cfg Config, logger Logger, resolver PathResolver) (*Panel, error) {
 		resolver:    resolver,
 		policy:      policy,
 		accessToken: strings.TrimSpace(cfg.AccessToken),
+		killGrace:   cfg.KillGrace,
+		procs:       make(map[string]*execHandle),
+	}
+	if p.killGrace <= 0 {
+		p.killGrace = 3 * time.Second
 	}
 	p.sessions = NewSessionRegistry(cfg, logger, policy)
 	return p, nil
@@ -170,16 +223,20 @@ type ClientConfig struct {
 	Mode         string `json:"mode"`
 	PTYAvailable bool   `json:"ptyAvailable"`
 	MaxOutput    int64  `json:"maxOutput"`
+	// TimeoutSeconds lets the client arm its own fallback deadline, so
+	// a lost frame cannot leave the panel permanently busy.
+	TimeoutSeconds int `json:"timeoutSeconds"`
 }
 
 // ClientConfig returns the settings safe to send to the browser.
 func (p *Panel) ClientConfig() ClientConfig {
 	return ClientConfig{
-		Enabled:      p.cfg.Enabled,
-		Terminal:     p.cfg.Enabled && strings.TrimSpace(p.cfg.TerminalToken) != "",
-		Mode:         p.cfg.Mode,
-		PTYAvailable: p.cfg.PTYAvailable,
-		MaxOutput:    p.cfg.MaxOutput,
+		Enabled:        p.cfg.Enabled,
+		Terminal:       p.cfg.Enabled && strings.TrimSpace(p.cfg.TerminalToken) != "",
+		Mode:           p.cfg.Mode,
+		PTYAvailable:   p.cfg.PTYAvailable,
+		MaxOutput:      p.cfg.MaxOutput,
+		TimeoutSeconds: int(p.cfg.Timeout / time.Second),
 	}
 }
 

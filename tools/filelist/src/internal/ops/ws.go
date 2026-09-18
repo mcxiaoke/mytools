@@ -51,6 +51,8 @@ type serverFrame struct {
 	Code       *int   `json:"code,omitempty"`
 	DurationMS int64  `json:"durationMs,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
+	TimedOut   bool   `json:"timedOut,omitempty"`
+	Killed     bool   `json:"killed,omitempty"`
 	ErrCode    string `json:"errCode,omitempty"`
 	Msg        string `json:"msg,omitempty"`
 }
@@ -273,13 +275,20 @@ func (p *Panel) serveConn(ctx context.Context, conn *websocket.Conn, r *http.Req
 
 // send writes a frame, ignoring failures (the reader will notice).
 func (p *Panel) send(ctx context.Context, conn *websocket.Conn, f serverFrame) {
-	wctx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
-	defer cancel()
+	_ = p.sendRaw(ctx, conn, f)
+}
+
+// sendRaw writes a frame and reports the error, for callers that need
+// to know whether the peer is still there (the streaming exec pump
+// stops when a write fails).
+func (p *Panel) sendRaw(ctx context.Context, conn *websocket.Conn, f serverFrame) error {
 	b, err := json.Marshal(f)
 	if err != nil {
-		return
+		return err
 	}
-	_ = conn.Write(wctx, websocket.MessageText, b)
+	wctx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+	defer cancel()
+	return conn.Write(wctx, websocket.MessageText, b)
 }
 
 // clientIP extracts the peer address for the audit log.
