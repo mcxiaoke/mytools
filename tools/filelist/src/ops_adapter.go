@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"filelist/internal/ops"
 )
 
@@ -56,9 +58,19 @@ func (p opsPaths) AllowedRoots() []string {
 func newOpsPanel(cfg *Config, idx *Indexer) (*ops.Panel, error) {
 	if !cfg.OpsEnabled() {
 		if cfg.Ops.Enabled {
-			// Enabled but unusable: validateOps already printed the
-			// reason at startup.
-			logger.Warn("ops: panel requested but not enabled (missing server.token)")
+			// Enabled but unusable. Say precisely what is missing
+			// rather than naming a setting that is no longer involved:
+			// the panel has its own token, so pointing at server.token
+			// sends the operator looking in the wrong place.
+			logger.Warn("ops: ops.enabled is true but ops.token is empty; " +
+				"panel stays disabled. Set ops.token to enable it.")
+			if strings.TrimSpace(cfg.Ops.TerminalToken) != "" {
+				// A common configuration mistake: the terminal's second
+				// factor is set, which looks like the panel is
+				// configured, but it cannot enable anything on its own.
+				logger.Warn("ops: ops.terminalToken is set but ops.token is not; " +
+					"ops.token is the credential that enables the panel")
+			}
 		}
 		return nil, nil
 	}

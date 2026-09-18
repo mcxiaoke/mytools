@@ -1147,5 +1147,3 @@ func (s *Server) handleZip(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 }
-
-
