@@ -26,9 +26,6 @@ func newTestPanel(t *testing.T, cfg Config) *Panel {
 	if cfg.AccessToken == "" {
 		cfg.AccessToken = "test-token"
 	}
-	if cfg.Mode == "" {
-		cfg.Mode = "allowlist"
-	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Second
 	}
@@ -157,7 +154,7 @@ func TestWS_WrongTokenRejected(t *testing.T) {
 func TestWS_NoTokenConfiguredFailsClosed(t *testing.T) {
 	// A panel with no access token must refuse everything rather than
 	// expose an unauthenticated root shell.
-	p, err := New(Config{Mode: "allowlist", AccessToken: ""}, nopLogger{}, fakeResolver{root: t.TempDir()})
+	p, err := New(Config{AccessToken: ""}, nopLogger{}, fakeResolver{root: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

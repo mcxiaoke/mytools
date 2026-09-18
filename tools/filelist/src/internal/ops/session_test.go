@@ -12,7 +12,7 @@ import (
 // ── Execution tests ─────────────────────────────────────────────
 
 func TestRunExec_Success(t *testing.T) {
-	p := newTestPanel(t, Config{Allow: []string{`^echo .*$`}})
+	p := newTestPanel(t, Config{})
 	dir := t.TempDir()
 
 	res, err := p.RunExec(context.Background(), "echo hello", dir)
@@ -43,7 +43,7 @@ func TestRunExec_ExitCodeIsReal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p := newTestPanel(t, Config{Allow: []string{`^sh exit3\.sh$`}})
+	p := newTestPanel(t, Config{})
 
 	res, err := p.RunExec(context.Background(), "sh exit3.sh", dir)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestRunExec_DoesNotLeakEnv(t *testing.T) {
 	const secret = "FILELIST_TEST_SECRET_VALUE"
 	t.Setenv("FILELIST_TEST_SECRET", secret)
 
-	p := newTestPanel(t, Config{Allow: []string{`^env$`}})
+	p := newTestPanel(t, Config{})
 	dir := t.TempDir()
 
 	res, err := p.RunExec(context.Background(), "env", dir)
@@ -92,7 +92,6 @@ func TestRunExec_DoesNotLeakEnv(t *testing.T) {
 func TestRunExec_OutputTruncated(t *testing.T) {
 	p := newTestPanel(t, Config{
 		MaxOutput: 512,
-		Allow:     []string{`^sh -c yes$`},
 	})
 	dir := t.TempDir()
 
@@ -115,7 +114,6 @@ func TestRunExec_TimeoutKillsProcessGroup(t *testing.T) {
 
 	p := newTestPanel(t, Config{
 		Timeout: 1 * time.Second,
-		Allow:   []string{`^sleep 60$`},
 	})
 	dir := t.TempDir()
 
@@ -159,7 +157,6 @@ func TestRunExec_NoOrphanedChildren(t *testing.T) {
 
 	p := newTestPanel(t, Config{
 		Timeout: 1 * time.Second,
-		Allow:   []string{`^sh orphan\.sh$`},
 	})
 
 	if _, err := p.RunExec(context.Background(), "sh orphan.sh", dir); err != nil {
@@ -178,7 +175,6 @@ func TestRunExec_NoOrphanedChildren(t *testing.T) {
 func TestRunExec_CWDOutsideSandboxRejected(t *testing.T) {
 	root := t.TempDir()
 	p, err := New(Config{
-		Mode:        "allowlist",
 		AccessToken: "t",
 		CwdRoots:    []string{root},
 		Timeout:     5 * time.Second,
@@ -336,7 +332,6 @@ func TestStreamExec_DeliversOutputBeforeExit(t *testing.T) {
 
 	p := newTestPanel(t, Config{
 		Timeout: 10 * time.Second,
-		Allow:   []string{`^sh two-steps\.sh$`},
 	})
 
 	h, err := p.StartExec(context.Background(), "sh two-steps.sh", dir)
@@ -403,7 +398,6 @@ func TestRunExec_InfiniteOutputIsCutOff(t *testing.T) {
 	p := newTestPanel(t, Config{
 		Timeout:   1 * time.Second,
 		MaxOutput: 4096,
-		Allow:     []string{`^yes$`},
 	})
 	dir := t.TempDir()
 
@@ -439,7 +433,6 @@ func TestRunExec_KillStopsCommand(t *testing.T) {
 
 	p := newTestPanel(t, Config{
 		Timeout: 60 * time.Second, // long, so only the kill can end it
-		Allow:   []string{`^sleep 60$`},
 	})
 	dir := t.TempDir()
 

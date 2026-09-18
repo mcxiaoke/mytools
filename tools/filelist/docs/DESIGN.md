@@ -68,7 +68,7 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 | 索引引擎 | indexer.go | 内存索引构建/加载/持久化，路径映射（virtual↔real），目录列表，搜索，后台增量更新 |
 | HTTP 服务 | server.go | 路由注册，请求处理，中间件，流式文件上传调度，静态文件服务（/static/），构建元数据动态注入（/api/stats, HTML 模板） |
 | 运维面板适配 | ops_adapter.go | 把既有 log 与 indexer 适配为 `internal/ops` 所需的 `Logger` / `PathResolver` 接口（约 40 行，单向依赖的唯一接触点） |
-| 运维面板 | internal/ops/ | 独立子包：命令策略与白名单、会话注册表、一次性执行、PTY 交互执行、WebSocket 传输与 Origin 校验。**不导入主包、indexer 或 webFS** |
+| 运维面板 | internal/ops/ | 独立子包：命令关键词黑名单与 cwd 沙箱、会话注册表、一次性执行、PTY 交互执行、WebSocket 传输与 Origin 校验。**不导入主包、indexer 或 webFS** |
 | 工具函数 | utils.go | 纯函数与通用辅助：路径越界校验、JSON 响应、跨平台文件名安全清理、UTF-8 边界截断、同名编号 |
 | 前端 | web/ | 嵌入式单页应用：语义化模板（index.html）、组件逻辑（static/app.js）、样式（static/app.css）、三方库（pico.min.css, alpine.min.js） |
 | 运维面板前端 | web/static/ops/ | 独立前端资产：`ops.js`（Alpine 组件，运行时自建 DOM）、`ops.css`、`ops.html`（独立页） |
@@ -225,7 +225,7 @@ Indexer.Start() goroutine:
   │     └── ws://host/api/ops/ws
   │           ├── Origin 校验（CSWSH 唯一防线）→ 失败 403
   │           ├── 显式 token 校验（不接受仅 Cookie）→ 失败 401
-  │           ├── policy.CheckCommand：拼接符扫描 → deny → allow
+  │           ├── policy.CheckCommand：拼接符扫描 → 关键词黑名单（前缀匹配）
   │           ├── policy.CheckCWD：沙箱校验
   │           ├── 环境变量白名单透传 → exec.CommandContext
   │           ├── 进程组超时回收（SIGTERM → SIGKILL）

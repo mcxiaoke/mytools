@@ -130,10 +130,10 @@ ops:
                            # server.token so browsing stays simple and this credential can
                            # be rotated or revoked on its own. Pass it as ?token=xxx on
                            # the page, or as a Bearer header for scripts.
-  mode: allowlist          # allowlist (default, recommended) | free (arbitrary commands)
   terminalToken: ""        # second factor for the interactive terminal. Empty disables
                            # the terminal entirely. Use a DIFFERENT secret from server.token:
-                           # one-shot commands are bounded by the allowlist, a shell is not.
+                           # one-shot commands are bounded by the keyword blacklist, a shell
+                           # is not.
   cwdRoots: []             # allowed working-directory roots (empty = reuse roots[].path)
   originPatterns: []       # WebSocket Origin allowlist (empty = derive from request Host).
                            # REQUIRED when behind a reverse proxy whose Host differs from
@@ -146,28 +146,23 @@ ops:
   idleTimeout: 30m         # idle sessions are reaped
   scrollbackBytes: 256KB   # replay buffer for reconnects
 
-  # Extra allow patterns, APPENDED to a built-in read-only set. The
-  # built-in set already covers ls/cat/head/tail/wc/stat/file/du/df/
-  # grep/rg/find/ps/uptime/free/uname/hostname/whoami/id/date/ss/netstat/
-  # ip/systemctl(status|is-active|...)/journalctl/docker(ps|logs|...)/git
-  # (status|log|diff|...), so most read-only inspection works out of the
-  # box. Add only what you need beyond that.
+  # Extra blacklist keywords, APPENDED to the built-in set. A command is
+  # refused when it BEGINS with one of them (case-insensitive prefix
+  # match); everything else runs. There is no allowlist: the panel is
+  # permissive by default, and this short list is what keeps a mistyped
+  # command from destroying data or reconfiguring the host.
   #
-  # Note: pagers and interactive tools (less, more, top, vi) are
-  # deliberately NOT in the built-in set — they block waiting for input
-  # and belong in the terminal mode instead.
-  allow:
-    # - '^systemctl (restart|reload|start|stop) [\w@.\-]+$'
-    # - '^docker compose (up|down|restart)( [\w\-]+)*$'
-    # - '^nginx -t$'
-
-  # Global deny list. An EMPTY LIST (deny: []) clears the built-in
-  # dangerous set, matching how index.excludeFiles behaves. The
-  # built-in set covers rm, mkfs, dd, chmod, chown, mount, useradd,
-  # passwd, shutdown, reboot, iptables, crontab, package managers and
-  # writes to raw block devices. Deny always wins over allow, in every
-  # mode.
-  deny: []
+  # Built in: rm dd mkfs shred truncate chmod chown chattr mount umount
+  #           shutdown reboot halt poweroff kill pkill useradd userdel
+  #           passwd crontab iptables ufw apt yum dnf pacman
+  #
+  # Because matching is a prefix test, "rm" also covers "rmdir". "mv" is
+  # deliberately absent — as a prefix it would also refuse "mvn" — so add
+  # it here if you want it blocked.
+  blacklist:
+    # - mv
+    # - docker
+    # - systemctl stop
 
 # Path mappings: URL path -> real disk path
 # - URL: virtual web path shown in browser (must start with /)

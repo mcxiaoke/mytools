@@ -345,7 +345,7 @@
 
         describeError: function (f) {
           var map = {
-            denied_by_policy: '\u547d\u4ee4\u88ab\u7b56\u7565\u62d2\u7edd',
+            denied_by_policy: '\u547d\u4ee4\u547d\u4e2d\u9ed1\u540d\u5355\uff0c\u5df2\u62d2\u7edd',
             cwd_out_of_sandbox: '\u5de5\u4f5c\u76ee\u5f55\u8d85\u51fa\u5141\u8bb8\u8303\u56f4',
             concurrency_limit: '\u5e76\u53d1\u4f1a\u8bdd\u8d85\u9650',
             terminal_token: '\u7ec8\u7aef\u53e3\u4ee4\u4e0d\u6b63\u786e',

@@ -8,48 +8,36 @@ import (
 // ── Policy tests: the command boundary ──────────────────────────
 //
 // These cases are the specification for what may and may not run.
-// The metacharacter cases matter most: they are the difference
-// between an allowlist and a false sense of safety.
+// The design is deliberately small: a command is refused only when it
+// begins with a blacklisted keyword. Everything else runs.
+//
+// The metacharacter cases matter most: prefix matching is only
+// meaningful once the command is known to be a single command.
 
-func newTestPolicy(t *testing.T, mode string, allow []string) *Policy {
+func newTestPolicy(t *testing.T, blacklist []string) *Policy {
 	t.Helper()
-	p, err := NewPolicy(PolicyConfig{Mode: mode, Allow: allow}, nopLogger{})
-	if err != nil {
-		t.Fatalf("NewPolicy: %v", err)
-	}
-	return p
+	return NewPolicy(PolicyConfig{Blacklist: blacklist})
 }
 
-func TestCheckCommand_BuiltinReadOnlyAllowed(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+// TestCheckCommand_ArbitraryCommandsAllowed is the headline behaviour
+// change: commands outside the blacklist run without being enumerated
+// anywhere first.
+func TestCheckCommand_ArbitraryCommandsAllowed(t *testing.T) {
+	p := newTestPolicy(t, nil)
 
 	allowed := []string{
 		"ls",
-		"ls -la",
 		"ls -la /data",
 		"cat /etc/nginx/nginx.conf",
-		"head -n 20 /var/log/syslog",
-		"tail -n 50 /var/log/syslog",
-		"wc -l /etc/passwd",
-		"stat /etc/hosts",
-		"df -h",
-		"du -sh /data",
-		"grep error /var/log/syslog",
-		"ps",
-		"uptime",
-		"whoami",
-		"id",
-		"uname -a",
-		"hostname",
+		"systemctl restart nginx",
 		"systemctl status nginx",
-		"systemctl is-active nginx",
 		"journalctl -u nginx -n 100 --no-pager",
-		"docker ps",
-		"docker logs myapp",
+		"docker compose up -d",
+		"nginx -t",
+		"myscript --flag",
 		"git status",
-		"git log",
-		"ss -tlnp",
-		"ip addr show",
+		"find /data -type f",
+		"curl http://example.com",
 	}
 
 	for _, cmd := range allowed {
@@ -60,13 +48,12 @@ func TestCheckCommand_BuiltinReadOnlyAllowed(t *testing.T) {
 }
 
 // TestCheckCommand_MetacharactersRejected is the most important test
-// in the package. Every one of these would defeat allowlist matching
-// if the metacharacter scan did not run first.
+// in the package. Every one of these would defeat prefix matching if
+// the metacharacter scan did not run first: the command begins with a
+// harmless word, and the shell would run the rest.
 func TestCheckCommand_MetacharactersRejected(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+	p := newTestPolicy(t, nil)
 
-	// Each entry is a command that contains an allowed prefix but
-	// chains, redirects or substitutes something else.
 	attacks := []string{
 		"ls; rm -rf /",
 		"ls && rm -rf /",
@@ -91,59 +78,63 @@ func TestCheckCommand_MetacharactersRejected(t *testing.T) {
 	}
 }
 
-func TestCheckCommand_DenyWinsOverAllow(t *testing.T) {
-	// rm is in the built-in deny set. Even in free mode — where the
-	// allowlist does not apply — deny must still block it.
-	for _, mode := range []string{"allowlist", "free"} {
-		p := newTestPolicy(t, mode, nil)
-		for _, cmd := range []string{"rm -rf /data", "rm file.txt", "sudo rm -rf /"} {
-			if err := p.CheckCommand(cmd); err == nil {
-				t.Errorf("mode=%s: CheckCommand(%q) = nil, want deny", mode, cmd)
-			}
+// TestCheckCommand_BlacklistedKeywordsDenied covers the built-in set.
+func TestCheckCommand_BlacklistedKeywordsDenied(t *testing.T) {
+	p := newTestPolicy(t, nil)
+
+	dangerous := []string{
+		"rm -rf /data",
+		"rm file.txt",
+		"rmdir old",
+		"dd if=/dev/zero of=/dev/sda",
+		"mkfs.ext4 /dev/sda1",
+		"shred secret.txt",
+		"truncate -s 0 /var/log/syslog",
+		"chmod 777 /etc/shadow",
+		"chown root:root /data",
+		"chattr +i /etc/passwd",
+		"mount /dev/sda1 /mnt",
+		"umount /data",
+		"shutdown -h now",
+		"reboot",
+		"halt",
+		"poweroff",
+		"kill 1234",
+		"killall nginx",
+		"pkill -f nginx",
+		"useradd attacker",
+		"userdel bob",
+		"passwd root",
+		"crontab -e",
+		"iptables -F",
+		"ufw disable",
+		"apt-get install something",
+		"yum update",
+		"dnf install x",
+		"pacman -Syu",
+	}
+
+	for _, cmd := range dangerous {
+		if err := p.CheckCommand(cmd); err == nil {
+			t.Errorf("CheckCommand(%q) = nil, want denial", cmd)
 		}
 	}
 }
 
-func TestCheckCommand_DenyDefaultsAndOverride(t *testing.T) {
-	// Default deny set applies when Deny is nil.
-	p, err := NewPolicy(PolicyConfig{Mode: "free"}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.CheckCommand("shutdown -h now"); err == nil {
-		t.Error("shutdown should be denied by default")
-	}
-
-	// An explicit empty (non-nil) list clears the defaults, matching
-	// how index.excludeFiles behaves in the main package.
-	p2, err := NewPolicy(PolicyConfig{Mode: "free", Deny: []string{}}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p2.CheckCommand("shutdown -h now"); err != nil {
-		t.Errorf("explicit empty deny should clear defaults, got %v", err)
-	}
-}
-
-// TestCheckCommand_NoFalsePositivesOnPaths guards against the deny
-// rules matching a command name that merely appears inside a path
-// argument. An unanchored \bmv\b rejects `ls /data/mvtest`, and
-// \bmount\b rejects `cat /etc/mount.conf` — both are legitimate reads.
-func TestCheckCommand_NoFalsePositivesOnPaths(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+// TestCheckCommand_MatchingIsPrefixOnly guards the shape of the rule:
+// the keyword must be at the START of the command. A name appearing
+// later in a path or as a grep argument is not a command being run.
+func TestCheckCommand_MatchingIsPrefixOnly(t *testing.T) {
+	p := newTestPolicy(t, nil)
 
 	legit := []string{
-		"ls /data/mvtest",
-		"ls /var/log/dd",
+		"ls /data/rmtest",
 		"cat /etc/mount.conf",
-		"cat /etc/passwd",
-		"wc -l /etc/passwd",
-		"ls /data/kill_switch",
-		"ls /data/rmfile.txt",
 		"grep rm /var/log/syslog",
-		"find /data -maxdepth 2 -type f",
-		"ls /data/truncate.log",
-		"cat /etc/at.conf",
+		"grep kill /var/log/syslog",
+		"ls /data/kill_switch",
+		"find /data -name rm -type f",
+		"wc -l /etc/passwd",
 		"ls /data/chmod_notes.md",
 	}
 
@@ -154,35 +145,35 @@ func TestCheckCommand_NoFalsePositivesOnPaths(t *testing.T) {
 	}
 }
 
-// TestCheckCommand_DangerousCommandsDenied verifies the anchored deny
-// rules still catch the real thing.
-func TestCheckCommand_DangerousCommandsDenied(t *testing.T) {
-	for _, mode := range []string{"allowlist", "free"} {
-		p := newTestPolicy(t, mode, nil)
-		dangerous := []string{
-			"rm -rf /data",
-			"rm file.txt",
-			"mkfs.ext4 /dev/sda1",
-			"dd if=/dev/zero of=/dev/sda",
-			"shutdown -h now",
-			"reboot",
-			"chmod 777 /etc/shadow",
-			"chown root:root /data",
-			"useradd attacker",
-			"passwd root",
-			"crontab -e",
-			"iptables -F",
-			"mount /dev/sda1 /mnt",
-			"umount /data",
-			"apt-get install something",
-			"killall nginx",
-			"cat /dev/sda",
+// TestCheckCommand_CaseInsensitive verifies "RM" cannot slip past a
+// rule written for "rm".
+func TestCheckCommand_CaseInsensitive(t *testing.T) {
+	p := newTestPolicy(t, nil)
+	for _, cmd := range []string{"RM -rf /data", "Rm -rf /data", "CHMOD 777 /etc/shadow"} {
+		if err := p.CheckCommand(cmd); err == nil {
+			t.Errorf("CheckCommand(%q) = nil, want denial", cmd)
 		}
-		for _, cmd := range dangerous {
-			if err := p.CheckCommand(cmd); err == nil {
-				t.Errorf("mode=%s: CheckCommand(%q) = nil, want denial", mode, cmd)
-			}
+	}
+}
+
+// TestCheckCommand_UserKeywordsAppended verifies ops.blacklist extends
+// the built-in set rather than replacing it.
+func TestCheckCommand_UserKeywordsAppended(t *testing.T) {
+	p := newTestPolicy(t, []string{"mv", "MYSCRIPT"})
+
+	// The configured keywords apply…
+	for _, cmd := range []string{"mv /data/a /data/b", "myscript --danger"} {
+		if err := p.CheckCommand(cmd); err == nil {
+			t.Errorf("CheckCommand(%q) = nil, want denial", cmd)
 		}
+	}
+	// …and the built-ins still do.
+	if err := p.CheckCommand("rm -rf /data"); err == nil {
+		t.Error("built-in keyword stopped applying once extras were configured")
+	}
+	// Unrelated commands are still allowed.
+	if err := p.CheckCommand("ls -la"); err != nil {
+		t.Errorf("CheckCommand(\"ls -la\") = %v, want nil", err)
 	}
 }
 
@@ -191,7 +182,7 @@ func TestCheckCommand_DangerousCommandsDenied(t *testing.T) {
 // must run on the raw string or `ls\nrm -rf /` looks like a harmless
 // `ls rm -rf /`.
 func TestCheckCommand_NewlineSeparatorRejected(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+	p := newTestPolicy(t, nil)
 
 	for _, cmd := range []string{
 		"ls\nrm -rf /",
@@ -206,41 +197,34 @@ func TestCheckCommand_NewlineSeparatorRejected(t *testing.T) {
 }
 
 // TestCheckCommand_PrivilegePrefixStripped guards another bypass:
-// anchored deny rules such as ^\s*rm\b are defeated by a `sudo`
-// prefix unless the wrapper is removed before matching.
+// a prefix rule for "rm" is defeated by a `sudo` prefix unless the
+// wrapper is removed before matching.
 func TestCheckCommand_PrivilegePrefixStripped(t *testing.T) {
-	for _, mode := range []string{"allowlist", "free"} {
-		p := newTestPolicy(t, mode, nil)
+	p := newTestPolicy(t, nil)
 
-		bypasses := []string{
-			"sudo rm -rf /data",
-			"doas rm -rf /data",
-			"pkexec rm -rf /data",
-			"sudo env rm -rf /data",
-			"nohup rm -rf /data",
-			"sudo chmod 777 /etc/shadow",
-			"sudo shutdown -h now",
-			"sudo useradd attacker",
-			"sudo apt-get install evil",
-		}
-		for _, cmd := range bypasses {
-			if err := p.CheckCommand(cmd); err == nil {
-				t.Errorf("mode=%s: CheckCommand(%q) = nil, want denial (privilege prefix bypass)", mode, cmd)
-			}
+	bypasses := []string{
+		"sudo rm -rf /data",
+		"doas rm -rf /data",
+		"pkexec rm -rf /data",
+		"sudo env rm -rf /data",
+		"nohup rm -rf /data",
+		"sudo chmod 777 /etc/shadow",
+		"sudo shutdown -h now",
+		"sudo useradd attacker",
+		"sudo apt-get install evil",
+	}
+	for _, cmd := range bypasses {
+		if err := p.CheckCommand(cmd); err == nil {
+			t.Errorf("CheckCommand(%q) = nil, want denial (privilege prefix bypass)", cmd)
 		}
 	}
 }
 
 // TestCheckCommand_PrivilegePrefixAllowedWhenCommandIsSafe verifies the
-// stripping does not over-reject: a privileged read-only command is
-// still judged by what it actually runs.
+// stripping does not over-reject.
 func TestCheckCommand_PrivilegePrefixAllowedWhenCommandIsSafe(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", []string{`^systemctl (restart|reload) [\w@.\-]+$`})
-
-	for _, cmd := range []string{
-		"sudo systemctl reload nginx",
-		"sudo ls -la /data",
-	} {
+	p := newTestPolicy(t, nil)
+	for _, cmd := range []string{"sudo systemctl reload nginx", "sudo ls -la /data"} {
 		if err := p.CheckCommand(cmd); err != nil {
 			t.Errorf("CheckCommand(%q) = %v, want nil", cmd, err)
 		}
@@ -262,42 +246,42 @@ func TestStripPrivilegePrefix(t *testing.T) {
 	}
 }
 
-func TestCheckCommand_FreeModeAllowsArbitraryButStillScans(t *testing.T) {
-	p := newTestPolicy(t, "free", nil)
+// TestMatchBlacklist is a direct test of the pure matching function.
+func TestMatchBlacklist(t *testing.T) {
+	keywords := []string{"rm", "shutdown"}
 
-	// A command outside the built-in allowlist runs in free mode.
-	if err := p.CheckCommand("myscript --flag"); err != nil {
-		t.Errorf("free mode should allow arbitrary commands, got %v", err)
+	cases := []struct {
+		cmd     string
+		wantKw  string
+		wantHit bool
+	}{
+		{"rm -rf /", "rm", true},
+		{"rmdir old", "rm", true}, // prefix, not word-boundary
+		{"RM -rf /", "rm", true},  // case-insensitive
+		{"shutdown now", "shutdown", true},
+		{"ls /data/rmtest", "", false},
+		{"grep rm file", "", false},
+		{"", "", false},
 	}
-	// But metacharacters are still refused.
-	if err := p.CheckCommand("myscript; rm -rf /"); err == nil {
-		t.Error("free mode must still reject metacharacters")
-	}
-}
-
-func TestCheckCommand_AllowlistModeRejectsUnknown(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
-	for _, cmd := range []string{"nginx -t", "myscript", "curl http://example.com"} {
-		if err := p.CheckCommand(cmd); err == nil {
-			t.Errorf("CheckCommand(%q) = nil, want rejection in allowlist mode", cmd)
+	for _, c := range cases {
+		kw, hit := matchBlacklist(c.cmd, keywords)
+		if hit != c.wantHit || kw != c.wantKw {
+			t.Errorf("matchBlacklist(%q) = (%q, %v), want (%q, %v)",
+				c.cmd, kw, hit, c.wantKw, c.wantHit)
 		}
 	}
 }
 
-func TestCheckCommand_UserPatternsAppended(t *testing.T) {
-	// Operator-supplied patterns extend the built-ins rather than
-	// replacing them: ls must still work.
-	p := newTestPolicy(t, "allowlist", []string{`^nginx -t$`, `^systemctl (restart|reload) [\w@.\-]+$`})
-
-	for _, cmd := range []string{"ls", "nginx -t", "systemctl reload nginx", "systemctl restart myapp.service"} {
-		if err := p.CheckCommand(cmd); err != nil {
-			t.Errorf("CheckCommand(%q) = %v, want nil", cmd, err)
-		}
+// TestMatchBlacklist_EmptyKeywordsIgnored makes sure a stray empty
+// entry in the config cannot refuse every command.
+func TestMatchBlacklist_EmptyKeywordsIgnored(t *testing.T) {
+	if _, hit := matchBlacklist("ls -la", []string{"", "  "}); hit {
+		t.Error("empty keyword matched a harmless command")
 	}
 }
 
 func TestCheckCommand_WhitespaceNormalized(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+	p := newTestPolicy(t, nil)
 
 	// Extra internal whitespace must not let a command slip past, and
 	// must not cause a false rejection either.
@@ -306,10 +290,14 @@ func TestCheckCommand_WhitespaceNormalized(t *testing.T) {
 			t.Errorf("CheckCommand(%q) = %v, want nil after normalization", cmd, err)
 		}
 	}
+	// A blacklisted command is still caught with irregular spacing.
+	if err := p.CheckCommand("rm    -rf   /data"); err == nil {
+		t.Error("whitespace defeated the blacklist")
+	}
 }
 
 func TestCheckCommand_EmptyRejected(t *testing.T) {
-	p := newTestPolicy(t, "allowlist", nil)
+	p := newTestPolicy(t, nil)
 	for _, cmd := range []string{"", "   ", "\t"} {
 		if err := p.CheckCommand(cmd); err == nil {
 			t.Errorf("CheckCommand(%q) = nil, want rejection", cmd)
@@ -317,25 +305,10 @@ func TestCheckCommand_EmptyRejected(t *testing.T) {
 	}
 }
 
-func TestCheckCommand_BadPatternIsReported(t *testing.T) {
-	if _, err := NewPolicy(PolicyConfig{Mode: "allowlist", Allow: []string{"([unclosed"}}, nopLogger{}); err == nil {
-		t.Error("expected an error for an uncompilable allow pattern")
-	}
-}
-
-func TestCheckCommand_BadModeIsReported(t *testing.T) {
-	if _, err := NewPolicy(PolicyConfig{Mode: "yolo"}, nopLogger{}); err == nil {
-		t.Error("expected an error for an unknown mode")
-	}
-}
-
 // ── cwd sandbox tests ───────────────────────────────────────────
 
 func TestCheckCWD_InsideRootAllowed(t *testing.T) {
-	p, err := NewPolicy(PolicyConfig{Mode: "allowlist", Roots: []string{"/data"}}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := NewPolicy(PolicyConfig{Roots: []string{"/data"}})
 	for _, dir := range []string{"/data", "/data/nginx", "/data/a/b/c"} {
 		if err := p.CheckCWD(dir); err != nil {
 			t.Errorf("CheckCWD(%q) = %v, want nil", dir, err)
@@ -344,10 +317,7 @@ func TestCheckCWD_InsideRootAllowed(t *testing.T) {
 }
 
 func TestCheckCWD_OutsideRootRejected(t *testing.T) {
-	p, err := NewPolicy(PolicyConfig{Mode: "allowlist", Roots: []string{"/data"}}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := NewPolicy(PolicyConfig{Roots: []string{"/data"}})
 	for _, dir := range []string{"/etc", "/", "/datax", "/data/../etc"} {
 		if err := p.CheckCWD(dir); err == nil {
 			t.Errorf("CheckCWD(%q) = nil, want rejection", dir)
@@ -358,20 +328,14 @@ func TestCheckCWD_OutsideRootRejected(t *testing.T) {
 func TestCheckCWD_NoRootsMeansNoSandbox(t *testing.T) {
 	// An empty roots list is an explicit opt-out, matching the
 	// documented behaviour.
-	p, err := NewPolicy(PolicyConfig{Mode: "allowlist"}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := NewPolicy(PolicyConfig{})
 	if err := p.CheckCWD("/anywhere/at/all"); err != nil {
 		t.Errorf("CheckCWD with no roots = %v, want nil", err)
 	}
 }
 
 func TestCheckCWD_EmptyRejectedWhenSandboxed(t *testing.T) {
-	p, err := NewPolicy(PolicyConfig{Mode: "allowlist", Roots: []string{"/data"}}, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := NewPolicy(PolicyConfig{Roots: []string{"/data"}})
 	if err := p.CheckCWD(""); err == nil {
 		t.Error("empty cwd should be rejected when a sandbox is configured")
 	}

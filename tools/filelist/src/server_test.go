@@ -490,4 +490,3 @@ func TestHandleZip(t *testing.T) {
 		t.Errorf("missing sub/f2.txt in zip, got %v", names)
 	}
 }
-

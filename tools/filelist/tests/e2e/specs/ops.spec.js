@@ -22,10 +22,7 @@ test.beforeAll(async () => {
     ops: {
       enabled: true,
       token: OPS_TOKEN,
-      terminalToken: TERM_TOKEN,
-      // Allow a harmless command so the happy path is exercised
-      // without depending on the built-in allowlist contents.
-      allow: ['^echo .*$']
+      terminalToken: TERM_TOKEN
     }
   });
 });
@@ -75,7 +72,6 @@ test.describe('Ops Panel', () => {
     expect(cfg).toBeTruthy();
     expect(cfg.ops).toBeTruthy();
     expect(cfg.ops.enabled).toBe(true);
-    expect(typeof cfg.ops.mode).toBe('string');
   });
 
   test('toolbar button is injected by the module', async ({ page }) => {
@@ -113,7 +109,7 @@ test.describe('Ops Panel', () => {
     expect(fatal).toEqual([]);
   });
 
-  test('runs an allowed command and shows output with an exit code', async ({ page }) => {
+  test('runs a command that is not on the blacklist', async ({ page }) => {
     await page.goto(server.baseUrl);
     await page.click('#opsToggleBtn');
     await page.fill('input[placeholder="ops.token"]', OPS_TOKEN);
@@ -130,7 +126,7 @@ test.describe('Ops Panel', () => {
     await expect(output).toContainText('exit 0');
   });
 
-  test('refuses a denied command and explains why', async ({ page }) => {
+  test('refuses a blacklisted command and explains why', async ({ page }) => {
     await page.goto(server.baseUrl);
     await page.click('#opsToggleBtn');
     await page.fill('input[placeholder="ops.token"]', OPS_TOKEN);

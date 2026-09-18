@@ -53,10 +53,10 @@ type PathResolver interface {
 // Config is the resolved configuration for the panel. The host builds
 // it from its own YAML config, applying fail-closed defaults.
 type Config struct {
-	Enabled        bool
-	Mode           string // "allowlist" or "free"
-	Allow          []string
-	Deny           []string // nil means "use built-in dangerous set"
+	Enabled bool
+	// Blacklist holds extra keywords appended to the built-in set.
+	// A command beginning with any of them is refused.
+	Blacklist      []string
 	TerminalToken  string
 	OriginPatterns []string
 	CwdRoots       []string
@@ -87,7 +87,6 @@ type Config struct {
 func Defaults() Config {
 	return Config{
 		Enabled:        false,
-		Mode:           "allowlist",
 		Timeout:        30 * time.Second,
 		MaxOutput:      1 << 20, // 1 MiB
 		MaxSessions:    2,
@@ -163,15 +162,10 @@ func New(cfg Config, logger Logger, resolver PathResolver) (*Panel, error) {
 		roots = resolver.AllowedRoots()
 	}
 
-	policy, err := NewPolicy(PolicyConfig{
-		Mode:  cfg.Mode,
-		Allow: cfg.Allow,
-		Deny:  cfg.Deny,
-		Roots: roots,
-	}, logger)
-	if err != nil {
-		return nil, err
-	}
+	policy := NewPolicy(PolicyConfig{
+		Blacklist: cfg.Blacklist,
+		Roots:     roots,
+	})
 
 	if cfg.MaxSessions <= 0 {
 		cfg.MaxSessions = 2
@@ -218,11 +212,10 @@ func (p *Panel) Handler() http.Handler {
 // terminal token is deliberately absent: the client only learns that a
 // token is required, never its value.
 type ClientConfig struct {
-	Enabled      bool   `json:"enabled"`
-	Terminal     bool   `json:"terminal"`
-	Mode         string `json:"mode"`
-	PTYAvailable bool   `json:"ptyAvailable"`
-	MaxOutput    int64  `json:"maxOutput"`
+	Enabled      bool  `json:"enabled"`
+	Terminal     bool  `json:"terminal"`
+	PTYAvailable bool  `json:"ptyAvailable"`
+	MaxOutput    int64 `json:"maxOutput"`
 	// TimeoutSeconds lets the client arm its own fallback deadline, so
 	// a lost frame cannot leave the panel permanently busy.
 	TimeoutSeconds int `json:"timeoutSeconds"`
@@ -233,7 +226,6 @@ func (p *Panel) ClientConfig() ClientConfig {
 	return ClientConfig{
 		Enabled:        p.cfg.Enabled,
 		Terminal:       p.cfg.Enabled && strings.TrimSpace(p.cfg.TerminalToken) != "",
-		Mode:           p.cfg.Mode,
 		PTYAvailable:   p.cfg.PTYAvailable,
 		MaxOutput:      p.cfg.MaxOutput,
 		TimeoutSeconds: int(p.cfg.Timeout / time.Second),

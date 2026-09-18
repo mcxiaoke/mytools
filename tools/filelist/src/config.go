@@ -53,7 +53,6 @@ type Config struct {
 	Ops struct {
 		Enabled        bool     `yaml:"enabled"`        // master switch
 		Token          string   `yaml:"token"`          // dedicated access token for the panel
-		Mode           string   `yaml:"mode"`           // allowlist (default) | free
 		TerminalToken  string   `yaml:"terminalToken"`  // second factor for the interactive terminal
 		CwdRoots       []string `yaml:"cwdRoots"`       // allowed working-directory roots (empty = reuse roots)
 		OriginPatterns []string `yaml:"originPatterns"` // WebSocket Origin allowlist (empty = derive from Host)
@@ -62,8 +61,10 @@ type Config struct {
 		MaxSessions    int      `yaml:"maxSessions"`    // concurrent session cap
 		IdleTimeout    string   `yaml:"idleTimeout"`    // idle session reaping
 		Scrollback     string   `yaml:"scrollbackBytes"`
-		Allow          []string `yaml:"allow"` // extra patterns appended to the built-in read-only set
-		Deny           []string `yaml:"deny"`  // empty list clears the built-in dangerous set
+		// Blacklist holds extra keywords appended to the built-in set.
+		// A command beginning with any keyword is refused; matching is
+		// a case-insensitive prefix test.
+		Blacklist []string `yaml:"blacklist"`
 	} `yaml:"ops"`
 	Roots []RootMapping `yaml:"roots"`
 
@@ -162,14 +163,10 @@ func (c *Config) OpsEnabled() bool {
 
 // OpsTerminalEnabled reports whether the interactive terminal may be
 // used. It needs its own second factor: an interactive shell is a full
-// shell, whereas one-shot commands are bounded by the allowlist.
+// shell, whereas one-shot commands are bounded by the keyword
+// blacklist.
 func (c *Config) OpsTerminalEnabled() bool {
 	return c.OpsEnabled() && strings.TrimSpace(c.Ops.TerminalToken) != ""
-}
-
-// OpsFreeMode reports whether allowlist enforcement is disabled.
-func (c *Config) OpsFreeMode() bool {
-	return c.OpsEnabled() && strings.EqualFold(strings.TrimSpace(c.Ops.Mode), "free")
 }
 
 // OpsConfig builds the panel configuration from the YAML settings,
@@ -181,17 +178,7 @@ func (c *Config) OpsConfig() ops.Config {
 	cfg.TerminalToken = strings.TrimSpace(c.Ops.TerminalToken)
 	cfg.OriginPatterns = c.Ops.OriginPatterns
 	cfg.CwdRoots = c.Ops.CwdRoots
-	cfg.Allow = c.Ops.Allow
-
-	if c.Ops.Mode != "" {
-		cfg.Mode = strings.ToLower(strings.TrimSpace(c.Ops.Mode))
-	}
-
-	// Deny is nil-aware: a nil slice means "use the built-in dangerous
-	// set", while an explicitly empty list clears it. yaml.v3 gives an
-	// empty sequence as a non-nil empty slice, which is exactly the
-	// distinction needed, so the mapping is direct.
-	cfg.Deny = c.Ops.Deny
+	cfg.Blacklist = c.Ops.Blacklist
 
 	if d, ok := parseByteSize(c.Ops.MaxOutput); ok {
 		cfg.MaxOutput = d
@@ -414,15 +401,11 @@ func (c *Config) validateOps() error {
 		logger.Warn("config: ops.enabled=true but ops.token is empty; panel disabled")
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(c.Ops.Mode))
-	if mode != "" && mode != "allowlist" && mode != "free" {
-		return fmt.Errorf("ops.mode %q must be \"allowlist\" or \"free\"", c.Ops.Mode)
-	}
-
-	if mode == "free" {
-		fmt.Println("WARNING: ops.mode is \"free\" — arbitrary commands may be executed " +
-			"through the browser. Only the built-in deny list applies.")
-		logger.Warn("config: ops.mode=free — arbitrary command execution is permitted")
+	// The command boundary is a keyword blacklist. Report the resolved
+	// size so the operator can see at a glance how the panel is guarded.
+	if len(c.Ops.Blacklist) > 0 {
+		logger.Info("config: ops.blacklist has %d extra keyword(s) on top of the built-in set",
+			len(c.Ops.Blacklist))
 	}
 
 	// Reusing the same secret for the panel and for browsing defeats

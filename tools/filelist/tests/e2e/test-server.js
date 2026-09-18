@@ -150,9 +150,8 @@ roots:
 ${options.ops ? `ops:
   enabled: ${options.ops.enabled !== false}
   token: "${options.ops.token || ''}"
-  mode: "${options.ops.mode || 'allowlist'}"
   terminalToken: "${options.ops.terminalToken || ''}"
-${options.ops.allow ? '  allow:\n' + options.ops.allow.map((p) => `    - ${JSON.stringify(p)}`).join('\n') : ''}` : ''}
+${options.ops.blacklist ? '  blacklist:\n' + options.ops.blacklist.map((k) => `    - ${JSON.stringify(k)}`).join('\n') : ''}` : ''}
 `;
   fs.writeFileSync(configPath, configContent.trim(), 'utf-8');
 

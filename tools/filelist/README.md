@@ -78,7 +78,7 @@ cp config.sample.yaml config.yaml
 | `manage.maxTextSize` | `2MB` | 文本在线编辑/预览的最大字节限制 |
 | `ops.enabled` | `false` | 是否启用运维面板（**必须同时设置 `ops.token`**） |
 | `ops.token` | `""` | 面板专用访问口令，与 `server.token` 相互独立 |
-| `ops.mode` | `allowlist` | 命令模式：`allowlist`（白名单）/ `free`（任意命令，高风险） |
+| `ops.blacklist` | 内置 26 项 | 追加的关键词黑名单，命令以任一关键词开头即被拒绝（前缀匹配，大小写不敏感） |
 | `ops.terminalToken` | `""` | 交互式终端的独立第二因子，空则禁用终端模式 |
 | `ops.cwdRoots` | `[]` | 允许的工作目录根（空 = 复用 `roots[].path`） |
 | `ops.originPatterns` | `[]` | WebSocket Origin 白名单（空 = 从请求 Host 推导；反代场景必须显式配置） |
@@ -154,11 +154,10 @@ manage:
 ops:
   enabled: true              # 主开关
   token: "面板专用口令"       # 必需：面板自己的访问口令
-  mode: allowlist            # 默认白名单模式
   terminalToken: "终端口令"   # 交互式终端的独立第二因子（可选）
-  allow:
-    - '^systemctl (restart|reload|start|stop) [\w@.\-]+$'
-    - '^nginx -t$'
+  blacklist:                 # 可选：追加黑名单关键词（前缀匹配）
+    - mv
+    - systemctl stop
 ```
 
 **两个条件必须同时满足**，面板才会被注册：`ops.enabled: true` **且** `ops.token` 非空。若只开 `enabled` 而未设 token，面板保持禁用并在启动日志中告警——这是刻意的 fail-closed 设计，因为握手没有凭据可校验时，面板等于一个无锁的命令执行器。
@@ -183,15 +182,27 @@ ops:
 
 面板的工作目录会**自动跟随你在 filelist 中浏览的目录**。例如浏览到 `/data/nginx` 时，面板的 cwd 即为该目录对应的磁盘路径，可直接执行 `nginx -t`。可点击 🔒 锁定以停止跟随。
 
-### 内置只读命令白名单
+### 内置关键词黑名单
 
-开箱即支持这些**只读、无副作用**的命令，无需自行配置：
+命令默认**放行**，只有以黑名单关键词**开头**的命令会被拒绝。内置关键词是这些（大小写不敏感的前缀匹配）：
 
-`ls` `cat` `head` `tail` `wc` `stat` `file` `du` `df` `tree` `grep` `rg` `find` `ps` `uptime` `free` `uname` `hostname` `whoami` `id` `date` `env` `ss` `netstat` `ip` `systemctl status|is-active|list-units` `journalctl` `docker ps|logs|images|inspect` `git status|log|diff|show|branch`
+`rm` `dd` `mkfs` `shred` `truncate` `chmod` `chown` `chattr` `mount` `umount` `shutdown` `reboot` `halt` `poweroff` `kill` `pkill` `useradd` `userdel` `passwd` `crontab` `iptables` `ufw` `apt` `yum` `dnf` `pacman`
 
-`ops.allow` 中的规则是**追加**到上述集合之上，而非替换。需要收紧时用 `ops.deny`（deny 优先级最高）。
+因为是前缀匹配，`rm` 同时覆盖 `rmdir`；只有命令**开头**参与比较，所以 `grep rm /var/log/syslog`、`ls /data/rmtest` 这类正常读取不会被误伤。
 
-> 分页器与交互式工具（`less`、`more`、`top`、`vi`）**故意不在**内置白名单中——它们会阻塞等待输入，属于「终端」模式的场景。
+`ops.blacklist` 中的关键词**追加**到上述集合之上：
+
+```yaml
+ops:
+  blacklist:
+    - mv              # 前缀匹配会同时拦下 mv 开头的命令
+    - docker
+    - systemctl stop
+```
+
+> `mv` 故意不在内置集合中——作为前缀它会连 `mvn` 一起拒绝，而移动文件是常规操作。需要更严格时自行加入。
+>
+> 分页器与交互式工具（`less`、`more`、`top`、`vi`）不在黑名单内：它们只是会阻塞等待输入，属于「终端」模式的场景。
 
 ### 安全模型
 
@@ -202,8 +213,8 @@ ops:
 | **独立第二因子** | `ops.terminalToken` 仅用于交互式终端；与 `ops.token` 解耦 |
 | **Origin 校验** | WebSocket 握手强制校验 `Origin`，**这是防跨站 WebSocket 劫持（CSWSH）的唯一防线**——因为会话 Cookie 是 `SameSite=Lax`，而 Lax **不能**阻止跨站 WS 握手。未校验时，你访问的任何恶意网页都能静默连上内网面板拿到 root shell。 |
 | **显式 token** | 握手必须在 URL 或 `Authorization: Bearer` 中显式携带 token，**不接受仅靠 Cookie 隐式通过** |
-| **拼接符扫描** | 元字符（`;` `&&` `\|` `` ` `` `$(` `>` 等）扫描**先于**白名单匹配执行，含拼接符的命令直接拒绝 |
-| **提权前缀剥离** | `sudo` / `doas` / `pkexec` 等前缀在匹配前剥离，防止 `sudo rm -rf /` 绕过锚定的 deny 规则 |
+| **拼接符扫描** | 元字符（`;` `&&` `\|` `` ` `` `$(` `>` 等）扫描**先于**黑名单匹配执行，含拼接符的命令直接拒绝——否则 `ls; rm -rf /` 会凭第一个词蒙混过关 |
+| **提权前缀剥离** | `sudo` / `doas` / `pkexec` 等前缀在匹配前剥离，防止 `sudo rm -rf /` 绕过前缀规则 |
 | **cwd 沙箱** | 工作目录限制在 `roots` 内（注意：**这仅约束工作目录，不是安全边界**，`cat /etc/passwd` 依然可读） |
 | **环境变量白名单** | 子进程仅继承 `PATH`/`HOME`/`LANG`/`TERM` 等，**绝不继承服务进程完整 env**——否则一条 `env` 就能读走所有 token |
 | **进程组回收** | 超时后 SIGTERM → SIGKILL **整个进程组**，防止管道子进程变孤儿 |
@@ -237,9 +248,10 @@ location /files/api/ops/ws {
 
 ### 能力边界（务必了解）
 
-- **cwd 沙箱不是安全边界**：它只约束工作目录，不阻止读取沙箱外的文件。真正的边界是命令白名单。
+- **cwd 沙箱不是安全边界**：它只约束工作目录，不阻止读取沙箱外的文件。真正的边界是关键词黑名单与拼接符扫描。
 - **前端二次确认不是安全边界**：仅为防手滑，安全由服务端强制。
-- **本功能不替代 SSH**：`free` 模式虽可执行任意命令，但缺少 SSH 的会话复用、端口转发、SFTP 等能力。它是「改完即生效」的快捷通道。
+- **黑名单是「防手滑」而非「防攻击」**：默认放行任意命令，因此拿到 `ops.token` 的人等价于拿到一个受限 shell。不要把面板暴露在不可信网络；需要更强隔离时配合 `ops.cwdRoots` 与独立部署用户。
+- **本功能不替代 SSH**：缺少 SSH 的会话复用、端口转发、SFTP 等能力。它是「改完即生效」的快捷通道。
 - **Windows 下无交互终端**：`creack/pty` 是 Unix 专用库，Windows 平台仅提供一次性命令模式（前端会自动隐藏终端入口）。
 
 ### 文件位置说明
