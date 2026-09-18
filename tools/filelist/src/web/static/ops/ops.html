@@ -17,7 +17,13 @@
 <body class="ops-standalone">
 <div id="ops-panel-root" data-ops-base="__FILELIST_BASE__"></div>
 <script>
-  window.__FILELIST_OPS__ = __FILELIST_OPS__;
+  // The standalone page has no app.js, so the config object the panel
+  // reads from is defined here. ops.js only needs the `ops` property.
+  window.__FILELIST_CONFIG__ = {
+    base: "__FILELIST_BASE__",
+    version: "__FILELIST_VERSION__",
+    ops: __FILELIST_OPS_JSON__
+  };
 </script>
 <script src="__FILELIST_BASE__/static/ops/ops.js?v=__FILELIST_VERSION__"></script>
 <script defer src="__FILELIST_BASE__/static/alpine.min.js"></script>

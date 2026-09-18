@@ -11,14 +11,32 @@ import (
 
 // ── Frame handlers ──────────────────────────────────────────────
 
-// handleExecFrame runs a one-shot command and streams the result back.
-func (p *Panel) handleExecFrame(ctx context.Context, conn *websocket.Conn, f clientFrame, clientIP string) {
-	cwd := SanitizeCWD(f.CWD)
-	if p.resolver != nil && f.CWD != "" {
-		if real, ok := p.resolver.Resolve(f.CWD); ok {
-			cwd = real
+// resolveCWD turns a client-supplied working directory into a real
+// disk path.
+//
+// The client sends a VIRTUAL path (/data/nginx). An empty or
+// unresolvable value falls back to the first allowed root rather than
+// the process's home directory: defaulting to the home directory would
+// sit outside the sandbox and make every command fail with a confusing
+// policy error.
+func (p *Panel) resolveCWD(virtual string) string {
+	if p.resolver != nil {
+		if virtual != "" {
+			if real, ok := p.resolver.Resolve(virtual); ok {
+				return real
+			}
+		}
+		// No usable virtual path: start at an allowed root.
+		if roots := p.policy.AllowedRoots(); len(roots) > 0 {
+			return roots[0]
 		}
 	}
+	return SanitizeCWD(virtual)
+}
+
+// handleExecFrame runs a one-shot command and streams the result back.
+func (p *Panel) handleExecFrame(ctx context.Context, conn *websocket.Conn, f clientFrame, clientIP string) {
+	cwd := p.resolveCWD(f.CWD)
 
 	// Audit every attempt, including rejected ones — the denial is
 	// exactly what an operator would want to see afterwards.

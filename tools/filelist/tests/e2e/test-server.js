@@ -147,6 +147,12 @@ roots:
     path: "${fixtures.root1.replace(/\\/g, '/')}"
   - url: "/docs"
     path: "${fixtures.root2.replace(/\\/g, '/')}"
+${options.ops ? `ops:
+  enabled: ${options.ops.enabled !== false}
+  token: "${options.ops.token || ''}"
+  mode: "${options.ops.mode || 'allowlist'}"
+  terminalToken: "${options.ops.terminalToken || ''}"
+${options.ops.allow ? '  allow:\n' + options.ops.allow.map((p) => `    - ${JSON.stringify(p)}`).join('\n') : ''}` : ''}
 `;
   fs.writeFileSync(configPath, configContent.trim(), 'utf-8');
 

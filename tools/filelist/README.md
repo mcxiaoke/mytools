@@ -76,7 +76,8 @@ cp config.sample.yaml config.yaml
 | `manage.enabled` | `false` | 是否开启文件管理功能（编辑、新建文件夹、重命名、删除、打包等） |
 | `manage.deleteToken` | `""` | 独立删除保护口令（删除时需二次确认输入此口令） |
 | `manage.maxTextSize` | `2MB` | 文本在线编辑/预览的最大字节限制 |
-| `ops.enabled` | `false` | 是否启用运维面板（**必须同时设置 `server.token`**） |
+| `ops.enabled` | `false` | 是否启用运维面板（**必须同时设置 `ops.token`**） |
+| `ops.token` | `""` | 面板专用访问口令，与 `server.token` 相互独立 |
 | `ops.mode` | `allowlist` | 命令模式：`allowlist`（白名单）/ `free`（任意命令，高风险） |
 | `ops.terminalToken` | `""` | 交互式终端的独立第二因子，空则禁用终端模式 |
 | `ops.cwdRoots` | `[]` | 允许的工作目录根（空 = 复用 `roots[].path`） |
@@ -150,19 +151,24 @@ manage:
 ### 启用
 
 ```yaml
-server:
-  token: "你的访问口令"      # 必需：面板的 WebSocket 握手需要凭据校验
-
 ops:
   enabled: true              # 主开关
+  token: "面板专用口令"       # 必需：面板自己的访问口令
   mode: allowlist            # 默认白名单模式
-  terminalToken: "另一个口令" # 交互式终端的独立第二因子（可选）
+  terminalToken: "终端口令"   # 交互式终端的独立第二因子（可选）
   allow:
     - '^systemctl (restart|reload|start|stop) [\w@.\-]+$'
     - '^nginx -t$'
 ```
 
-**两个条件必须同时满足**，面板才会被注册：`ops.enabled: true` **且** `server.token` 非空。若只开 `enabled` 而未设 token，面板保持禁用并在启动日志中告警——这是刻意的 fail-closed 设计，因为握手没有凭据可校验时，面板等于一个无锁的命令执行器。
+**两个条件必须同时满足**，面板才会被注册：`ops.enabled: true` **且** `ops.token` 非空。若只开 `enabled` 而未设 token，面板保持禁用并在启动日志中告警——这是刻意的 fail-closed 设计，因为握手没有凭据可校验时，面板等于一个无锁的命令执行器。
+
+**`ops.token` 与 `server.token` 是分开的**，这是刻意的设计：
+
+- 浏览文件应当保持简单，共用一个口令会诱使人把 `server.token` 留空；
+- 面板是本项目风险最高的功能，它需要一个可以独立轮换/吊销的凭据，而不影响正常浏览。
+
+面板首次打开时会在抽屉内提示输入 `ops.token`，口令只保存在当前标签页的 `sessionStorage`，关闭标签页即失效。
 
 ### 两种模式
 
@@ -191,8 +197,9 @@ ops:
 
 | 层级 | 措施 |
 |------|------|
-| **双重前置** | `enabled` + 非空 `server.token`，缺一不可（fail-closed） |
-| **独立第二因子** | `ops.terminalToken` 仅用于交互式终端；与 `server.token` 解耦 |
+| **双重前置** | `enabled` + 非空 `ops.token`，缺一不可（fail-closed） |
+| **独立口令** | `ops.token` 与 `server.token` 解耦，可单独轮换/吊销 |
+| **独立第二因子** | `ops.terminalToken` 仅用于交互式终端；与 `ops.token` 解耦 |
 | **Origin 校验** | WebSocket 握手强制校验 `Origin`，**这是防跨站 WebSocket 劫持（CSWSH）的唯一防线**——因为会话 Cookie 是 `SameSite=Lax`，而 Lax **不能**阻止跨站 WS 握手。未校验时，你访问的任何恶意网页都能静默连上内网面板拿到 root shell。 |
 | **显式 token** | 握手必须在 URL 或 `Authorization: Bearer` 中显式携带 token，**不接受仅靠 Cookie 隐式通过** |
 | **拼接符扫描** | 元字符（`;` `&&` `\|` `` ` `` `$(` `>` 等）扫描**先于**白名单匹配执行，含拼接符的命令直接拒绝 |

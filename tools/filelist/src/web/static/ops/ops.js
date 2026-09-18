@@ -25,7 +25,10 @@
   // host's global config object, so this module has no symbol-level
   // dependency on app.js.
   var base = root.getAttribute('data-ops-base') || '';
-  var cfg = window.__FILELIST_OPS__ || { enabled: false };
+  // Config comes from the host's global config object. Reading it from
+  // one place keeps the module's contract with app.js to a single
+  // property; the panel still touches none of the host's state.
+  var cfg = (window.__FILELIST_CONFIG__ && window.__FILELIST_CONFIG__.ops) || { enabled: false };
 
   // The host renders the config as a placeholder; when the panel is
   // disabled we do not even build the UI.
@@ -41,11 +44,11 @@
     '    <button class="ops-icon-btn" @click="popOut()" title="在新窗口打开">&#8599;</button>',
     '    <button class="ops-icon-btn" @click="open = false" title="关闭">&#10005;</button>',
     '  </div>',
-    '  <div class="ops-modes" x-show="terminalAvailable">',
+    '  <div class="ops-modes" x-show="terminalAvailable && !needsToken">',
     '    <button class="ops-mode-btn" :class="{ \'ops-active\': mode === \'cmd\' }" @click="setMode(\'cmd\')">命令</button>',
     '    <button class="ops-mode-btn" :class="{ \'ops-active\': mode === \'term\' }" @click="setMode(\'term\')">终端</button>',
     '  </div>',
-    '  <div class="ops-context">',
+    '  <div class="ops-context" x-show="!needsToken">',
     '    <span>cwd</span>',
     '    <span class="ops-cwd" x-text="cwd || \'(\u6839\u76ee\u5f55)\'"></span>',
     '    <button class="ops-icon-btn ops-lock" @click="cwdLocked = !cwdLocked"',
@@ -54,8 +57,19 @@
     '  </div>',
     '  <div class="ops-notice" x-show="notice" x-text="notice"></div>',
 
+    // Panel token prompt. Shown until the panel's own token is
+    // accepted; it is separate from the browsing token on purpose.
+    '  <template x-if="needsToken">',
+    '    <div class="ops-token-form">',
+    '      <label>\u8fd0\u7ef4\u9762\u677f\u9700\u8981\u72ec\u7acb\u53e3\u4ee4 (ops.token)</label>',
+    '      <input type="password" x-model="opsToken" @keydown.enter="submitToken()" placeholder="ops.token">',
+    '      <div class="ops-hint">\u4e0e\u6d4f\u89c8\u6587\u4ef6\u7684\u53e3\u4ee4\u5206\u5f00\uff0c\u4ec5\u4fdd\u5b58\u5728\u5f53\u524d\u6807\u7b7e\u9875\u3002</div>',
+    '      <button class="ops-btn ops-primary" style="margin-top:0.4rem;" @click="submitToken()">\u8fde\u63a5</button>',
+    '    </div>',
+    '  </template>',
+
     // Command mode
-    '  <template x-if="mode === \'cmd\'">',
+    '  <template x-if="mode === \'cmd\' && !needsToken">',
     '    <div style="display:flex;flex-direction:column;flex:1 1 auto;min-height:0;">',
     '      <div class="ops-output" x-ref="output">',
     '        <template x-for="(entry, i) in entries" :key="i">',
@@ -77,7 +91,7 @@
     '  </template>',
 
     // Terminal mode
-    '  <template x-if="mode === \'term\'">',
+    '  <template x-if="mode === \'term\' && !needsToken">',
     '    <div style="display:flex;flex-direction:column;flex:1 1 auto;min-height:0;">',
     '      <template x-if="!termReady">',
     '        <div class="ops-token-form">',
@@ -119,9 +133,22 @@
     toolbar.appendChild(btn);
   }
 
-  // ── Alpine component ─────────────────────────────────────────
-  document.addEventListener('alpine:init', function () {
-    Alpine.data('opsPanel', function () {
+  // ── Alpine component registration ────────────────────────────
+  //
+  // Registration must not depend on the 'alpine:init' event. Both
+  // alpine.min.js and this file are deferred, and deferred scripts run
+  // in document order, so by the time this executes Alpine has already
+  // fired alpine:init — an event listener registered here would never
+  // run, leaving x-data="opsPanel" unresolved ("opsPanel is not
+  // defined" in the console) and the drawer inert.
+  //
+  // Registering directly and then initialising the tree by hand works
+  // regardless of load order.
+  function registerComponent() {
+    if (!window.Alpine) return false;
+    if (registered) return true;
+
+    window.Alpine.data('opsPanel', function () {
       return {
         open: false,
         mode: 'cmd',
@@ -134,6 +161,8 @@
         terminalAvailable: !!cfg.terminal,
         termReady: false,
         termToken: '',
+        opsToken: '',
+        needsToken: false,
 
         ws: null,
         currentSID: '',
@@ -160,20 +189,66 @@
           // Restore the last directory from the URL when popped out.
           var params = new URLSearchParams(location.search);
           var initial = params.get('cwd');
-          if (initial) this.cwd = initial;
+          if (initial) {
+            this.cwd = initial;
+          } else {
+            // Derive the starting directory from the current URL. The
+            // host dispatches 'filelist:navigate' on navigation, but
+            // that fires during app.js's own init — before this
+            // component exists — so the initial value has to come from
+            // somewhere else. The URL is the natural source and keeps
+            // the module free of any dependency on the host's state.
+            this.cwd = this.pathFromLocation();
+          }
 
           this.history = this.loadHistory();
+
+          // Restore the panel token for this tab, if one was entered.
+          try {
+            this.opsToken = sessionStorage.getItem('ops_token') || '';
+          } catch (e) { /* storage disabled */ }
+
           this.connect();
         },
 
+        // submitToken applies a newly entered ops token and connects.
+        submitToken: function () {
+          this.opsToken = (this.opsToken || '').trim();
+          if (!this.opsToken) return;
+          this.notice = '';
+          this.connect();
+        },
+
+        // pathFromLocation extracts the virtual directory from the URL,
+        // e.g. /files/data/sub -> /data/sub. It mirrors what the host
+        // shows in its breadcrumb without reading any host state.
+        pathFromLocation: function () {
+          var p = location.pathname || '';
+          if (base && p.indexOf(base) === 0) {
+            p = p.slice(base.length);
+          }
+          p = p.replace(/\/+$/, '');
+          if (!p || p === '/') return '';
+          return p.charAt(0) === '/' ? p : '/' + p;
+        },
+
         // ── WebSocket ──
+        //
+        // The panel authenticates with its OWN token, not the browsing
+        // token from the page URL. The two are separate by design: the
+        // panel's credential can be rotated without disturbing normal
+        // file browsing. The token is therefore collected here and kept
+        // in sessionStorage (never localStorage) so it does not outlive
+        // the tab.
         connect: function () {
+          if (!this.opsToken) {
+            this.needsToken = true;
+            return;
+          }
+
           var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-          // The token is passed explicitly: the server refuses an
-          // upgrade that relies on the session cookie alone.
-          var token = new URLSearchParams(location.search).get('token') || '';
-          var url = proto + '//' + location.host + base + '/api/ops/ws';
-          if (token) url += '?token=' + encodeURIComponent(token);
+          var url = proto + '//' + location.host + base + '/api/ops/ws' +
+                    '?token=' + encodeURIComponent(this.opsToken);
 
           var self = this;
           var ws;
@@ -187,15 +262,22 @@
 
           ws.onopen = function () {
             self.notice = '';
+            self.needsToken = false;
+            try { sessionStorage.setItem('ops_token', self.opsToken); } catch (e) {}
           };
           ws.onmessage = function (ev) { self.onFrame(ev); };
           ws.onclose = function () {
             self.running = false;
-            if (self.open) self.notice = '\u8fde\u63a5\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u91cd\u8fde\u2026';
-            setTimeout(function () { self.connect(); }, 3000);
+            if (self.open && self.opsToken) {
+              self.notice = '\u8fde\u63a5\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u91cd\u8fde\u2026';
+              setTimeout(function () { self.connect(); }, 3000);
+            }
           };
           ws.onerror = function () {
-            self.notice = '\u8fde\u63a5\u51fa\u9519';
+            // A failed handshake means the token was rejected; ask for
+            // it again rather than retrying forever with a bad value.
+            self.needsToken = true;
+            self.notice = 'ops token \u65e0\u6548\u6216\u672a\u8bbe\u7f6e';
           };
         },
 
@@ -406,7 +488,41 @@
         }
       };
     });
-  });
 
-  injectToolbarButton();
+    registered = true;
+    return true;
+  }
+
+  var registered = false;
+
+  // ── Bootstrap ────────────────────────────────────────────────
+  //
+  // Order matters: register the component, then let Alpine initialise
+  // the drawer markup, then inject the toolbar button. Alpine's own
+  // auto-init may already have run (it scans the DOM on load), so the
+  // tree is initialised explicitly when needed.
+  function bootstrap() {
+    if (!registerComponent()) return false;
+
+    // If Alpine already walked the DOM, the drawer element was skipped
+    // because opsPanel did not exist yet; initialise it now.
+    var drawer = root.querySelector('.ops-drawer');
+    if (drawer && !window.Alpine.$data(drawer)) {
+      window.Alpine.initTree(drawer);
+    }
+
+    injectToolbarButton();
+    return true;
+  }
+
+  // Alpine may load after this script (both are deferred, and this one
+  // is last), so poll briefly rather than assuming it is present.
+  if (!bootstrap()) {
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (bootstrap() || ++tries > 50) {
+        clearInterval(timer);
+      }
+    }, 20);
+  }
 })();

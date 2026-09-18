@@ -51,7 +51,8 @@ type Config struct {
 		DeleteToken string `yaml:"deleteToken"` // token required for deletion (must be non-empty if allowDelete is true)
 	} `yaml:"manage"`
 	Ops struct {
-		Enabled        bool     `yaml:"enabled"`        // master switch; requires server.token to be non-empty
+		Enabled        bool     `yaml:"enabled"`        // master switch
+		Token          string   `yaml:"token"`          // dedicated access token for the panel
 		Mode           string   `yaml:"mode"`           // allowlist (default) | free
 		TerminalToken  string   `yaml:"terminalToken"`  // second factor for the interactive terminal
 		CwdRoots       []string `yaml:"cwdRoots"`       // allowed working-directory roots (empty = reuse roots)
@@ -148,11 +149,15 @@ func (c *Config) ManageDeleteToken() string {
 
 // OpsEnabled reports whether the operations panel is genuinely
 // available. Fail-closed: the feature must be explicitly enabled AND a
-// global access token must be configured. Without the token the
-// WebSocket handshake would have no credential to check, leaving a
-// browser-reachable command runner open to anyone on the network.
+// dedicated ops token must be configured.
+//
+// The panel uses its own token rather than reusing server.token. Two
+// reasons: browsing files should stay simple (a shared token pushes
+// people toward leaving server.token empty), and the panel is the
+// highest-risk feature in the project, so it deserves a credential
+// that can be rotated or revoked without disturbing normal browsing.
 func (c *Config) OpsEnabled() bool {
-	return c.Ops.Enabled && strings.TrimSpace(c.Server.Token) != ""
+	return c.Ops.Enabled && strings.TrimSpace(c.Ops.Token) != ""
 }
 
 // OpsTerminalEnabled reports whether the interactive terminal may be
@@ -172,7 +177,7 @@ func (c *Config) OpsFreeMode() bool {
 func (c *Config) OpsConfig() ops.Config {
 	cfg := ops.Defaults()
 	cfg.Enabled = c.OpsEnabled()
-	cfg.AccessToken = strings.TrimSpace(c.Server.Token)
+	cfg.AccessToken = strings.TrimSpace(c.Ops.Token)
 	cfg.TerminalToken = strings.TrimSpace(c.Ops.TerminalToken)
 	cfg.OriginPatterns = c.Ops.OriginPatterns
 	cfg.CwdRoots = c.Ops.CwdRoots
@@ -400,13 +405,13 @@ func (c *Config) validateOps() error {
 		return nil
 	}
 
-	// The panel needs a credential for the WebSocket handshake. Without
-	// one it would be a browser-reachable command runner with no lock,
-	// so refuse to enable it and say why.
-	if strings.TrimSpace(c.Server.Token) == "" {
-		fmt.Println("WARNING: ops.enabled is true but server.token is empty — " +
-			"the ops panel will stay DISABLED. Set server.token to enable it.")
-		logger.Warn("config: ops.enabled=true but server.token is empty; panel disabled")
+	// The panel needs its own credential for the WebSocket handshake.
+	// Without one it would be a browser-reachable command runner with
+	// no lock, so refuse to enable it and say why.
+	if strings.TrimSpace(c.Ops.Token) == "" {
+		fmt.Println("WARNING: ops.enabled is true but ops.token is empty — " +
+			"the ops panel will stay DISABLED. Set ops.token to enable it.")
+		logger.Warn("config: ops.enabled=true but ops.token is empty; panel disabled")
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(c.Ops.Mode))
@@ -420,11 +425,19 @@ func (c *Config) validateOps() error {
 		logger.Warn("config: ops.mode=free — arbitrary command execution is permitted")
 	}
 
+	// Reusing the same secret for the panel and for browsing defeats
+	// the point of having a separate token.
+	if t := strings.TrimSpace(c.Ops.Token); t != "" && t == strings.TrimSpace(c.Server.Token) {
+		fmt.Println("WARNING: ops.token equals server.token — " +
+			"the panel token should be a distinct secret so it can be revoked independently.")
+		logger.Warn("config: ops.token duplicates server.token")
+	}
+
 	if strings.TrimSpace(c.Ops.TerminalToken) != "" &&
-		c.Ops.TerminalToken == c.Server.Token {
-		fmt.Println("WARNING: ops.terminalToken equals server.token — " +
+		c.Ops.TerminalToken == c.Ops.Token {
+		fmt.Println("WARNING: ops.terminalToken equals ops.token — " +
 			"the second factor should be a distinct secret to be meaningful.")
-		logger.Warn("config: ops.terminalToken duplicates server.token")
+		logger.Warn("config: ops.terminalToken duplicates ops.token")
 	}
 
 	// An interactive terminal without its own token is disabled; say so

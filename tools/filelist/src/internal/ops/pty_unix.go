@@ -41,12 +41,7 @@ func (p *Panel) handleOpenPTY(ctx context.Context, conn *websocket.Conn, f clien
 		return
 	}
 
-	cwd := SanitizeCWD(f.CWD)
-	if p.resolver != nil && f.CWD != "" {
-		if real, ok := p.resolver.Resolve(f.CWD); ok {
-			cwd = real
-		}
-	}
+	cwd := p.resolveCWD(f.CWD)
 	if err := p.policy.CheckCWD(cwd); err != nil {
 		p.send(ctx, conn, serverFrame{Type: "err", ErrCode: classify(err), Msg: err.Error()})
 		return

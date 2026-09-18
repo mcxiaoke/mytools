@@ -246,6 +246,28 @@ Indexer.Start() goroutine:
 |------|------|------|
 | `#ops-panel-root`（空容器） | 主站 → 模块 | `index.html` 中的挂载点，模块运行时自建 DOM |
 | `filelist:navigate` 事件 | 主站 → 模块 | 主站广播 `{ detail: { path } }`；模块订阅以跟随 cwd |
+| `__FILELIST_CONFIG__.ops` | 主站 → 模块 | 面板的客户端配置（enabled / terminal / mode / ptyAvailable） |
+
+#### 两个必须遵守的集成约束
+
+这两条都是实际流入生产环境后修复的问题，现有测试已覆盖，改动时不得回退。
+
+**1. 注入 JSON 的占位符必须以 `_JSON` 结尾**
+
+占位符名不得与 JavaScript 标识符同名。若占位符为 `__FILELIST_OPS__`，而模板中又存在
+`window.__FILELIST_OPS__ = __FILELIST_OPS__;`，`bytes.ReplaceAll` 会把属性名一并替换，
+生成 `window.{"enabled":false} = {"enabled":false};` —— 这是语法错误，整个 script 块解析失败，
+`window.__FILELIST_CONFIG__` 随之未定义，SPA 无法初始化，页面中间显示加载失败。
+
+防护：`web_placeholders_test.go`（断言注入值是合法 JSON 且位于赋值右侧）与
+`tests/e2e/specs/ops.spec.js`（断言页面无 console 错误）双重覆盖。
+
+**2. 不得依赖 `alpine:init` 事件注册组件**
+
+`ops.js` 与 `alpine.min.js` 均为 `defer`，按文档顺序执行，
+因此 `ops.js` 运行时 Alpine 已经触发过 `alpine:init`。模块必须直接调用
+`Alpine.data()` 注册，再显式 `Alpine.initTree()` 初始化挂载点，否则会出现
+`opsPanel is not defined`，抽屉不可用。
 
 主站不感知订阅者是否存在，模块未启用时该事件零开销。未来新增其他可选模块可复用同一事件。
 

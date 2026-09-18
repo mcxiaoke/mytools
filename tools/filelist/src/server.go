@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"crypto/subtle"
 	"embed"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -31,8 +33,13 @@ const uploadPlaceholder = "__FILELIST_UPLOAD__"
 // managePlaceholder is replaced at request time with JSON client manage configuration.
 const managePlaceholder = "__FILELIST_MANAGE__"
 
-// opsPlaceholder is replaced at request time with JSON client ops configuration.
-const opsPlaceholder = "__FILELIST_OPS__"
+// opsPlaceholder is replaced at request time with JSON client ops
+// configuration. The name ends in _JSON so it cannot collide with the
+// JavaScript identifier `window.__FILELIST_OPS__` that receives it —
+// a plain __FILELIST_OPS__ would be substituted inside the property
+// name too, producing `window.{"enabled":false} = ...` and breaking
+// the whole script block.
+const opsPlaceholder = "__FILELIST_OPS_JSON__"
 
 // versionPlaceholder is replaced at request time with current build version for cache busting.
 const versionPlaceholder = "__FILELIST_VERSION__"
@@ -144,11 +151,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // handleOpsPage serves the standalone ops page, used when the panel is
 // popped out into its own window for long-running tasks.
 //
-// When the panel is disabled this returns 404 rather than a page that
-// cannot work, keeping the behaviour consistent with the API routes.
+// The page authenticates with the ops token rather than the browsing
+// token, so it checks the credential itself: authMiddleware skips ops
+// paths precisely because the panel owns its own auth.
 func (s *Server) handleOpsPage(w http.ResponseWriter, r *http.Request) {
 	if s.ops == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.ops.Authorize(r) {
+		s.unauthorized(w, r)
 		return
 	}
 	tmpl, err := webFS.ReadFile("web/static/ops/ops.html")
@@ -156,9 +168,22 @@ func (s *Server) handleOpsPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	// The standalone page needs the same placeholders resolved as the
+	// main page, or it renders with literal __FILELIST_*__ strings and
+	// no configuration.
+	out := bytes.ReplaceAll(tmpl, []byte(basePlaceholder), []byte(s.cfg.Server.BasePath))
+	out = bytes.ReplaceAll(out, []byte(versionPlaceholder), []byte(version+"-"+gitCommit))
+
+	opsVal := []byte(`{"enabled":false}`)
+	if b, err := json.Marshal(s.ops.ClientConfig()); err == nil {
+		opsVal = b
+	}
+	out = bytes.ReplaceAll(out, []byte(opsPlaceholder), opsVal)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(tmpl)
+	w.Write(out)
 }
 
 // pageHTML returns the embedded SPA with the base path and upload enabled injected.
@@ -361,6 +386,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The ops panel carries its own token, which is deliberately
+		// separate from the browsing token so it can be rotated or
+		// revoked without disturbing normal file browsing. Its routes
+		// therefore authenticate themselves and are skipped here.
+		if s.cfg.OpsEnabled() && isOpsPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if s.tokenOK(r, token) {
 			if r.URL.Query().Get("token") != "" {
 				s.setTokenCookie(w, token)
@@ -370,6 +404,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		s.unauthorized(w, r)
 	})
+}
+
+// isOpsPath reports whether the request targets the ops panel, which
+// performs its own token check.
+func isOpsPath(p string) bool {
+	return strings.HasPrefix(p, "/api/ops/") || p == "/ops" || p == "/ops.html"
 }
 
 // tokenOK checks the cookie, Authorization header and query string.
@@ -427,12 +467,73 @@ code{background:#f0f1f5;padding:2px 6px;border-radius:4px}</style></head>
 }
 
 // loggingMiddleware wraps a handler with request logging.
+// loggingMiddleware records each request. It logs at info level for
+// API and error responses, and at debug for static asset noise, so an
+// operator running at the default info level still sees the requests
+// that matter — a 401 from a token mistake used to be invisible.
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		logger.Debug("%s %s %s %v", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		elapsed := time.Since(start)
+
+		// Static assets are high-volume and rarely interesting; keep
+		// them at debug so the default level stays readable.
+		if strings.HasPrefix(r.URL.Path, "/static/") && rec.status < 400 {
+			logger.Debug("%s %s %d %v", r.Method, r.URL.Path, rec.status, elapsed)
+			return
+		}
+
+		// Failures are the reason anyone reads this log: surface them
+		// at warn so a rejected token or a missing route is visible
+		// without turning on debug logging.
+		if rec.status >= 400 {
+			logger.Warn("%s %s %d %v", r.Method, r.URL.Path, rec.status, elapsed)
+			return
+		}
+		logger.Info("%s %s %d %v", r.Method, r.URL.Path, rec.status, elapsed)
 	})
+}
+
+// statusRecorder captures the response status for logging.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wroteHeader {
+		s.status = code
+		s.wroteHeader = true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if !s.wroteHeader {
+		s.wroteHeader = true
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Flush forwards to the wrapped writer so streaming responses (file
+// downloads, ZIP archives, the ops WebSocket upgrade) keep working.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack forwards to the wrapped writer, which the WebSocket upgrade
+// requires.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
 }
 
 // handleUpload processes file uploads to a directory via multipart/form-data.

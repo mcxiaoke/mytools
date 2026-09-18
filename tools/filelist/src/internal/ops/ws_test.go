@@ -239,13 +239,14 @@ func TestWS_BearerHeaderAccepted(t *testing.T) {
 
 // ── /api/ops/info ───────────────────────────────────────────────
 
-func TestInfoEndpointHidesTerminalToken(t *testing.T) {
-	// Enabled=true so the terminal flag reflects the token being set.
-	p := newTestPanel(t, Config{Enabled: true, TerminalToken: "super-secret"})
-	srv := httptest.NewServer(p.Handler())
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/api/ops/info")
+// infoRequest fetches the info endpoint with a token.
+func infoRequest(t *testing.T, base, token string) string {
+	t.Helper()
+	url := base + "/api/ops/info"
+	if token != "" {
+		url += "?token=" + token
+	}
+	resp, err := http.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,13 +254,35 @@ func TestInfoEndpointHidesTerminalToken(t *testing.T) {
 
 	buf := make([]byte, 4096)
 	n, _ := resp.Body.Read(buf)
-	body := string(buf[:n])
+	return string(buf[:n])
+}
+
+func TestInfoEndpointHidesTerminalToken(t *testing.T) {
+	// Enabled=true so the terminal flag reflects the token being set.
+	p := newTestPanel(t, Config{Enabled: true, TerminalToken: "super-secret"})
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+
+	body := infoRequest(t, srv.URL, "test-token")
 
 	if strings.Contains(body, "super-secret") {
 		t.Errorf("info endpoint leaked the terminal token: %s", body)
 	}
 	if !strings.Contains(body, `"terminal":true`) {
 		t.Errorf("info endpoint should report terminal availability: %s", body)
+	}
+}
+
+// TestInfoEndpointRequiresToken verifies the info endpoint is not a
+// way to probe the panel's configuration without a credential.
+func TestInfoEndpointRequiresToken(t *testing.T) {
+	p := newTestPanel(t, Config{Enabled: true, TerminalToken: "super-secret"})
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+
+	body := infoRequest(t, srv.URL, "")
+	if strings.Contains(body, `"terminal"`) {
+		t.Errorf("info endpoint answered without a token: %s", body)
 	}
 }
 
@@ -271,16 +294,42 @@ func TestInfoEndpointTerminalFalseWithoutToken(t *testing.T) {
 	srv := httptest.NewServer(p.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/ops/info")
-	if err != nil {
-		t.Fatal(err)
+	body := infoRequest(t, srv.URL, "test-token")
+	if !strings.Contains(body, `"terminal":false`) {
+		t.Errorf("terminal should be false without a terminal token: %s", body)
 	}
-	defer resp.Body.Close()
+}
 
-	buf := make([]byte, 4096)
-	n, _ := resp.Body.Read(buf)
-	if !strings.Contains(string(buf[:n]), `"terminal":false`) {
-		t.Errorf("terminal should be false without a terminal token: %s", string(buf[:n]))
+// ── Authorize (used by the standalone /ops page) ────────────────
+
+func TestAuthorize(t *testing.T) {
+	p := newTestPanel(t, Config{Enabled: true})
+
+	req := httptest.NewRequest("GET", "/ops?token=test-token", nil)
+	if !p.Authorize(req) {
+		t.Error("Authorize rejected a valid token")
+	}
+
+	req = httptest.NewRequest("GET", "/ops", nil)
+	if p.Authorize(req) {
+		t.Error("Authorize accepted a request without a token")
+	}
+
+	req = httptest.NewRequest("GET", "/ops?token=wrong", nil)
+	if p.Authorize(req) {
+		t.Error("Authorize accepted a wrong token")
+	}
+}
+
+// TestAuthorizeIgnoresCookie documents that the panel never trusts the
+// host's session cookie: only an explicitly presented token counts.
+func TestAuthorizeIgnoresCookie(t *testing.T) {
+	p := newTestPanel(t, Config{Enabled: true})
+
+	req := httptest.NewRequest("GET", "/ops", nil)
+	req.AddCookie(&http.Cookie{Name: testCookieName, Value: "test-token"})
+	if p.Authorize(req) {
+		t.Error("Authorize accepted a cookie without an explicit token")
 	}
 }
 

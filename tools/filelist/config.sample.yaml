@@ -114,13 +114,22 @@ manage:
 #
 # Two conditions must BOTH hold before the panel is registered at all:
 #   1. ops.enabled: true
-#   2. server.token is non-empty
+#   2. ops.token is non-empty
 # If you set enabled without a token, the panel stays disabled and a
 # warning is logged at startup. This is deliberate: the WebSocket
 # handshake needs a credential to check, and without one the panel
 # would be an unauthenticated command runner.
+#
+# ops.token is SEPARATE from server.token on purpose. Browsing files
+# should stay simple, so the panel carries its own credential that can
+# be rotated or revoked without touching normal browsing.
 ops:
   enabled: false           # master switch (see the two conditions above)
+  token: ""                # dedicated access token for the panel. Required: without it
+                           # the panel stays disabled. Deliberately SEPARATE from
+                           # server.token so browsing stays simple and this credential can
+                           # be rotated or revoked on its own. Pass it as ?token=xxx on
+                           # the page, or as a Bearer header for scripts.
   mode: allowlist          # allowlist (default, recommended) | free (arbitrary commands)
   terminalToken: ""        # second factor for the interactive terminal. Empty disables
                            # the terminal entirely. Use a DIFFERENT secret from server.token:

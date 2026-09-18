@@ -68,7 +68,12 @@ func newOpsPanel(cfg *Config, idx *Indexer) (*ops.Panel, error) {
 		return nil, err
 	}
 
+	// Report the resolved configuration, not the raw YAML: mode and the
+	// other settings have defaults applied by OpsConfig(), so reading
+	// cfg.Ops directly would log an empty mode when the operator relied
+	// on the default.
+	resolved := cfg.OpsConfig()
 	logger.Info("ops: panel enabled (mode=%s, terminal=%v, cwdRoots=%d)",
-		cfg.Ops.Mode, cfg.OpsTerminalEnabled(), len(cfg.OpsConfig().CwdRoots))
+		resolved.Mode, cfg.OpsTerminalEnabled(), len(resolved.CwdRoots))
 	return panel, nil
 }

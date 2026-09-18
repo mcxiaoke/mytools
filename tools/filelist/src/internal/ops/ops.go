@@ -183,8 +183,19 @@ func (p *Panel) ClientConfig() ClientConfig {
 	}
 }
 
+// Authorize reports whether a request carries the panel's access token.
+// The standalone page uses this because the panel owns its own
+// credential, separate from the host's browsing token.
+func (p *Panel) Authorize(r *http.Request) bool {
+	return p.checkExplicitToken(r) == nil
+}
+
 // handleInfo reports the client-visible configuration.
 func (p *Panel) handleInfo(w http.ResponseWriter, r *http.Request) {
+	if err := p.checkExplicitToken(r); err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(p.ClientConfig())

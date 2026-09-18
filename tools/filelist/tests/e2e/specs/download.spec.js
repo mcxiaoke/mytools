@@ -9,9 +9,12 @@ test.describe('File Download & Raw Preview', () => {
   test('should trigger browser download when clicking action download button', async ({ appPage }) => {
     const { page } = appPage;
 
-    // Wait for download event upon clicking download button for hello.txt
+    // Wait for download event upon clicking download button for hello.txt.
+    // Target .btn-dl specifically: the action cell also holds the novel
+    // reader link, so a bare `td.actions a` matches two elements and
+    // trips Playwright's strict mode.
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('tr:has-text("hello.txt") td.actions a').click();
+    await page.locator('tr:has-text("hello.txt") td.actions a.btn-dl').click();
     const download = await downloadPromise;
 
     expect(download.suggestedFilename()).toBe('hello.txt');
