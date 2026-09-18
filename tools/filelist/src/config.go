@@ -427,10 +427,22 @@ func (c *Config) validateOps() error {
 
 	// Reusing the same secret for the panel and for browsing defeats
 	// the point of having a separate token.
-	if t := strings.TrimSpace(c.Ops.Token); t != "" && t == strings.TrimSpace(c.Server.Token) {
+	opsToken := strings.TrimSpace(c.Ops.Token)
+	if opsToken != "" && opsToken == strings.TrimSpace(c.Server.Token) {
 		fmt.Println("WARNING: ops.token equals server.token — " +
 			"the panel token should be a distinct secret so it can be revoked independently.")
 		logger.Warn("config: ops.token duplicates server.token")
+	}
+
+	// The delete token is a different kind of secret from the panel
+	// token: it is typed into a browser dialog, so it tends to be
+	// shorter and easier to observe. Sharing it with the panel means
+	// one leaked value grants both file deletion and shell access.
+	if opsToken != "" && opsToken == c.ManageDeleteToken() {
+		fmt.Println("WARNING: ops.token equals manage.deleteToken — " +
+			"these guard different capabilities (shell access vs file deletion) " +
+			"and should not share a secret.")
+		logger.Warn("config: ops.token duplicates manage.deleteToken")
 	}
 
 	if strings.TrimSpace(c.Ops.TerminalToken) != "" &&
