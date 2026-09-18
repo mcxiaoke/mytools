@@ -103,6 +103,63 @@ manage:
                          # folder requires typing this secret token in the confirmation dialog.
                          # If left empty, delete operations remain hard-locked on the server.
 
+# ── Ops Panel ──────────────────────────────────────────────────
+# An optional browser-driven command runner. Two execution modes:
+#   - "命令" (one-shot exec): pipes, clean output, real exit code
+#   - "终端" (interactive PTY): a real shell, Unix only
+#
+# ⚠️  SECURITY: this is the highest-risk feature in the project. With a
+#     root deployment the interactive terminal is a full root shell
+#     reachable from a browser. It is OFF by default and fails closed.
+#
+# Two conditions must BOTH hold before the panel is registered at all:
+#   1. ops.enabled: true
+#   2. server.token is non-empty
+# If you set enabled without a token, the panel stays disabled and a
+# warning is logged at startup. This is deliberate: the WebSocket
+# handshake needs a credential to check, and without one the panel
+# would be an unauthenticated command runner.
+ops:
+  enabled: false           # master switch (see the two conditions above)
+  mode: allowlist          # allowlist (default, recommended) | free (arbitrary commands)
+  terminalToken: ""        # second factor for the interactive terminal. Empty disables
+                           # the terminal entirely. Use a DIFFERENT secret from server.token:
+                           # one-shot commands are bounded by the allowlist, a shell is not.
+  cwdRoots: []             # allowed working-directory roots (empty = reuse roots[].path)
+  originPatterns: []       # WebSocket Origin allowlist (empty = derive from request Host).
+                           # REQUIRED when behind a reverse proxy whose Host differs from
+                           # the browser's Origin. This check is the only defence against
+                           # cross-site WebSocket hijacking, because the session cookie is
+                           # SameSite=Lax and Lax does not block a WS handshake.
+  timeout: 30s             # per-command timeout (SIGTERM, then SIGKILL to the process group)
+  maxOutput: 1MB           # per-session output cap; excess is dropped and flagged
+  maxSessions: 2           # concurrent session cap
+  idleTimeout: 30m         # idle sessions are reaped
+  scrollbackBytes: 256KB   # replay buffer for reconnects
+
+  # Extra allow patterns, APPENDED to a built-in read-only set. The
+  # built-in set already covers ls/cat/head/tail/wc/stat/file/du/df/
+  # grep/rg/find/ps/uptime/free/uname/hostname/whoami/id/date/ss/netstat/
+  # ip/systemctl(status|is-active|...)/journalctl/docker(ps|logs|...)/git
+  # (status|log|diff|...), so most read-only inspection works out of the
+  # box. Add only what you need beyond that.
+  #
+  # Note: pagers and interactive tools (less, more, top, vi) are
+  # deliberately NOT in the built-in set — they block waiting for input
+  # and belong in the terminal mode instead.
+  allow:
+    # - '^systemctl (restart|reload|start|stop) [\w@.\-]+$'
+    # - '^docker compose (up|down|restart)( [\w\-]+)*$'
+    # - '^nginx -t$'
+
+  # Global deny list. An EMPTY LIST (deny: []) clears the built-in
+  # dangerous set, matching how index.excludeFiles behaves. The
+  # built-in set covers rm, mkfs, dd, chmod, chown, mount, useradd,
+  # passwd, shutdown, reboot, iptables, crontab, package managers and
+  # writes to raw block devices. Deny always wins over allow, in every
+  # mode.
+  deny: []
+
 # Path mappings: URL path -> real disk path
 # - URL: virtual web path shown in browser (must start with /)
 # - Path: real disk path (use forward slashes for cross-platform)

@@ -67,6 +67,19 @@ func main() {
 
 	// create HTTP server
 	srv := NewServer(cfg, idx)
+
+	// ops panel — optional, and only mounted when it is genuinely
+	// usable. A nil panel registers no routes, so a disabled feature
+	// is indistinguishable from one that does not exist.
+	opsPanel, err := newOpsPanel(cfg, idx)
+	if err != nil {
+		logger.Fatal("failed to initialise ops panel: %v", err)
+	}
+	if opsPanel != nil {
+		srv.SetOps(opsPanel)
+		defer opsPanel.Close()
+	}
+
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:           loggingMiddleware(srv.Handler()),

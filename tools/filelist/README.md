@@ -20,6 +20,7 @@
 - **构建元数据与页脚** - 页面页脚与 `/api/stats` 接口直观显示版本号、Git Commit Hash 与构建时间，服务启动日志自动输出元数据，支持 `-version` 命令行参数
 - **文件下载/预览** - 点击文件在线预览或下载
 - **文件上传（可选）** - 支持网页按钮与拖拽流式上传，大文件低内存占用，同名冲突自动后缀编号；默认只读
+- **运维面板（可选）** - 浏览器内执行服务器命令：一次性命令（干净输出+真实退出码）与交互式终端（真 PTY，仅 Unix）；cwd 自动跟随浏览目录；默认关闭，命令白名单与 WebSocket Origin 校验双重防护
 - **访问控制** - 可选 token 鉴权，默认无鉴权开箱即用
 - **跨平台与单二进制** - 单可执行文件分发，支持 Windows 和 Linux，无运行时依赖
 
@@ -75,6 +76,11 @@ cp config.sample.yaml config.yaml
 | `manage.enabled` | `false` | 是否开启文件管理功能（编辑、新建文件夹、重命名、删除、打包等） |
 | `manage.deleteToken` | `""` | 独立删除保护口令（删除时需二次确认输入此口令） |
 | `manage.maxTextSize` | `2MB` | 文本在线编辑/预览的最大字节限制 |
+| `ops.enabled` | `false` | 是否启用运维面板（**必须同时设置 `server.token`**） |
+| `ops.mode` | `allowlist` | 命令模式：`allowlist`（白名单）/ `free`（任意命令，高风险） |
+| `ops.terminalToken` | `""` | 交互式终端的独立第二因子，空则禁用终端模式 |
+| `ops.cwdRoots` | `[]` | 允许的工作目录根（空 = 复用 `roots[].path`） |
+| `ops.originPatterns` | `[]` | WebSocket Origin 白名单（空 = 从请求 Host 推导；反代场景必须显式配置） |
 | `roots` | — | 路径映射列表 |
 
 > 路径展开：`log.file`、`dataDir`、`index.persist`、`roots[].path` 中的 `~` 会展开为用户主目录。
@@ -134,6 +140,100 @@ manage:
 - **安全删除（deleteToken）**：危险操作二次确认；配置 `deleteToken` 后必须输入口令才可执行删除；服务端使用恒定时间比较防时序攻击；严格保护根挂载点不允许删除。
 - **目录流式 ZIP 下载**：工具栏与目录操作提供「📦 打包下载」，服务端边压缩边流式写入 HTTP 响应，零临时磁盘占用。
 - **直链复制与手机二维码**：单文件一键复制下载直链；内置纯前端 SVG 二维码生成，手机扫码立即可用。
+
+## 运维面板（可选能力）
+
+> ⚠️ **安全提示**：这是本项目风险等级最高的功能。在 root 部署下，交互式终端等价于一个**可通过浏览器访问的完整 root shell**。默认关闭，请仔细阅读本节后再启用。
+
+**使用场景**：在 filelist 中在线编辑完配置文件后，直接执行 `systemctl restart xxx.service` 使其生效，无需切回 SSH。
+
+### 启用
+
+```yaml
+server:
+  token: "你的访问口令"      # 必需：面板的 WebSocket 握手需要凭据校验
+
+ops:
+  enabled: true              # 主开关
+  mode: allowlist            # 默认白名单模式
+  terminalToken: "另一个口令" # 交互式终端的独立第二因子（可选）
+  allow:
+    - '^systemctl (restart|reload|start|stop) [\w@.\-]+$'
+    - '^nginx -t$'
+```
+
+**两个条件必须同时满足**，面板才会被注册：`ops.enabled: true` **且** `server.token` 非空。若只开 `enabled` 而未设 token，面板保持禁用并在启动日志中告警——这是刻意的 fail-closed 设计，因为握手没有凭据可校验时，面板等于一个无锁的命令执行器。
+
+### 两种模式
+
+| 模式 | 说明 | 输出特性 | 平台 |
+|------|------|----------|------|
+| **命令**（默认） | 一次性执行，管道收集输出 | 无回显噪声、无 ANSI 转义、**真实退出码** | 全平台 |
+| **终端** | 交互式 PTY，真实 shell | 支持 `vim`/`top`/`journalctl -f` 等 | 仅 Unix |
+
+默认落在「命令」模式：主场景（`systemctl restart`）在管道模式下体验更好——输出干净、有退出码、不会被 `less` 分页器卡住。
+
+### cwd 自动跟随
+
+面板的工作目录会**自动跟随你在 filelist 中浏览的目录**。例如浏览到 `/data/nginx` 时，面板的 cwd 即为该目录对应的磁盘路径，可直接执行 `nginx -t`。可点击 🔒 锁定以停止跟随。
+
+### 内置只读命令白名单
+
+开箱即支持这些**只读、无副作用**的命令，无需自行配置：
+
+`ls` `cat` `head` `tail` `wc` `stat` `file` `du` `df` `tree` `grep` `rg` `find` `ps` `uptime` `free` `uname` `hostname` `whoami` `id` `date` `env` `ss` `netstat` `ip` `systemctl status|is-active|list-units` `journalctl` `docker ps|logs|images|inspect` `git status|log|diff|show|branch`
+
+`ops.allow` 中的规则是**追加**到上述集合之上，而非替换。需要收紧时用 `ops.deny`（deny 优先级最高）。
+
+> 分页器与交互式工具（`less`、`more`、`top`、`vi`）**故意不在**内置白名单中——它们会阻塞等待输入，属于「终端」模式的场景。
+
+### 安全模型
+
+| 层级 | 措施 |
+|------|------|
+| **双重前置** | `enabled` + 非空 `server.token`，缺一不可（fail-closed） |
+| **独立第二因子** | `ops.terminalToken` 仅用于交互式终端；与 `server.token` 解耦 |
+| **Origin 校验** | WebSocket 握手强制校验 `Origin`，**这是防跨站 WebSocket 劫持（CSWSH）的唯一防线**——因为会话 Cookie 是 `SameSite=Lax`，而 Lax **不能**阻止跨站 WS 握手。未校验时，你访问的任何恶意网页都能静默连上内网面板拿到 root shell。 |
+| **显式 token** | 握手必须在 URL 或 `Authorization: Bearer` 中显式携带 token，**不接受仅靠 Cookie 隐式通过** |
+| **拼接符扫描** | 元字符（`;` `&&` `\|` `` ` `` `$(` `>` 等）扫描**先于**白名单匹配执行，含拼接符的命令直接拒绝 |
+| **提权前缀剥离** | `sudo` / `doas` / `pkexec` 等前缀在匹配前剥离，防止 `sudo rm -rf /` 绕过锚定的 deny 规则 |
+| **cwd 沙箱** | 工作目录限制在 `roots` 内（注意：**这仅约束工作目录，不是安全边界**，`cat /etc/passwd` 依然可读） |
+| **环境变量白名单** | 子进程仅继承 `PATH`/`HOME`/`LANG`/`TERM` 等，**绝不继承服务进程完整 env**——否则一条 `env` 就能读走所有 token |
+| **进程组回收** | 超时后 SIGTERM → SIGKILL **整个进程组**，防止管道子进程变孤儿 |
+| **资源限制** | 单命令超时、输出上限（防 `yes` 洪泛）、并发上限、空闲回收 |
+| **审计日志** | 每次执行（含被拒绝的）记录客户端 IP、cwd、命令、退出码、耗时 |
+
+### 反向代理配置
+
+反代场景下 `Origin` 与 `Host` 可能不一致，需显式配置 `ops.originPatterns`：
+
+```yaml
+ops:
+  originPatterns:
+    - "files.example.com"
+```
+
+Nginx 需关闭缓冲并放宽超时：
+
+```nginx
+location /files/api/ops/ws {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_buffering off;          # 否则输出被缓冲，实时性丧失
+    proxy_read_timeout 3600s;     # 否则 60s 空闲即被切断
+    proxy_send_timeout 3600s;
+}
+```
+
+### 能力边界（务必了解）
+
+- **cwd 沙箱不是安全边界**：它只约束工作目录，不阻止读取沙箱外的文件。真正的边界是命令白名单。
+- **前端二次确认不是安全边界**：仅为防手滑，安全由服务端强制。
+- **本功能不替代 SSH**：`free` 模式虽可执行任意命令，但缺少 SSH 的会话复用、端口转发、SFTP 等能力。它是「改完即生效」的快捷通道。
+- **Windows 下无交互终端**：`creack/pty` 是 Unix 专用库，Windows 平台仅提供一次性命令模式（前端会自动隐藏终端入口）。
 
 ### 文件位置说明
 

@@ -67,8 +67,11 @@ FileList 是一个轻量级文件目录索引与搜索 Web 服务，核心功能
 | 配置 | config.go | YAML 解析，路径映射规范化，默认值填充，校验 |
 | 索引引擎 | indexer.go | 内存索引构建/加载/持久化，路径映射（virtual↔real），目录列表，搜索，后台增量更新 |
 | HTTP 服务 | server.go | 路由注册，请求处理，中间件，流式文件上传调度，静态文件服务（/static/），构建元数据动态注入（/api/stats, HTML 模板） |
+| 运维面板适配 | ops_adapter.go | 把既有 log 与 indexer 适配为 `internal/ops` 所需的 `Logger` / `PathResolver` 接口（约 40 行，单向依赖的唯一接触点） |
+| 运维面板 | internal/ops/ | 独立子包：命令策略与白名单、会话注册表、一次性执行、PTY 交互执行、WebSocket 传输与 Origin 校验。**不导入主包、indexer 或 webFS** |
 | 工具函数 | utils.go | 纯函数与通用辅助：路径越界校验、JSON 响应、跨平台文件名安全清理、UTF-8 边界截断、同名编号 |
 | 前端 | web/ | 嵌入式单页应用：语义化模板（index.html）、组件逻辑（static/app.js）、样式（static/app.css）、三方库（pico.min.css, alpine.min.js） |
+| 运维面板前端 | web/static/ops/ | 独立前端资产：`ops.js`（Alpine 组件，运行时自建 DOM）、`ops.css`、`ops.html`（独立页） |
 
 ### 2.3 关键数据流
 
@@ -180,7 +183,6 @@ Indexer.Start() goroutine:
 > 索引过程不跟随目录符号链接（避免循环与逃逸）；`/raw` 下载另有 symlink 越界拦截（见 §5.4）。
 
 #### 2.3.5 文件上传流程
-
 ```
 用户在目录页点击“上传”选择文件 / 拖拽文件到窗口
   │
@@ -212,8 +214,42 @@ Indexer.Start() goroutine:
   └── loadDir(state.path) 立即刷新当前列表
 ```
 
-## 3. 已修复问题记录
+#### 2.3.6 运维面板请求流程（可选模块）
 
+```
+浏览器工具栏点击「🔧 运维」（按钮由 ops.js 运行时注入）
+  │
+  ├── ops.js 订阅 'filelist:navigate' 事件获取当前浏览目录（cwd 跟随）
+  │
+  ├── 命令模式：发送 exec 帧
+  │     └── ws://host/api/ops/ws
+  │           ├── Origin 校验（CSWSH 唯一防线）→ 失败 403
+  │           ├── 显式 token 校验（不接受仅 Cookie）→ 失败 401
+  │           ├── policy.CheckCommand：拼接符扫描 → deny → allow
+  │           ├── policy.CheckCWD：沙箱校验
+  │           ├── 环境变量白名单透传 → exec.CommandContext
+  │           ├── 进程组超时回收（SIGTERM → SIGKILL）
+  │           └── 回传 out / exit 帧（含真实退出码）
+  │
+  └── 终端模式：发送 openpty 帧（需 terminalToken 第二因子）
+        └── creack/pty 分配伪终端 → 读写泵 ↔ WebSocket
+              ├── input 帧：键盘输入（base64）
+              ├── resize 帧：终端尺寸同步
+              └── signal 帧：中断信号
+```
+
+**模块化契约（主站与可选模块之间）**
+
+运维面板与主站之间只有**两个共享符号**，这是刻意设计的最小接口：
+
+| 契约 | 方向 | 说明 |
+|------|------|------|
+| `#ops-panel-root`（空容器） | 主站 → 模块 | `index.html` 中的挂载点，模块运行时自建 DOM |
+| `filelist:navigate` 事件 | 主站 → 模块 | 主站广播 `{ detail: { path } }`；模块订阅以跟随 cwd |
+
+主站不感知订阅者是否存在，模块未启用时该事件零开销。未来新增其他可选模块可复用同一事件。
+
+## 3. 已修复问题记录
 ### 3.1 P0 - 前端空白页（已修复）
 
 **现象**: 用户启动服务后浏览器打开页面，不显示任何内容，无报错。

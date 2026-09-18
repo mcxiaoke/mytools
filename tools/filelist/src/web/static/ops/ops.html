@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="__FILELIST_BASE__/favicon.ico">
+<title>运维面板 - FileList</title>
+<link rel="stylesheet" href="__FILELIST_BASE__/static/ops/ops.css?v=__FILELIST_VERSION__">
+<style>
+  /* The standalone page has no host stylesheet to inherit, so the few
+     layout rules the drawer needs are restated here. */
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #ops-panel-root { height: 100vh; }
+</style>
+</head>
+<body class="ops-standalone">
+<div id="ops-panel-root" data-ops-base="__FILELIST_BASE__"></div>
+<script>
+  window.__FILELIST_OPS__ = __FILELIST_OPS__;
+</script>
+<script src="__FILELIST_BASE__/static/ops/ops.js?v=__FILELIST_VERSION__"></script>
+<script defer src="__FILELIST_BASE__/static/alpine.min.js"></script>
+</body>
+</html>

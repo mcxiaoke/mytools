@@ -247,6 +247,13 @@ document.addEventListener('alpine:init', () => {
         }
       }
 
+      // Broadcast the directory change for optional modules. The host
+      // neither knows nor cares who subscribes; when nothing is
+      // listening this is a no-op.
+      try {
+        window.dispatchEvent(new CustomEvent('filelist:navigate', { detail: { path: path } }));
+      } catch (e) {}
+
       this.loadDir(path);
     },
 

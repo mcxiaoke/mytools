@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"filelist/internal/ops"
 )
 
 //go:embed web/*
@@ -28,6 +30,9 @@ const uploadPlaceholder = "__FILELIST_UPLOAD__"
 
 // managePlaceholder is replaced at request time with JSON client manage configuration.
 const managePlaceholder = "__FILELIST_MANAGE__"
+
+// opsPlaceholder is replaced at request time with JSON client ops configuration.
+const opsPlaceholder = "__FILELIST_OPS__"
 
 // versionPlaceholder is replaced at request time with current build version for cache busting.
 const versionPlaceholder = "__FILELIST_VERSION__"
@@ -48,11 +53,18 @@ var faviconSVG = []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16
 type Server struct {
 	cfg     *Config
 	indexer *Indexer
+	ops     *ops.Panel // nil when the ops panel is disabled
 }
 
 // NewServer creates a new HTTP server instance.
 func NewServer(cfg *Config, idx *Indexer) *Server {
 	return &Server{cfg: cfg, indexer: idx}
+}
+
+// SetOps attaches the operations panel. A nil panel means the feature
+// is off and no routes are registered for it.
+func (s *Server) SetOps(p *ops.Panel) {
+	s.ops = p
 }
 
 // Routes returns the configured HTTP mux. All routes are relative to the
@@ -74,6 +86,14 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/reader", s.handleReader)
 	mux.HandleFunc("/reader.html", s.handleReader)
+	mux.HandleFunc("/ops", s.handleOpsPage)
+	mux.HandleFunc("/ops.html", s.handleOpsPage)
+	if s.ops != nil {
+		// Mounted only when the panel is enabled. An unregistered
+		// prefix yields 404, so a disabled panel neither exposes an
+		// attack surface nor advertises that it exists.
+		mux.Handle("/api/ops/", s.ops.Handler())
+	}
 	mux.Handle("/static/", s.handleStatic())
 	mux.HandleFunc("/", s.handleIndex)
 	return mux
@@ -121,6 +141,26 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(s.pageHTML())
 }
 
+// handleOpsPage serves the standalone ops page, used when the panel is
+// popped out into its own window for long-running tasks.
+//
+// When the panel is disabled this returns 404 rather than a page that
+// cannot work, keeping the behaviour consistent with the API routes.
+func (s *Server) handleOpsPage(w http.ResponseWriter, r *http.Request) {
+	if s.ops == nil {
+		http.NotFound(w, r)
+		return
+	}
+	tmpl, err := webFS.ReadFile("web/static/ops/ops.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(tmpl)
+}
+
 // pageHTML returns the embedded SPA with the base path and upload enabled injected.
 func (s *Server) pageHTML() []byte {
 	tmpl, err := webFS.ReadFile("web/index.html")
@@ -143,7 +183,19 @@ func (s *Server) pageHTML() []byte {
 	out = bytes.ReplaceAll(out, []byte(managePlaceholder), manageConfigJSON)
 	out = bytes.ReplaceAll(out, []byte(versionPlaceholder), []byte(version+"-"+gitCommit))
 	out = bytes.ReplaceAll(out, []byte(gitCommitPlaceholder), []byte(gitCommit))
-	return bytes.ReplaceAll(out, []byte(buildTimePlaceholder), []byte(buildTime))
+	out = bytes.ReplaceAll(out, []byte(buildTimePlaceholder), []byte(buildTime))
+
+	// Ops panel client config. The terminal token is never included:
+	// the browser only learns whether a token is required.
+	opsVal := []byte(`{"enabled":false}`)
+	if s.ops != nil {
+		if b, err := json.Marshal(s.ops.ClientConfig()); err == nil {
+			opsVal = b
+		}
+	}
+	out = bytes.ReplaceAll(out, []byte(opsPlaceholder), opsVal)
+
+	return out
 }
 
 // handleFavicon serves a simple SVG favicon to avoid 404 noise.

@@ -5,9 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"filelist/internal/ops"
 )
 
 // Config is the application configuration loaded from YAML.
@@ -46,6 +50,20 @@ type Config struct {
 		AllowDelete bool   `yaml:"allowDelete"` // allow deleting files/dirs (default false)
 		DeleteToken string `yaml:"deleteToken"` // token required for deletion (must be non-empty if allowDelete is true)
 	} `yaml:"manage"`
+	Ops struct {
+		Enabled        bool     `yaml:"enabled"`        // master switch; requires server.token to be non-empty
+		Mode           string   `yaml:"mode"`           // allowlist (default) | free
+		TerminalToken  string   `yaml:"terminalToken"`  // second factor for the interactive terminal
+		CwdRoots       []string `yaml:"cwdRoots"`       // allowed working-directory roots (empty = reuse roots)
+		OriginPatterns []string `yaml:"originPatterns"` // WebSocket Origin allowlist (empty = derive from Host)
+		Timeout        string   `yaml:"timeout"`        // per-command timeout
+		MaxOutput      string   `yaml:"maxOutput"`      // per-session output cap
+		MaxSessions    int      `yaml:"maxSessions"`    // concurrent session cap
+		IdleTimeout    string   `yaml:"idleTimeout"`    // idle session reaping
+		Scrollback     string   `yaml:"scrollbackBytes"`
+		Allow          []string `yaml:"allow"` // extra patterns appended to the built-in read-only set
+		Deny           []string `yaml:"deny"`  // empty list clears the built-in dangerous set
+	} `yaml:"ops"`
 	Roots []RootMapping `yaml:"roots"`
 
 	// configDir is the directory of the config file, used for resolving
@@ -124,6 +142,99 @@ func (c *Config) ManageDelete() bool {
 // ManageDeleteToken returns the configured deletion token.
 func (c *Config) ManageDeleteToken() string {
 	return strings.TrimSpace(c.Manage.DeleteToken)
+}
+
+// ── Ops panel accessors ─────────────────────────────────────────
+
+// OpsEnabled reports whether the operations panel is genuinely
+// available. Fail-closed: the feature must be explicitly enabled AND a
+// global access token must be configured. Without the token the
+// WebSocket handshake would have no credential to check, leaving a
+// browser-reachable command runner open to anyone on the network.
+func (c *Config) OpsEnabled() bool {
+	return c.Ops.Enabled && strings.TrimSpace(c.Server.Token) != ""
+}
+
+// OpsTerminalEnabled reports whether the interactive terminal may be
+// used. It needs its own second factor: an interactive shell is a full
+// shell, whereas one-shot commands are bounded by the allowlist.
+func (c *Config) OpsTerminalEnabled() bool {
+	return c.OpsEnabled() && strings.TrimSpace(c.Ops.TerminalToken) != ""
+}
+
+// OpsFreeMode reports whether allowlist enforcement is disabled.
+func (c *Config) OpsFreeMode() bool {
+	return c.OpsEnabled() && strings.EqualFold(strings.TrimSpace(c.Ops.Mode), "free")
+}
+
+// OpsConfig builds the panel configuration from the YAML settings,
+// applying the documented defaults for anything left unset.
+func (c *Config) OpsConfig() ops.Config {
+	cfg := ops.Defaults()
+	cfg.Enabled = c.OpsEnabled()
+	cfg.AccessToken = strings.TrimSpace(c.Server.Token)
+	cfg.TerminalToken = strings.TrimSpace(c.Ops.TerminalToken)
+	cfg.OriginPatterns = c.Ops.OriginPatterns
+	cfg.CwdRoots = c.Ops.CwdRoots
+	cfg.Allow = c.Ops.Allow
+
+	if c.Ops.Mode != "" {
+		cfg.Mode = strings.ToLower(strings.TrimSpace(c.Ops.Mode))
+	}
+
+	// Deny is nil-aware: a nil slice means "use the built-in dangerous
+	// set", while an explicitly empty list clears it. yaml.v3 gives an
+	// empty sequence as a non-nil empty slice, which is exactly the
+	// distinction needed, so the mapping is direct.
+	cfg.Deny = c.Ops.Deny
+
+	if d, ok := parseByteSize(c.Ops.MaxOutput); ok {
+		cfg.MaxOutput = d
+	}
+	if d, ok := parseByteSize(c.Ops.Scrollback); ok {
+		cfg.ScrollbackSize = int(d)
+	}
+	if d, err := time.ParseDuration(c.Ops.Timeout); err == nil && d > 0 {
+		cfg.Timeout = d
+	}
+	if d, err := time.ParseDuration(c.Ops.IdleTimeout); err == nil && d > 0 {
+		cfg.IdleTimeout = d
+	}
+	if c.Ops.MaxSessions > 0 {
+		cfg.MaxSessions = c.Ops.MaxSessions
+	}
+
+	return cfg
+}
+
+// parseByteSize parses human-readable sizes such as "1MB", "256KB".
+// A bare number is treated as bytes.
+func parseByteSize(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	upper := strings.ToUpper(s)
+
+	mult := int64(1)
+	for _, suffix := range []struct {
+		suffix string
+		mult   int64
+	}{
+		{"TB", 1 << 40}, {"GB", 1 << 30}, {"MB", 1 << 20}, {"KB", 1 << 10}, {"B", 1},
+	} {
+		if strings.HasSuffix(upper, suffix.suffix) {
+			mult = suffix.mult
+			upper = strings.TrimSuffix(upper, suffix.suffix)
+			break
+		}
+	}
+
+	n, err := strconv.ParseInt(strings.TrimSpace(upper), 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n * mult, true
 }
 
 // resolvePath resolves a path to an absolute path.
@@ -274,5 +385,65 @@ func LoadConfig(path string) (*Config, error) {
 		return len(cfg.Roots[i].URL) > len(cfg.Roots[j].URL)
 	})
 
+	if err := cfg.validateOps(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validateOps checks the ops panel settings. It warns rather than
+// fails where a setting is merely unwise, and errors only where the
+// configuration could not work at all.
+func (c *Config) validateOps() error {
+	if !c.Ops.Enabled {
+		return nil
+	}
+
+	// The panel needs a credential for the WebSocket handshake. Without
+	// one it would be a browser-reachable command runner with no lock,
+	// so refuse to enable it and say why.
+	if strings.TrimSpace(c.Server.Token) == "" {
+		fmt.Println("WARNING: ops.enabled is true but server.token is empty — " +
+			"the ops panel will stay DISABLED. Set server.token to enable it.")
+		logger.Warn("config: ops.enabled=true but server.token is empty; panel disabled")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(c.Ops.Mode))
+	if mode != "" && mode != "allowlist" && mode != "free" {
+		return fmt.Errorf("ops.mode %q must be \"allowlist\" or \"free\"", c.Ops.Mode)
+	}
+
+	if mode == "free" {
+		fmt.Println("WARNING: ops.mode is \"free\" — arbitrary commands may be executed " +
+			"through the browser. Only the built-in deny list applies.")
+		logger.Warn("config: ops.mode=free — arbitrary command execution is permitted")
+	}
+
+	if strings.TrimSpace(c.Ops.TerminalToken) != "" &&
+		c.Ops.TerminalToken == c.Server.Token {
+		fmt.Println("WARNING: ops.terminalToken equals server.token — " +
+			"the second factor should be a distinct secret to be meaningful.")
+		logger.Warn("config: ops.terminalToken duplicates server.token")
+	}
+
+	// An interactive terminal without its own token is disabled; say so
+	// rather than letting the operator discover it in the UI.
+	if strings.TrimSpace(c.Ops.TerminalToken) == "" {
+		logger.Info("config: ops interactive terminal disabled (no ops.terminalToken set)")
+	}
+
+	for _, root := range c.Ops.CwdRoots {
+		if _, err := os.Stat(root); err != nil {
+			logger.Warn("config: ops.cwdRoots entry %s is not accessible: %v", root, err)
+		}
+	}
+
+	// Validate the patterns early so a typo surfaces at startup rather
+	// than on the first command.
+	if _, err := ops.New(c.OpsConfig(), nil, nil); err != nil {
+		return fmt.Errorf("ops configuration: %w", err)
+	}
+
+	return nil
 }
