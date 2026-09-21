@@ -1,0 +1,17 @@
+[package]
+name = "fix-line-endings"
+version = "1.0.0"
+edition = "2021"
+description = "Fix line endings (CRLF <-> LF) for a file or all text files in a directory. Zero third-party dependencies (std only)."
+
+[[bin]]
+name = "fix-line-endings"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+strip = true
+lto = true
+panic = "abort"
+codegen-units = 1
