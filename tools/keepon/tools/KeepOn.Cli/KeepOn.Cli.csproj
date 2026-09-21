@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <RootNamespace>KeepOn.Cli</RootNamespace>
+    <AssemblyName>keepon-cli</AssemblyName>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <AssemblyTitle>KeepOn CLI</AssemblyTitle>
+    <Product>KeepOn</Product>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!-- 复用主程序的服务层源码，避免逻辑重复实现。
+       这里只编译无 WPF 依赖的文件，保证控制台程序可以独立构建。 -->
+  <ItemGroup>
+    <Compile Include="..\..\src\Models\AwakeMode.cs" Link="Models\AwakeMode.cs" />
+    <Compile Include="..\..\src\Models\ConfigDefaults.cs" Link="Models\ConfigDefaults.cs" />
+    <Compile Include="..\..\src\Models\AppConfig.cs" Link="Models\AppConfig.cs" />
+    <Compile Include="..\..\src\Services\TextListParser.cs" Link="Services\TextListParser.cs" />
+    <Compile Include="..\..\src\Services\PowerNative.cs" Link="Services\PowerNative.cs" />
+    <Compile Include="..\..\src\Services\ProcessHelper.cs" Link="Services\ProcessHelper.cs" />
+    <Compile Include="..\..\src\Services\Log.cs" Link="Services\Log.cs" />
+    <Compile Include="..\..\src\Services\Paths.cs" Link="Services\Paths.cs" />
+    <Compile Include="..\..\src\Services\StatusFormatter.cs" Link="Services\StatusFormatter.cs" />
+    <Compile Include="..\..\src\Services\AwakeController.cs" Link="Services\AwakeController.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+</Project>

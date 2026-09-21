@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>7.3</LangVersion>
+    <RootNamespace>KeepOn</RootNamespace>
+    <AssemblyName>KeepOn</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <ApplicationIcon>Assets\Icon.ico</ApplicationIcon>
+    <!-- App.xaml 为 Resource 而非 ApplicationDefinition，入口点由 Program.cs 提供，
+         以便在 WPF 启动前完成单实例互斥与命令行解析 -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>KeepOn.Program</StartupObject>
+    <AssemblyTitle>KeepOn</AssemblyTitle>
+    <Product>KeepOn</Product>
+    <Description>阻止计算机休眠或息屏的保持唤醒工具</Description>
+    <Version>1.0.0</Version>
+    <Company>KeepOn</Company>
+    <Copyright>Copyright © 2026</Copyright>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Icon.ico" />
+    <!-- App.xaml 只作为资源字典加载（InitializeComponent 手工调用），
+         避免 SDK 自动生成 Main 与 Program.Main 冲突 -->
+    <Page Remove="App.xaml" />
+    <ApplicationDefinition Remove="App.xaml" />
+    <Resource Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Costura.Fody" Version="6.0.0" PrivateAssets="all" />
+    <PackageReference Include="Fody" Version="6.9.2" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

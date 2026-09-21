@@ -1,0 +1,13 @@
+<Application x:Class="KeepOn.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!--
+        注意：本文件以 Resource 方式编译（见 KeepOn.csproj），不生成 InitializeComponent，
+        因此这里只声明 Application 本身；共享样式由 App 构造函数通过代码加载，
+        这样入口点可以保留在 Program.cs 中，以便先做单实例互斥与命令行解析。
+    -->
+    <Application.Resources>
+        <ResourceDictionary />
+    </Application.Resources>
+</Application>

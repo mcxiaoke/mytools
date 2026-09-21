@@ -1,0 +1,15 @@
+## Build results
+bin/
+obj/
+
+## User-specific
+*.user
+*.suo
+.vs/
+
+## NuGet
+packages/
+*.nupkg
+
+## Temp
+temp/

@@ -1,0 +1,241 @@
+<Window x:Class="KeepOn.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="KeepOn 设置 - 保持唤醒" Height="660" Width="600"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+        MinHeight="480" MinWidth="520"
+        Background="#FFF6F7F9"
+        FontFamily="Segoe UI, Microsoft YaHei UI">
+    <Grid Margin="18,14,18,14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 顶部状态卡片 -->
+        <Border Grid.Row="0" Background="White" BorderBrush="#FFE2E8F0" BorderThickness="1"
+                CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="☕ KeepOn — 保持唤醒" FontSize="15" FontWeight="Bold" Foreground="#FF1E293B"/>
+                    <TextBlock Text="阻止计算机进入睡眠或息屏，让编译、下载、压制等挂机任务平稳进行"
+                               FontSize="12" Foreground="#FF64748B" Margin="0,3,0,0"/>
+                </StackPanel>
+                <Border Grid.Column="1" x:Name="StatusBadge" Background="#FFF1F5F9"
+                        CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusBadgeText" Text="已关闭" FontSize="12"
+                               FontWeight="SemiBold" Foreground="#FF475569"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- 主内容 -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+
+                <!-- 1. 工作模式 -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="工作模式" Style="{StaticResource CardTitleStyle}"/>
+
+                        <RadioButton x:Name="RadioPassive" GroupName="AwakeModeGroup" Margin="0,4,0,4"
+                                     Content="关闭（遵循系统默认电源策略）"/>
+
+                        <RadioButton x:Name="RadioIndefinite" GroupName="AwakeModeGroup" Margin="0,4,0,4"
+                                     Content="无限期保持唤醒（直到手动关闭）"/>
+
+                        <Grid Margin="0,4,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="90"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <RadioButton x:Name="RadioTimed" GroupName="AwakeModeGroup"
+                                         Content="定时保持唤醒：" VerticalAlignment="Center"/>
+                            <TextBox x:Name="TimedMinutesBox" Grid.Column="1" Height="26" Margin="6,0,4,0"
+                                     TextAlignment="Center" Text="30"/>
+                            <TextBlock Grid.Column="2" Text="分钟" VerticalAlignment="Center"
+                                       Foreground="#FF64748B" FontSize="12"/>
+                        </Grid>
+
+                        <Grid Margin="0,4,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="90"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <RadioButton x:Name="RadioUntilTime" GroupName="AwakeModeGroup"
+                                         Content="保持唤醒至：" VerticalAlignment="Center"/>
+                            <TextBox x:Name="UntilTimeBox" Grid.Column="1" Height="26" Margin="6,0,4,0"
+                                     TextAlignment="Center" Text="18:00"/>
+                            <TextBlock Grid.Column="2" Text="(HH:mm，如 18:00)" VerticalAlignment="Center"
+                                       Foreground="#FF64748B" FontSize="12"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 2. 电源策略 -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="电源策略" Style="{StaticResource CardTitleStyle}"/>
+
+                        <CheckBox x:Name="KeepDisplayOnBox" Content="保持显示器常亮" Margin="0,4,0,2" IsChecked="True"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="22,0,0,10"
+                                   Text="未勾选时仅阻止系统睡眠，允许显示器按 Windows 电源计划息屏（省电，也能降低 OLED 烧屏风险）"/>
+
+                        <CheckBox x:Name="DisableOnBatteryBox" Content="使用电池供电时自动暂停保持唤醒"
+                                  Margin="0,4,0,2" IsChecked="True"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="22,0,0,8"
+                                   Text="断开交流电源或电量偏低时自动挂起，防止笔记本放进背包后持续发热或耗尽电量"/>
+
+                        <Grid Margin="22,2,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="60"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="低电量阈值：" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="#FF475569"/>
+                            <TextBox x:Name="BatteryThresholdBox" Grid.Column="1" Height="24" Margin="6,0,4,0"
+                                     TextAlignment="Center" Text="20"/>
+                            <TextBlock Grid.Column="2" Text="%（低于该值强制挂起）" VerticalAlignment="Center"
+                                       Foreground="#FF64748B" FontSize="11"/>
+                        </Grid>
+
+                        <Grid Margin="0,6,0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="快速切换热键：" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="#FF475569"/>
+                            <TextBox x:Name="HotkeyBox" Grid.Column="1" Height="26" Margin="8,0,0,0"
+                                     Text="Win+Shift+W" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="(一键在开启与关闭之间切换)" VerticalAlignment="Center"
+                                       Foreground="#FF94A3B8" FontSize="11" Margin="8,0,0,0"/>
+                        </Grid>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,4,0,0"
+                                   Text="格式：修饰键 + 按键，如 Win+Shift+W、Ctrl+Alt+K。需至少包含一个修饰键（Ctrl / Alt / Shift / Win）"/>
+
+                        <CheckBox x:Name="RestoreModeOnStartupBox" Content="启动时恢复上次使用的模式"
+                                  Margin="0,10,0,2"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="22,0,0,0"
+                                   Text="默认关闭：每次启动都从「已关闭」开始，避免开机自启时意外阻止系统睡眠"/>
+
+                        <CheckBox x:Name="RunAtStartupBox" Content="开机自动启动 KeepOn（登录后最小化到托盘）"
+                                  Margin="0,10,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 3. 托盘菜单预设 -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="托盘菜单预设" Style="{StaticResource CardTitleStyle}"/>
+
+                        <TextBlock Text="定时保持唤醒预设（分钟，逗号分隔）" FontSize="12" Foreground="#FF475569"
+                                   Margin="0,2,0,4"/>
+                        <TextBox x:Name="TimerPresetsBox" Height="26" Margin="0,0,0,4"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,0,0,10"
+                                   Text="默认 15,30,60,120,240,480；若默认时长为 0，快速切换将直接进入无限期模式"/>
+
+                        <TextBlock Text="保持至指定时刻预设（HH:mm，逗号分隔）" FontSize="12" Foreground="#FF475569"
+                                   Margin="0,2,0,4"/>
+                        <TextBox x:Name="UntilPresetsBox" Height="26" Margin="0,0,0,4"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}"
+                                   Text="默认 18:00,20:00,22:00；若当前时刻已过，会自动顺延到次日"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. 进程联动 -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="智能进程联动" Style="{StaticResource CardTitleStyle}"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,0,0,8"
+                                   Text="名单中的程序运行时自动进入保持唤醒；全部退出后自动恢复为关闭状态"/>
+
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ProcessInputBox" Height="26"
+                                     ToolTip="输入进程名，如 devenv、blender、ffmpeg"/>
+                            <Button Grid.Column="1" Content="浏览 exe..." Style="{StaticResource SmallButtonStyle}"
+                                    Margin="4,0,0,0" Click="OnBrowseExeClick"/>
+                            <Button Grid.Column="2" Content="从运行中选取" Style="{StaticResource SmallButtonStyle}"
+                                    Margin="4,0,0,0" Click="OnPickRunningClick"/>
+                            <Button Grid.Column="3" Content="添加" Style="{StaticResource SmallButtonStyle}"
+                                    Margin="4,0,0,0" Click="OnAddProcessClick"/>
+                            <Button Grid.Column="4" Content="删除" Style="{StaticResource SmallButtonStyle}"
+                                    Margin="4,0,0,0" Click="OnDeleteProcessClick"/>
+                        </Grid>
+
+                        <ListBox x:Name="ProcessListBox" Height="96" SelectionMode="Single">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="删除所选" Click="OnDeleteProcessClick"/>
+                                    <MenuItem Header="清空列表" Click="OnClearProcessesClick"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
+
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="60"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="退出缓冲时间：" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="#FF475569"/>
+                            <TextBox x:Name="ExitDelayBox" Grid.Column="1" Height="24" Margin="6,0,4,0"
+                                     TextAlignment="Center" Text="120"/>
+                            <TextBlock Grid.Column="2" Text="秒（进程退出后延迟恢复；0 表示立即恢复）"
+                                       VerticalAlignment="Center" Foreground="#FF64748B" FontSize="11"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 5. 关于 -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="关于" Style="{StaticResource CardTitleStyle}"/>
+                        <TextBlock x:Name="AboutText" Style="{StaticResource HintTextStyle}" Margin="0,0,0,4"/>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,0,0,6"
+                                   Text="提示：本程序通过 SetThreadExecutionState 向系统声明电源请求，与 PowerToys Awake 采用同一机制，不会修改你的电源计划设置。"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="打开配置目录" Style="{StaticResource SmallButtonStyle}"
+                                    Click="OnOpenConfigDirClick" Margin="0,0,8,0"/>
+                            <Button Content="打开日志目录" Style="{StaticResource SmallButtonStyle}"
+                                    Click="OnOpenLogDirClick"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 底部按钮 -->
+        <Border Grid.Row="2" Background="White" BorderBrush="#FFE2E8F0" BorderThickness="0,1,0,0"
+                Padding="0,10,0,0" Margin="0,8,0,0">
+            <DockPanel LastChildFill="False">
+                <Button Content="恢复默认" Style="{StaticResource SecondaryButtonStyle}"
+                        DockPanel.Dock="Left" Click="OnResetDefaultsClick"/>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button Content="保存并应用" Style="{StaticResource PrimaryButtonStyle}"
+                            Margin="0,0,8,0" Click="OnSaveApplyClick"/>
+                    <Button Content="关闭" Style="{StaticResource SecondaryButtonStyle}"
+                            Click="OnCloseClick"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
