@@ -16,7 +16,7 @@ import (
 // Linux 上没有"盘符"概念，挂载点才是判定同卷的依据（设计文档 §5.0/§7.3）。
 // 挂载点表从 /proc/self/mounts 读取；读不到就退到 /，宁可粗一点也不要猜。
 func VolumeRoot(p string) (string, error) {
-	target, err := renameVolumeTarget(p)
+	target, err := deepestExisting(p)
 	if err != nil {
 		return "", err
 	}
@@ -32,11 +32,11 @@ func VolumeRoot(p string) (string, error) {
 // 判据是比较 st_dev（设备号），这直接对应 rename(2) 能否成功：
 // 内核跨文件系统 rename 返回 EXDEV，而本工具刻意不做"复制+删除"的降级。
 func SameVolume(a, b string) (bool, error) {
-	ta, err := renameVolumeTarget(a)
+	ta, err := deepestExisting(a)
 	if err != nil {
 		return false, err
 	}
-	tb, err := renameVolumeTarget(b)
+	tb, err := deepestExisting(b)
 	if err != nil {
 		return false, err
 	}

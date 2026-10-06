@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,37 @@ func TestSameVolumeAcrossVolumesIsFalse(t *testing.T) {
 	}
 	if same {
 		t.Fatalf("SameVolume(%q, %q) = true, want false (不同盘符必须是不同卷)", a, b)
+	}
+}
+
+// 回归测试：卷挂载点自身的 VolumeRoot 必须是它自己。
+//
+// 曾经用 Dir(p) 求父目录的卷来"规避符号链接"，结果 /data 这类挂载点被误判成 /，
+// 会让"目标是卷根"漏检、也会让回收根选错卷。挂载点的判定是纯字面的，不该取父目录。
+func TestVolumeRootOfMountPointIsItself(t *testing.T) {
+	var candidates []string
+	if runtime.GOOS == "windows" {
+		candidates = []string{"C:\\", "D:\\", "E:\\", "F:\\"}
+	} else {
+		candidates = []string{"/", "/proc"}
+	}
+
+	checked := 0
+	for _, m := range candidates {
+		if _, err := os.Stat(m); err != nil {
+			continue
+		}
+		got, err := VolumeRoot(m)
+		if err != nil {
+			t.Fatalf("VolumeRoot(%q): %v", m, err)
+		}
+		if !strings.EqualFold(filepath.Clean(got), filepath.Clean(m)) {
+			t.Errorf("VolumeRoot(%q) = %q，应当等于它自己", m, got)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Skip("没有可用的挂载点样本")
 	}
 }
 

@@ -19,7 +19,7 @@ const maxVolumePath = 260
 // 用 GetVolumePathNameW 而不是"取盘符"，是为了正确支持挂载到文件夹的卷
 // （例如 C:\Mount\Data 是另一个卷，按盘符猜会猜错）。
 func VolumeRoot(p string) (string, error) {
-	target, err := renameVolumeTarget(p)
+	target, err := deepestExisting(p)
 	if err != nil {
 		return "", err
 	}

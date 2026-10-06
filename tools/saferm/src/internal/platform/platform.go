@@ -26,6 +26,10 @@ func AbsClean(p string) (string, error) {
 //
 // 用途：回收根可能尚未创建，但"它在哪个卷上"仍然必须能判定。
 // 用 Lstat 而非 Stat：不跟随符号链接，得到的是"该条目本身所在的位置"。
+//
+// 注意这里**不能**取父目录：卷挂载点自身（Linux 的 /data、Windows 的 D:\）
+// 也是合法的入参，取父目录会把 /data 误判成 /。卷的判定在 Windows 与 Linux
+// 上都是纯字面（按挂载点前缀），因此直接对 p 本身求最深的已存在祖先才正确。
 func deepestExisting(p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -45,15 +49,4 @@ func deepestExisting(p string) (string, error) {
 		}
 		cur = parent
 	}
-}
-
-// renameVolumeTarget 返回"对这个路径做 rename 时，实际起作用的是哪个卷"。
-//
-// rename 发生在父目录所在的文件系统上，所以先取 Dir(p)：
-//   - p 是符号链接时，被移动的是链接本身，而链接存放在父目录里；
-//   - p 是普通文件/目录时，父目录与它必然同卷。
-//
-// 再对父目录求"最深的已存在祖先"，以支持尚未创建的回收根。
-func renameVolumeTarget(p string) (string, error) {
-	return deepestExisting(filepath.Dir(filepath.Clean(p)))
 }
