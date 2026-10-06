@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"saferm/internal/trash"
 	"saferm/internal/volume"
 )
 
@@ -56,12 +57,41 @@ func runWhere(args []string) int {
 	}
 
 	summary := volume.ProbeSummary{Version: version, Probes: probes, Notes: volume.DefaultNotes()}
+
+	// 顺带核对有没有"没有正常收尾"的操作：进程被杀或断电之后，
+	// 用户需要知道上一次到底搬走了什么（设计文档 §8.1）。
+	for _, p := range probes {
+		if !p.Exists || !p.HasMarker {
+			continue
+		}
+		ops, bad, err := trash.Unfinished(p.TrashRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "saferm: 读取 %s 的清单失败：%v\n", p.TrashRoot, err)
+			continue
+		}
+		summary.BadManifests += bad
+		for _, op := range ops {
+			summary.Unfinished = append(summary.Unfinished, volume.UnfinishedOp{
+				OpID:      op.OpID,
+				State:     op.State,
+				TrashRoot: p.TrashRoot,
+				StartedAt: op.StartedAt,
+				Items:     op.Items,
+				Done:      op.Done,
+				Failed:    op.Failed,
+			})
+		}
+	}
+
 	if err := summary.Render(os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "saferm: 输出失败：%v\n", err)
 		return exitUsage
 	}
 
-	// 有卷不可用就返回非零，便于脚本判断（设计文档 §8.1）
+	// 有卷不可用、或存在未正常收尾的操作，就返回非零，便于脚本判断（设计文档 §8.1）
+	if len(summary.Unfinished) > 0 || summary.BadManifests > 0 {
+		return exitUsage
+	}
 	for _, p := range probes {
 		if !p.Usable {
 			return exitUsage
