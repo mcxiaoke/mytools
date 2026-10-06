@@ -362,6 +362,11 @@ func TestBypassableClassification(t *testing.T) {
 		ReasonUnresolvedPath:   false,
 		ReasonDuplicateOperand: false,
 		ReasonNestedOperand:    false,
+
+		// 环境与配置类也不可绕过：跨卷复制降级是刻意不做的能力，
+		// 回收目录不可用更是配置问题，绕过它等于把文件塞进不该塞的地方。
+		ReasonCrossVolume:   false,
+		ReasonTrashUnusable: false,
 	}
 	for reason, want := range bypassable {
 		if got := reason.Bypassable(); got != want {

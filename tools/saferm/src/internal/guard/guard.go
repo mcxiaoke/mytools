@@ -41,6 +41,11 @@ const (
 	ReasonVCSRoot         Reason = "vcs-root"
 	ReasonInsideTrash     Reason = "inside-trash"
 	ReasonAncestorOfTrash Reason = "ancestor-of-trash"
+
+	// 环境与配置类：既不是参数写错，也不是"目标很危险"，
+	// 而是当前环境下这件事根本没法安全完成。任何开关都不可绕过。
+	ReasonCrossVolume   Reason = "cross-volume"
+	ReasonTrashUnusable Reason = "trash-unusable"
 )
 
 // Bypassable 表示该违规属于"危险路径类"，可用 --allow-dangerous 降级为警告；
@@ -103,6 +108,10 @@ func (v Violation) Message() string {
 		return fmt.Sprintf("拒绝：目标位于回收目录内：%s%s", where, suffix)
 	case ReasonAncestorOfTrash:
 		return fmt.Sprintf("拒绝：目标包含回收目录，移动会把回收目录搬进它自己内部：%s%s", where, suffix)
+	case ReasonCrossVolume:
+		return fmt.Sprintf("拒绝：回收目录与目标不在同一个卷，无法用一次 rename 完成移动（本工具刻意不做「复制+删除」的降级）：%s%s。请为该卷配置回收根，saferm where 可看当前解析结果", where, suffix)
+	case ReasonTrashUnusable:
+		return fmt.Sprintf("拒绝：回收目录不可用：%s%s", where, suffix)
 	}
 	return fmt.Sprintf("拒绝：%s%s", where, suffix)
 }

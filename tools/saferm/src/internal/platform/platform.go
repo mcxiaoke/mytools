@@ -22,15 +22,15 @@ func AbsClean(p string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
-// deepestExisting 返回 p 及其祖先中第一个真实存在的路径。
+// DeepestExisting 返回 p 及其祖先中第一个真实存在的路径。
 //
-// 用途：回收根可能尚未创建，但"它在哪个卷上"仍然必须能判定。
+// 用途：回收根可能尚未创建，但"它在哪个卷上""它能不能被写"仍然必须能判定。
 // 用 Lstat 而非 Stat：不跟随符号链接，得到的是"该条目本身所在的位置"。
 //
 // 注意这里**不能**取父目录：卷挂载点自身（Linux 的 /data、Windows 的 D:\）
 // 也是合法的入参，取父目录会把 /data 误判成 /。卷的判定在 Windows 与 Linux
 // 上都是纯字面（按挂载点前缀），因此直接对 p 本身求最深的已存在祖先才正确。
-func deepestExisting(p string) (string, error) {
+func DeepestExisting(p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute path %q: %w", p, err)

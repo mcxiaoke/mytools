@@ -123,6 +123,40 @@ func TestVolumeRootOfMountPointIsItself(t *testing.T) {
 	}
 }
 
+// 网络共享（UNC）必须能正确解析出卷，否则"在网络盘上安全删除"这条需求就没法成立。
+//
+// 用环境变量 opt-in，避免在别的机器上因共享不可达而失败：
+//
+//	$env:SAFERM_TEST_UNC = '\\192.168.1.118\data\temp\devtest'
+func TestVolumeRootOnUNCShare(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("UNC 路径只在 Windows 上有意义")
+	}
+	share := os.Getenv("SAFERM_TEST_UNC")
+	if share == "" {
+		t.Skip("未设置 SAFERM_TEST_UNC，跳过")
+	}
+	if _, err := os.Stat(share); err != nil {
+		t.Skipf("共享不可达 %q: %v", share, err)
+	}
+
+	root, err := VolumeRoot(share)
+	if err != nil {
+		t.Fatalf("VolumeRoot(%q): %v", share, err)
+	}
+	if !strings.HasPrefix(root, `\\`) {
+		t.Fatalf("VolumeRoot(%q) = %q，UNC 路径的卷挂载点应当也是 UNC 形式", share, root)
+	}
+
+	same, err := SameVolume(share, root)
+	if err != nil {
+		t.Fatalf("SameVolume: %v", err)
+	}
+	if !same {
+		t.Fatalf("共享根 %q 应当与共享本身同卷", root)
+	}
+}
+
 func TestExpandShortNameIsIdempotentOnExistingPath(t *testing.T) {
 	wd := mustGetwd(t)
 	got, err := ExpandShortName(wd)
