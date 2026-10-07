@@ -4,7 +4,7 @@
 # 交叉编译一律 CGO_ENABLED=0，这是"单文件、零运行时依赖"的前提。
 
 .PHONY: build build-linux build-linux-arm64 build-windows build-windows-arm64 \
-        build-all test vet fmt check fuzz clean distclean help
+        build-all test vet fmt invariants check fuzz clean distclean help
 
 BUILDDIR := build
 SRC      := src
@@ -36,13 +36,16 @@ test: ## 跑单元测试
 vet: ## go vet
 	cd $(SRC) && go vet ./...
 
+invariants: ## 源码不变量扫描：代码里不存在任何永久删除调用
+	cd $(SRC) && go test -count=1 -run 'TestNoPermanentDeleteCalls|TestScannerDetectsAndIgnores' -v ./internal/invariants/
+
 fmt: ## gofmt 检查（有输出即为不合格）
 	cd $(SRC) && gofmt -l .
 
 fuzz: ## 短时跑一轮 fuzz（可 FUZZTIME=30s 覆盖）
 	cd $(SRC) && go test -run '^$$' -fuzz FuzzParse -fuzztime $(or $(FUZZTIME),15s) ./internal/config/
 
-check: fmt vet test ## 质量门：gofmt + vet + test
+check: fmt vet invariants test ## 质量门：gofmt + vet + 不变量扫描 + test
 	@echo "quality gate: OK"
 
 clean: ## 清理构建产物

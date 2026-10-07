@@ -451,8 +451,9 @@ saferm/
 | 测试 | 标准库 `testing` + 原生 fuzz | 不引 testify 之类 |
 | 原子写清单 | 自己写（临时文件 + `os.Rename`） | 十几行，且 rename 本来就在允许的写操作白名单里（C8） |
 
-保持可审计的强不变量（C8）：v1 的代码里**不出现任何删除调用**（`os.Remove`、`os.RemoveAll`，以及 `DeleteFileW` / `RemoveDirectoryW` / `SHFileOperation`）。允许的文件系统写操作只有 `os.Rename`、`MkdirAll`、`WriteFile`（清单与标记）。
-→ 在测试里加一条源码扫描断言，这样"这工具不会永久删数据"就是**可机械验证**的，而不是靠口碑。
+保持可审计的强不变量（C8）：v1 的代码里**不出现任何删除调用**（`os.Remove`、`os.RemoveAll`，以及 `DeleteFileW` / `RemoveDirectoryW` / `SHFileOperation`）。允许的文件系统写操作只有 `os.Rename`、`os.Mkdir`、`os.MkdirAll`、`os.WriteFile`（清单与标记）。
+> `os.Mkdir`（单层）与 `MkdirAll` 并存是有意的：抢占操作目录名时用 `os.Mkdir`，目录已存在就必须报错，这样"撞名"才会暴露；用 `MkdirAll` 会把撞名静默吞掉。
+→ 在 `internal/invariants/` 里加一条源码扫描断言（**用 go/ast 解析，不用正则**，避免被注释、字符串、别名导入骗过），这样"这工具不会永久删数据"就是**可机械验证**的，而不是靠口碑。它同时约束非测试源码里对 `os` 的写入类调用必须落在上面这个白名单内——将来有人加 `os.Chmod` / `os.Truncate` 之类会被拦下。
 
 - 构建产物：`build/saferm.exe`、`build/saferm_linux_amd64` 等，与同仓库 `filelist` 的约定保持一致。
 - 交叉编译：`GOOS=windows/linux` × `amd64/arm64`。
@@ -480,7 +481,7 @@ saferm/
 | Windows 专项 | >260 字符长路径、尾随点/空格的目录名、名字就叫 `$null` 的文件、保留名 `con`/`nul`、被独占打开的文件（应失败且不降级）、只读文件 |
 | 跨卷专项 | 用另一块盘的临时目录断言"拒绝" |
 | 崩溃恢复 | 在多次移动之间强杀进程，随后 `where` 必须报出未完成批次，且清单状态与实际对得上 |
-| 不变量扫描 | 源码里不存在 `os.Remove` / `os.RemoveAll` / `DeleteFileW` / `RemoveDirectoryW`（§10.1） |
+| 不变量扫描 | `internal/invariants`：源码里不存在 `os.Remove` / `os.RemoveAll` / `DeleteFileW` / `RemoveDirectoryW` / `SHFileOperation` 等删除类调用（§10.1），且非测试源码里的 `os` 写入类调用必须落在白名单内；扫描器自身另有单测（含"注释/字符串里的 os.Remove 不算违规""别名导入也要抓到"等反例） |
 | Linux | `go test ./...` + 交叉编译冒烟（Docker 或 WSL） |
 | 质量门 | `gofmt -l .` 无输出、`go vet ./...` 干净、`go test ./...` 全绿、fuzz 各跑一轮短时 |
 

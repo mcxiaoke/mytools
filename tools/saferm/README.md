@@ -301,10 +301,13 @@ tests/run-e2e.sh                  # 端到端黑盒（bash，与上面逐条对�
   以及 Windows 8.3 短名绕过（`D:\PROGRA~1` 与 `D:\Program Files` 必须判为同一路径）。
 - 配置解析（`internal/config`）对"键名写错 / 类型不符 / 语法错误"逐个覆盖硬失败分支，
   另有一个原生 fuzz target（`make fuzz`）。
+- **不变量扫描**（`internal/invariants`，`make invariants`）：用 go/ast 解析全部源码，
+  断言"删除类调用（`os.Remove` / `os.RemoveAll` / `DeleteFileW` / `RemoveDirectoryW` /
+  `SHFileOperation` …）一处都不存在"，并约束非测试源码里的 `os` 写入类调用只能落在
+  `Rename` / `Mkdir` / `MkdirAll` / `WriteFile` 之内 —— 让"这工具不会永久删数据"成为
+  **可机械验证**的结论，而不是靠口碑。扫描器自己也有单测（注释/字符串里的
+  `os.Remove` 不算违规、别名导入 `o "os"` 也必须抓到），否则"扫描通过"可能只是因为它没生效。
 - 端到端脚本直接驱动构建出来的**可执行文件**，断言"原路径消失 + 镜像路径存在 + 内容逐字节一致
   + 清单正确"，以及各类拒绝场景下"原目录纹丝不动"。
-
-> 待补：把"代码里不存在永久删除调用"做成源码扫描测试接进质量门（设计文档 §12 第 8 步）。
-> 在补上之前，这条不变量目前靠上面的 `grep` 手工核对。
 
 设计文档见 [`docs/saferm-design.md`](docs/saferm-design.md)，变更记录见 `docs/CHANGES-*.md`。
