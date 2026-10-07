@@ -1,0 +1,50 @@
+# saferm 配置样例
+# ---------------------------------------------------------------------------
+# 放到默认位置即可生效：
+#   Windows  %APPDATA%\saferm\config.toml
+#   Linux    $XDG_CONFIG_HOME/saferm/config.toml（回退 ~/.config/saferm/config.toml）
+# 或用 --config <文件> 临时指定。
+#
+# 三条硬规则（设计文档 §7.1）：
+#   1. 这个文件不存在 → 用内置默认值，不报错；
+#   2. 文件存在但语法错误 / 类型不符 → 报错退出，绝不静默回退默认值；
+#   3. 键名写错（拼写错误）同样报错。护栏的实际取值与你的预期不一致，
+#      而工具看起来一切正常，是本工具最危险的失败模式。
+# 报错会带行号与原文片段，例如：
+#   2| default_rooot = "auto"
+#    | ~~~~~~~~~~~~~ unknown field
+#
+# 优先级：命令行参数 > 配置文件 > 内置默认值。
+# 下面每一项都写了默认值，也就是"没有这个文件时的行为"。
+
+[trash]
+# auto = 使用目标所在卷的 <卷根>\.saferm-trash
+default_root = "auto"
+
+# 按卷覆盖。键是卷标识：Windows 用盘符字母，Linux 用挂载点路径。
+# 显式指定的回收根不会被静默降级——它不可用时工具直接报错，
+# 而不是悄悄把文件倒到盘根或用户目录里（那会掩盖真实的配置问题）。
+[trash.roots]
+# C = "C:\Users\me\AppData\Local\saferm\trash\C"
+# D = "D:\.saferm-trash"
+# "/home" = "/data/.saferm-trash"
+
+[confirm]
+# 超过此条目数需要确认；0 表示不按此项判断
+file_threshold        = 50
+# 超过此条目数升为危险级（必须手敲目标名称）；0 表示不按此项判断
+danger_file_threshold = 5000
+# 字节数阈值，1 GiB；0 表示不按此项判断
+bytes_threshold       = 1073741824
+# 删目录一律确认
+always_confirm_dir    = true
+
+[guard]
+# 目录含 .git/.hg/.svn 时直接拒绝
+protect_vcs_root = true
+# Git 基础档：目标在版本库工作区内时升为危险级。
+# 只做只读检测，本工具绝不调用 git reset/clean/checkout/restore。
+git_detect       = true
+# 额外保护的绝对路径（按子树保护）。这个列表只能"追加"保护，
+# 内置的系统/用户关键路径无法通过配置移除。
+extra_protected  = []
