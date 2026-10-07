@@ -40,7 +40,7 @@
              autocomplete="off"
              x-model="searchQuery"
              @keydown.enter="doSearch()"
-             @input.debounce.300ms="if(searchQuery.trim()) doSearch(); else if(searchMode) clearSearch();">
+             @input.debounce.600ms="if(searchQuery.trim()) doSearch(); else if(searchMode) clearSearch();">
       <button class="clear"
               id="clearBtn"
               type="button"
@@ -62,7 +62,7 @@
   <!-- Breadcrumb Navigation -->
   <div class="breadcrumb" id="breadcrumb">
     <template x-if="searchMode">
-      <span class="cur" x-text="'搜索: ' + searchQuery"></span>
+      <span class="cur" x-text="'搜索: ' + searchQuery + (sortCol === 'relevance' ? '（按相关度）' : '')"></span>
     </template>
     <template x-if="!searchMode">
       <span>

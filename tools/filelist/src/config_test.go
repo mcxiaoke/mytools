@@ -136,6 +136,23 @@ server:
 	}
 }
 
+func TestLoadConfig_RejectsDuplicateRootURL(t *testing.T) {
+	cfg := `
+roots:
+  - url: /d
+    path: /tmp
+  - url: /d
+    path: /home/user
+`
+	_, err := LoadConfig(writeConfig(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for duplicate root url, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNormalizeBasePath(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -221,6 +238,12 @@ roots:
 	}
 	if c.Server.Token != "" {
 		t.Error("token should default to empty (auth disabled)")
+	}
+	if c.Index.RescanDepth != defaultRescanDepth {
+		t.Errorf("rescanDepth should default to %d, got %d", defaultRescanDepth, c.Index.RescanDepth)
+	}
+	if c.Index.FullInterval != defaultFullInterval {
+		t.Errorf("fullInterval should default to %q, got %q", defaultFullInterval, c.Index.FullInterval)
 	}
 }
 

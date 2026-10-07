@@ -281,7 +281,7 @@ func TestHandleContent_GetAndPut(t *testing.T) {
 	cfg.Manage.Enabled = true
 	cfg.Index.ExcludeFiles = []string{".env"}
 	idx := NewIndexer(cfg)
-	idx.BuildIndex()
+	idx.BuildIndex(false)
 	srv := NewServer(cfg, idx)
 
 	// 1. GET content
@@ -332,7 +332,7 @@ func TestHandleMkdir(t *testing.T) {
 	}
 	cfg.Manage.Enabled = true
 	idx := NewIndexer(cfg)
-	idx.BuildIndex()
+	idx.BuildIndex(false)
 	srv := NewServer(cfg, idx)
 
 	// 1. Create dir
@@ -367,7 +367,7 @@ func TestHandleRename(t *testing.T) {
 	}
 	cfg.Manage.Enabled = true
 	idx := NewIndexer(cfg)
-	idx.BuildIndex()
+	idx.BuildIndex(false)
 	srv := NewServer(cfg, idx)
 
 	// 1. Rename orig.txt -> new.txt
@@ -407,7 +407,7 @@ func TestHandleDelete_SafeWithToken(t *testing.T) {
 	cfg.Manage.AllowDelete = true
 	cfg.Manage.DeleteToken = "secret123"
 	idx := NewIndexer(cfg)
-	idx.BuildIndex()
+	idx.BuildIndex(false)
 	srv := NewServer(cfg, idx)
 
 	// 1. Missing token
@@ -460,7 +460,7 @@ func TestHandleZip(t *testing.T) {
 		},
 	}
 	idx := NewIndexer(cfg)
-	idx.BuildIndex()
+	idx.BuildIndex(false)
 	srv := NewServer(cfg, idx)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/zip?path=/data", nil)

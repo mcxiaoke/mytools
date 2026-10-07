@@ -17,12 +17,15 @@ document.addEventListener('alpine:init', () => {
     // State
     path: '',
     items: [],
+    sortedItems: [],
     loading: false,
     errorMsg: '',
     searchMode: false,
     searchQuery: '',
     sortCol: 'name',
     sortDir: 'asc',
+    loadSeq: 0,
+    searchSeq: 0,
     uploading: false,
     uploadStatus: '',
     uploadStatusClass: '',
@@ -227,6 +230,9 @@ document.addEventListener('alpine:init', () => {
       this.path = path;
       this.searchMode = false;
       this.searchQuery = '';
+      this.sortCol = 'name';
+      this.sortDir = 'asc';
+      this.resort();
       this.uploadStatus = '';
       this.uploadStatusClass = '';
       this.activeImg = null;
@@ -260,6 +266,7 @@ document.addEventListener('alpine:init', () => {
     loadDir(path) {
       this.loading = true;
       this.errorMsg = '';
+      var seq = ++this.loadSeq;
 
       var url = (!path || path === '/')
         ? (this.base + '/api/roots')
@@ -271,10 +278,13 @@ document.addEventListener('alpine:init', () => {
           return r.json();
         })
         .then((data) => {
+          if (seq !== this.loadSeq) return; // a newer load superseded this one
           this.items = Array.isArray(data) ? data : [];
+          this.resort();
           this.loading = false;
         })
         .catch((err) => {
+          if (seq !== this.loadSeq) return;
           this.errorMsg = '加载失败: ' + err.message;
           this.loading = false;
         });
@@ -289,10 +299,18 @@ document.addEventListener('alpine:init', () => {
         return;
       }
 
+      var wasSearch = this.searchMode;
       this.searchMode = true;
       this.searchQuery = query;
+      // Search results default to the backend's relevance order; a chosen
+      // column sort is kept while refining the same search.
+      if (!wasSearch) {
+        this.sortCol = 'relevance';
+        this.sortDir = 'asc';
+      }
       this.loading = true;
       this.errorMsg = '';
+      var seq = ++this.searchSeq;
 
       var url = this.base + '/api/search?q=' + encodeURIComponent(query);
       fetch(url)
@@ -301,10 +319,13 @@ document.addEventListener('alpine:init', () => {
           return r.json();
         })
         .then((data) => {
+          if (seq !== this.searchSeq) return; // a newer search superseded this one
           this.items = Array.isArray(data) ? data : [];
+          this.resort();
           this.loading = false;
         })
         .catch((err) => {
+          if (seq !== this.searchSeq) return;
           this.errorMsg = '搜索失败: ' + err.message;
           this.loading = false;
         });
@@ -323,35 +344,42 @@ document.addEventListener('alpine:init', () => {
         this.sortCol = col;
         this.sortDir = 'asc';
       }
+      this.resort();
     },
 
-    get sortedItems() {
+    // resort recomputes the cached sorted view. Natural-collation sorting is
+    // expensive, so it runs once per items/sort change instead of once per
+    // template binding that reads sortedItems.
+    resort() {
       var arr = (this.items || []).slice();
       var col = this.sortCol;
       var dir = this.sortDir === 'asc' ? 1 : -1;
 
-      arr.sort((a, b) => {
-        // Directories always come first
-        if (a.isDir !== b.isDir) {
-          return a.isDir ? -1 : 1;
-        }
-        if (col === 'size') {
-          var diff = (a.size - b.size) * dir;
-          if (diff !== 0) return diff;
+      // Relevance: keep the backend order (score desc, path asc) as-is.
+      if (col !== 'relevance') {
+        arr.sort((a, b) => {
+          // Directories always come first
+          if (a.isDir !== b.isDir) {
+            return a.isDir ? -1 : 1;
+          }
+          if (col === 'size') {
+            var diff = (a.size - b.size) * dir;
+            if (diff !== 0) return diff;
+            return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * dir;
+          }
+          if (col === 'time') {
+            var ta = a.modTime ? new Date(a.modTime).getTime() : 0;
+            var tb = b.modTime ? new Date(b.modTime).getTime() : 0;
+            var diff = (ta - tb) * dir;
+            if (diff !== 0) return diff;
+            return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * dir;
+          }
+          // Default: name sort (natural collation)
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * dir;
-        }
-        if (col === 'time') {
-          var ta = a.modTime ? new Date(a.modTime).getTime() : 0;
-          var tb = b.modTime ? new Date(b.modTime).getTime() : 0;
-          var diff = (ta - tb) * dir;
-          if (diff !== 0) return diff;
-          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * dir;
-        }
-        // Default: name sort (natural collation)
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) * dir;
-      });
+        });
+      }
 
-      return arr;
+      this.sortedItems = arr;
     },
 
     // ---- Breadcrumbs ----

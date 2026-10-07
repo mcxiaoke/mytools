@@ -185,6 +185,7 @@ func printStartup(cfg *Config, configPath string) {
 			}
 			return fmt.Sprint(cfg.Index.MaxDepth)
 		}())
+	fmt.Fprintf(w, "Index\trescanDepth=%d, fullInterval=%s\n", cfg.Index.RescanDepth, cfg.Index.FullInterval)
 	fmt.Fprintf(w, "Auth\t%s\n", func() string {
 		if cfg.Server.Token != "" {
 			return "token enabled"
@@ -256,6 +257,8 @@ index:
   interval: 5m              # re-index interval (30s, 5m, 1h)
   persist: ""                # index cache file (empty = auto: dataDir/filelist.idx)
   maxDepth: 0                # max walk depth (0 = unlimited)
+  rescanDepth: 3             # top levels always re-walked each pass (deep changes detection)
+  fullInterval: 24h          # force a full rebuild after this duration (0s = off)
   excludeDirs:               # directory names to skip during indexing
     - .git
     - node_modules

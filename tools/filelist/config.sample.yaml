@@ -39,6 +39,17 @@ index:
                          #   set explicitly to override; ~ is expanded
   maxDepth: 0            # max directory walk depth (0 = unlimited; 1 = only the
                          #   entries directly under each root)
+  rescanDepth: 3         # top N levels of each root are ALWAYS re-walked every
+                         #   pass, regardless of directory stamps. Catches new
+                         #   files/dirs whose mtime impact does not reach the
+                         #   root (e.g. adding a folder two levels down).
+                         #   Deeper dirs are still skipped when unchanged.
+                         #   Cost grows with tree width: ~90ms/0.5s per pass
+                         #   at 3/4 levels on a 400k-directory tree.
+  fullInterval: 24h      # force a full rebuild (no stamp skipping at all)
+                         #   after this duration; this is the safety net for
+                         #   changes deeper than rescanDepth. Default 24h;
+                         #   set 0s to disable.
   # incremental: true    # true (default): diff against the previous pass —
                          #   directories whose mtime/size are unchanged are
                          #   skipped entirely, so an idle tree costs ~one stat

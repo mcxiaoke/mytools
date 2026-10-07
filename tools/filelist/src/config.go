@@ -31,6 +31,8 @@ type Config struct {
 		Interval     string   `yaml:"interval"`     // re-index interval, e.g. "5m"
 		Persist      string   `yaml:"persist"`      // index persistence file path
 		MaxDepth     int      `yaml:"maxDepth"`     // max walk depth (0 = unlimited)
+		RescanDepth  int      `yaml:"rescanDepth"`  // levels always walked each pass (<=0 -> defaultRescanDepth); deeper dirs skip by stamp
+		FullInterval string   `yaml:"fullInterval"` // force a full rebuild after this duration (default "24h"; "0" disables)
 		ExcludeDirs  []string `yaml:"excludeDirs"`  // directory names to skip
 		ExcludeFiles []string `yaml:"excludeFiles"` // file name patterns to skip (glob)
 		Incremental  *bool    `yaml:"incremental"`  // true (default): diff by mtime; false: always full rebuild
@@ -78,6 +80,16 @@ type RootMapping struct {
 	URL  string `yaml:"url"`  // virtual web path, e.g. /data
 	Path string `yaml:"path"` // real disk path, e.g. /mnt/data
 }
+
+// defaultRescanDepth is how many top levels of every root are walked on
+// each incremental pass regardless of directory stamps. Deeper changes
+// are caught only when an ancestor directory changes or by the periodic
+// full rebuild (index.fullInterval).
+const defaultRescanDepth = 3
+
+// defaultFullInterval is how often a forced full rebuild runs when
+// index.fullInterval is not set.
+const defaultFullInterval = "24h"
 
 // Default exclude patterns, used when index.excludeDirs / index.excludeFiles
 // are not set in the config file.
@@ -318,6 +330,12 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.Index.Interval == "" {
 		cfg.Index.Interval = "5m"
 	}
+	if cfg.Index.RescanDepth <= 0 {
+		cfg.Index.RescanDepth = defaultRescanDepth
+	}
+	if cfg.Index.FullInterval == "" {
+		cfg.Index.FullInterval = defaultFullInterval
+	}
 	if cfg.Index.ExcludeDirs == nil {
 		cfg.Index.ExcludeDirs = defaultExcludeDirs
 	}
@@ -365,6 +383,16 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		// resolve path (expand ~, resolve relative to config dir)
 		r.Path = resolvePath(r.Path, baseDir)
+	}
+
+	// reject duplicate root URLs: for serving the later mapping silently
+	// shadows the earlier one, and both would write the same index keys.
+	seen := make(map[string]int, len(cfg.Roots))
+	for i, r := range cfg.Roots {
+		if j, dup := seen[r.URL]; dup {
+			return nil, fmt.Errorf("root[%d]: url %q duplicates root[%d] — each root url must be unique", i, r.URL, j)
+		}
+		seen[r.URL] = i
 	}
 
 	if len(cfg.Roots) == 0 {

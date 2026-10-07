@@ -20,6 +20,11 @@ type Entry struct {
 	ModTime time.Time `json:"modTime"` // modification time
 	IsDir   bool      `json:"isDir"`   // true if directory
 
+	// MatchType is set only on search results: "name" means the entry's
+	// own name matched the query, "path" means only its full path did
+	// (path matches are returned for directories only).
+	MatchType string `json:"matchType,omitempty"`
+
 	// internal fields, not serialized to JSON or disk
 	gen   uint64 // generation stamp used by incremental GC
 	lname string // lower-cased name, for search
@@ -43,6 +48,19 @@ type persistData struct {
 	Version int
 	Entries map[string]Entry
 	Dirs    map[string]stamp
+}
+
+// scanProgressInterval is how often a long-running scan logs its progress.
+const scanProgressInterval = 10 * time.Second
+
+// scanProgress accumulates scan counters for periodic progress logging.
+// A scan runs in a single goroutine, so no synchronization is needed.
+type scanProgress struct {
+	start   time.Time
+	lastLog time.Time
+	dirs    int
+	entries int
+	current string // real path of the directory currently being walked
 }
 
 // buildResult reports what a single index pass did.
@@ -72,14 +90,16 @@ type Indexer struct {
 	dirStamp map[string]stamp // virtual path -> directory signature
 	gen      uint64
 
-	cfg         *Config
-	persistPath string
-	interval    time.Duration
-	stopCh      chan struct{}
-	building    bool // true while index is being (re)built
-	lastBuild   time.Time
-	lastResult  buildResult
-	indexSaved  bool // true once the current index has been persisted at least once
+	cfg          *Config
+	persistPath  string
+	interval     time.Duration
+	fullInterval time.Duration // 0 = periodic full rebuild disabled
+	lastFull     time.Time     // when the last full (non-incremental) build ran
+	stopCh       chan struct{}
+	building     bool // true while index is being (re)built
+	lastBuild    time.Time
+	lastResult   buildResult
+	indexSaved   bool // true once the current index has been persisted at least once
 }
 
 // NewIndexer creates a new indexer, optionally loading a persisted index.
@@ -90,19 +110,34 @@ func NewIndexer(cfg *Config) *Indexer {
 		interval = 5 * time.Minute
 	}
 
+	fullInterval := time.Duration(0)
+	if cfg.Index.FullInterval != "" {
+		if d, perr := time.ParseDuration(cfg.Index.FullInterval); perr != nil {
+			logger.Warn("indexer: invalid fullInterval %q, periodic full rebuild disabled", cfg.Index.FullInterval)
+		} else if d > 0 {
+			fullInterval = d
+		}
+	}
+
 	idx := &Indexer{
-		cfg:         cfg,
-		persistPath: cfg.Index.Persist,
-		interval:    interval,
-		stopCh:      make(chan struct{}),
-		entries:     make(map[string]Entry),
-		dirStamp:    make(map[string]stamp),
+		cfg:          cfg,
+		persistPath:  cfg.Index.Persist,
+		interval:     interval,
+		fullInterval: fullInterval,
+		stopCh:       make(chan struct{}),
+		entries:      make(map[string]Entry),
+		dirStamp:     make(map[string]stamp),
 	}
 
 	// try loading persisted index for fast startup
 	if cfg.Index.Persist != "" {
 		if err := idx.load(); err != nil {
 			logger.Warn("indexer: load persisted index: %v (will re-build)", err)
+		} else if fi, serr := os.Stat(idx.persistPath); serr == nil {
+			// Approximate the last full rebuild with the persist file's
+			// mtime. Incremental saves may make it newer than the actual
+			// last full, which only delays the next full — never skips one.
+			idx.lastFull = fi.ModTime()
 		}
 	}
 
@@ -181,10 +216,11 @@ func (idx *Indexer) Excluded(name string, isDir bool) bool {
 }
 
 // BuildIndex refreshes the in-memory index using the incremental strategy
-// (or a full rebuild when index.incremental is false or the index is empty).
+// (or a full rebuild when index.incremental is false, the index is empty,
+// or forceFull is set).
 // Scanning runs under a read lock so searches are not blocked; only the final
 // merge takes the write lock briefly.
-func (idx *Indexer) BuildIndex() buildResult {
+func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 	start := time.Now()
 
 	idx.mu.Lock()
@@ -195,7 +231,7 @@ func (idx *Indexer) BuildIndex() buildResult {
 	idx.building = true
 	idx.gen++
 	gen := idx.gen
-	incremental := idx.cfg.IndexIncremental() && len(idx.entries) > 0
+	incremental := idx.cfg.IndexIncremental() && len(idx.entries) > 0 && !forceFull
 	idx.mu.Unlock()
 
 	defer func() {
@@ -205,6 +241,15 @@ func (idx *Indexer) BuildIndex() buildResult {
 	}()
 
 	// ---- scan phase (read lock: searches keep working) ----
+	switch {
+	case forceFull && idx.cfg.IndexIncremental():
+		logger.Info("indexer: starting forced full scan of %d root(s) (index.fullInterval %s reached)",
+			len(idx.cfg.Roots), idx.fullInterval)
+	case incremental:
+		logger.Info("indexer: starting incremental scan of %d root(s)", len(idx.cfg.Roots))
+	default:
+		logger.Info("indexer: starting full scan of %d root(s)", len(idx.cfg.Roots))
+	}
 	idx.mu.RLock()
 	updates, touched, retained, res, walkErrs := idx.scan(gen, incremental)
 	idx.mu.RUnlock()
@@ -251,6 +296,9 @@ func (idx *Indexer) BuildIndex() buildResult {
 		}
 	}
 	idx.lastBuild = time.Now()
+	if !incremental {
+		idx.lastFull = time.Now()
+	}
 	res.Duration = time.Since(start)
 	idx.lastResult = res
 	total := len(idx.entries)
@@ -286,6 +334,7 @@ func (idx *Indexer) scan(gen uint64, incremental bool) (map[string]Entry, map[st
 	retained := make(map[string]bool)
 	var res buildResult
 	var errs []error
+	progress := &scanProgress{start: time.Now(), lastLog: time.Now()}
 
 	for _, r := range idx.cfg.Roots {
 		info, err := os.Stat(r.Path)
@@ -299,14 +348,18 @@ func (idx *Indexer) scan(gen uint64, incremental bool) (map[string]Entry, map[st
 		}
 
 		st := stamp{Mod: info.ModTime(), Size: info.Size()}
-		if incremental && idx.dirStamp[r.URL].same(st) {
-			// whole root untouched — reuse everything under it
+		// The root itself may only be stamp-skipped when rescanDepth is 0:
+		// a deep change (e.g. a new subdirectory two levels down) does not
+		// update the root's mtime, so skipping the root unconditionally
+		// would hide the whole subtree from every incremental pass.
+		if incremental && idx.cfg.Index.RescanDepth <= 0 && idx.dirStamp[r.URL].same(st) {
 			retained[r.URL] = true
 			res.Skipped++
 			continue
 		}
 		touched[r.URL] = st
-		idx.walkRoot(r, r.URL, 0, gen, incremental, updates, touched, retained, &res, &errs)
+		logger.Info("indexer: scanning root %s -> %s", r.URL, r.Path)
+		idx.walkRoot(r, r.URL, 0, gen, incremental, updates, touched, retained, progress, &res, &errs)
 	}
 
 	return updates, touched, retained, res, errs
@@ -316,7 +369,7 @@ func (idx *Indexer) scan(gen uint64, incremental bool) (map[string]Entry, map[st
 // depth is the depth of dir itself (root = 0).
 func (idx *Indexer) walkRoot(r RootMapping, vdir string, depth int, gen uint64, incremental bool,
 	updates map[string]Entry, touched map[string]stamp, retained map[string]bool,
-	res *buildResult, errs *[]error) {
+	progress *scanProgress, res *buildResult, errs *[]error) {
 
 	realDir, ok := idx.MapVirtualToReal(vdir)
 	if !ok {
@@ -327,6 +380,16 @@ func (idx *Indexer) walkRoot(r RootMapping, vdir string, depth int, gen uint64, 
 	if err != nil {
 		*errs = append(*errs, fmt.Errorf("read dir %s: %w", realDir, err))
 		return
+	}
+
+	// periodic progress line so very large scans are not silent
+	progress.dirs++
+	progress.entries += len(items)
+	progress.current = realDir
+	if now := time.Now(); now.Sub(progress.lastLog) >= scanProgressInterval {
+		progress.lastLog = now
+		logger.Info("indexer: scan in progress: %d entries in %d dirs, at %s (elapsed %s)",
+			progress.entries, progress.dirs, progress.current, now.Sub(progress.start).Round(time.Second))
 	}
 
 	maxDepth := idx.cfg.Index.MaxDepth
@@ -354,18 +417,21 @@ func (idx *Indexer) walkRoot(r RootMapping, vdir string, depth int, gen uint64, 
 			}
 			updates[vpath] = newEntry(name, vpath, fi.Size(), fi.ModTime(), true)
 
-			if incremental && idx.dirStamp[vpath].same(st) {
-				// subtree unchanged: skip ReadDir/stat for everything below
-				retained[vpath] = true
-				res.Skipped++
-				continue
-			}
+				// Subtree skip applies only at depth >= RescanDepth: the top
+				// levels are always re-read so changes whose mtime impact
+				// does not reach the root are still detected.
+				if incremental && depth+1 >= idx.cfg.Index.RescanDepth && idx.dirStamp[vpath].same(st) {
+					// subtree unchanged: skip ReadDir/stat for everything below
+					retained[vpath] = true
+					res.Skipped++
+					continue
+				}
 			if maxDepth > 0 && depth+1 >= maxDepth {
 				// depth limit reached: keep the directory entry, do not descend
 				continue
 			}
 			touched[vpath] = st
-			idx.walkRoot(r, vpath, depth+1, gen, incremental, updates, touched, retained, res, errs)
+				idx.walkRoot(r, vpath, depth+1, gen, incremental, updates, touched, retained, progress, res, errs)
 			continue
 		}
 
@@ -427,7 +493,12 @@ func hasRetainedAncestor(vpath string, retained map[string]bool) bool {
 }
 
 // Search queries the index for entries matching the given substring.
-// Results are scored and sorted by relevance.
+// Results are scored and sorted by relevance (highest first, ties broken
+// by path): name match scores 100/80/60 (exact/prefix/contains); a
+// directory whose full path matches scores 40. Files whose name does not
+// match are never returned just because a parent directory matched —
+// otherwise one matching directory would flood the results with every
+// file below it. Each result carries MatchType ("name" or "path").
 func (idx *Indexer) Search(query string, limit int) []Entry {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -444,19 +515,21 @@ func (idx *Indexer) Search(query string, limit int) []Entry {
 
 	var results []scored
 	for _, e := range idx.entries {
+		var matchType string
 		var score int
 		switch {
 		case e.lname == query:
-			score = 100
+			matchType, score = "name", 100
 		case strings.HasPrefix(e.lname, query):
-			score = 80
+			matchType, score = "name", 80
 		case strings.Contains(e.lname, query):
-			score = 60
-		case strings.Contains(e.lpath, query):
-			score = 40
+			matchType, score = "name", 60
+		case e.IsDir && strings.Contains(e.lpath, query):
+			matchType, score = "path", 40
 		default:
 			continue
 		}
+		e.MatchType = matchType
 		results = append(results, scored{e, score})
 	}
 
@@ -523,10 +596,20 @@ func (idx *Indexer) ListDir(vpath string) ([]Entry, error) {
 	return entries, nil
 }
 
+// fullDue reports whether a forced full rebuild is overdue.
+func (idx *Indexer) fullDue() bool {
+	if idx.fullInterval <= 0 {
+		return false
+	}
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return time.Since(idx.lastFull) >= idx.fullInterval
+}
+
 // Start launches the background re-indexing goroutine.
 func (idx *Indexer) Start() {
 	go func() {
-		idx.BuildIndex()
+		idx.BuildIndex(idx.fullDue())
 
 		ticker := time.NewTicker(idx.interval)
 		defer ticker.Stop()
@@ -534,7 +617,7 @@ func (idx *Indexer) Start() {
 		for {
 			select {
 			case <-ticker.C:
-				idx.BuildIndex()
+				idx.BuildIndex(idx.fullDue())
 			case <-idx.stopCh:
 				return
 			}
