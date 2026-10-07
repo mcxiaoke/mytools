@@ -267,11 +267,19 @@ func summarize(items []Item) Summary {
 	return sum
 }
 
+// OpIDFor 给出指定时刻与进程号对应的操作号。
+//
+// 供调用方在**真正创建之前**预估落点（交互提示里要展示"会放到哪"，
+// 但确认之前不允许创建任何东西）。实际抢占时若撞名会追加序号。
+func OpIDFor(now time.Time, pid int) string {
+	return now.Format("20060102-150405") + fmt.Sprintf("-%d", pid)
+}
+
 // claimOpDir 抢占一个操作目录名：`YYYYMMDD-HHMMSS-<pid>`，撞名则追加序号。
 //
 // 用 os.Mkdir 而不是 MkdirAll：目录已存在时它必须报错，这样我们才能发现撞名。
 func claimOpDir(trashRoot string, opts Options) (opID, opDir string, err error) {
-	base := opts.now().Format("20060102-150405") + fmt.Sprintf("-%d", opts.pid())
+	base := OpIDFor(opts.now(), opts.pid())
 	for attempt := 0; attempt < 100; attempt++ {
 		id := base
 		if attempt > 0 {
