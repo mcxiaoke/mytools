@@ -1,0 +1,62 @@
+/*
+ * nodelete.rc -- 资源脚本：应用图标 + 版本信息
+ *
+ * 由 windres 编译成 .o 后与 nodelete.c 一起链接进 exe。
+ *
+ * 编码说明：windres 默认按系统 ANSI 代码页解析本文件，中文会变成乱码，
+ * 因此显式声明 code_page(65001) 即 UTF-8。若改动后出现乱码，
+ * 检查这一行是否还在。
+ */
+#pragma code_page(65001)
+
+#include <winres.h>
+
+/* ---- 应用图标 ------------------------------------------------------ */
+/* 必须是第一个图标资源，资源管理器/任务栏显示的就是它。
+   delete.ico 内含 16/32/48/64/128/256 六个尺寸，32 位带 alpha。 */
+1 ICON "delete.ico"
+
+/* ---- 版本信息 ------------------------------------------------------ */
+#define VER_MAJOR 1
+#define VER_MINOR 0
+#define VER_PATCH 0
+#define VER_BUILD 0
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION    VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
+    PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
+    FILEFLAGSMASK  0x3fL
+#ifdef _DEBUG
+    FILEFLAGS      0x1L
+#else
+    FILEFLAGS      0x0L
+#endif
+    FILEOS         0x40004L   /* VOS_NT_WINDOWS32 */
+    FILETYPE       0x1L      /* VFT_APP */
+    FILESUBTYPE    0x0L      /* VFT2_UNKNOWN */
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        /* 0804 = zh-CN, 04B0 = Unicode */
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "FileDescription", "NoDelete 目录删除保护"
+            VALUE "FileVersion",     "1.0.0.0"
+            VALUE "InternalName",    "nodelete"
+            /*
+             * OriginalFilename 只在资源脚本里写死一个名字，但本 .rc 同时被
+             * 图形版和（未来的）其他目标复用，名字对不上会造成困扰。
+             * 这里写产品族名 nodelete，具体 exe 名以文件系统为准。
+             */
+            VALUE "OriginalFilename","nodelete"
+            VALUE "ProductName",     "NoDelete"
+            VALUE "ProductVersion",  "1.0.0.0"
+            /* 标记为命令行工具，避免安装程序误判为 GUI 应用 */
+            VALUE "FileAttributes",  "0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
