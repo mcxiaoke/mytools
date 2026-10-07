@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/term"
+
+	"saferm/internal/i18n"
 )
 
 // Level 是确认级别（设计文档 §6.1）。
@@ -27,11 +30,11 @@ const (
 func (l Level) String() string {
 	switch l {
 	case LevelConfirm:
-		return "确认级"
+		return i18n.T(&goi18n.Message{ID: "LevelConfirmName", Other: "确认级"})
 	case LevelDanger:
-		return "危险级"
+		return i18n.T(&goi18n.Message{ID: "LevelDangerName", Other: "危险级"})
 	default:
-		return "无需确认"
+		return i18n.T(&goi18n.Message{ID: "LevelNoneName", Other: "无需确认"})
 	}
 }
 
@@ -121,7 +124,12 @@ func Decide(risks []Risk, cfg ConfirmConfig) Level {
 }
 
 // ErrNonInteractive 表示需要人工确认，但当前环境给不了人。
-var ErrNonInteractive = errors.New("需要人工确认，但当前不是交互式终端")
+//
+// 文案在渲染时才本地化（i18n.LocalizedError），因此实例可以在包级提前创建，
+// errors.Is 仍按同一实例判定。
+var ErrNonInteractive = i18n.LocalizedError(&goi18n.Message{
+	ID: "ErrNonInteractive", Other: "需要人工确认，但当前不是交互式终端",
+})
 
 // Approval 是命令行开关表达的"预先授权"。
 type Approval struct {
@@ -188,7 +196,8 @@ func (p *Prompter) Ask(req Request, ap Approval) (bool, error) {
 	}
 
 	if !p.Interactive() {
-		return false, fmt.Errorf("%w。%s", ErrNonInteractive, p.hint(req.Level))
+		return false, fmt.Errorf("%w%s", ErrNonInteractive,
+			i18n.T(&goi18n.Message{ID: "ErrNonInteractiveSuffix", Other: "。{{.Hint}}"}, i18n.Data{"Hint": p.hint(req.Level)}))
 	}
 
 	if err := p.printSummary(req); err != nil {
@@ -212,9 +221,9 @@ func (p *Prompter) Ask(req Request, ap Approval) (bool, error) {
 func (p *Prompter) hint(level Level) string {
 	switch level {
 	case LevelDanger:
-		return "如确认无误，请显式加 --yes-i-am-sure（危险级的唯一放行开关）"
+		return i18n.T(&goi18n.Message{ID: "HintDanger", Other: "如确认无误，请显式加 --yes-i-am-sure（危险级的唯一放行开关）"})
 	default:
-		return "如确认无误，请显式加 --yes 或 -f"
+		return i18n.T(&goi18n.Message{ID: "HintConfirm", Other: "如确认无误，请显式加 --yes 或 -f"})
 	}
 }
 
@@ -232,9 +241,11 @@ func confirmPhrase(req Request) string {
 
 func (p *Prompter) readLine(req Request) (string, error) {
 	if req.Level == LevelDanger {
-		fmt.Fprintf(p.Out, "危险级操作，请输入目标名称 %s 以确认（其它任意输入将取消）：", confirmPhrase(req))
+		fmt.Fprint(p.Out, i18n.T(&goi18n.Message{
+			ID: "PromptDanger", Other: "危险级操作，请输入目标名称 {{.Name}} 以确认（其它任意输入将取消）：",
+		}, i18n.Data{"Name": confirmPhrase(req)}))
 	} else {
-		fmt.Fprint(p.Out, "输入 yes 继续，其它任意输入取消：")
+		fmt.Fprint(p.Out, i18n.T(&goi18n.Message{ID: "PromptYes", Other: "输入 yes 继续，其它任意输入取消："}))
 	}
 
 	reader := bufio.NewReader(p.In)
@@ -248,49 +259,55 @@ func (p *Prompter) readLine(req Request) (string, error) {
 
 // printSummary 打印"将发生什么"。一次调用只汇总一次，不逐个目标打断。
 func (p *Prompter) printSummary(req Request) error {
-	if _, err := fmt.Fprintln(p.Out, "将移动到回收目录（原数据不会永久删除）："); err != nil {
+	if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{ID: "SummaryHeader", Other: "将移动到回收目录（原数据不会永久删除）："})); err != nil {
 		return err
 	}
 
 	const detailLimit = 5
 	for i, r := range req.Risks {
-		dest := "未知"
+		dest := i18n.T(&goi18n.Message{ID: "UnknownDest", Other: "未知"})
 		if i < len(req.Dest) && req.Dest[i] != "" {
 			dest = req.Dest[i]
 		}
-		if _, err := fmt.Fprintf(p.Out, "\n  目标  %s\n", r.Target); err != nil {
+		if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{ID: "SummaryTarget", Other: "\n  目标  {{.V}}"}, i18n.Data{"V": r.Target})); err != nil {
 			return err
 		}
-		kind := "文件"
+		kind := i18n.T(&goi18n.Message{ID: "KindFile", Other: "文件"})
 		if r.IsDir {
-			kind = "目录"
+			kind = i18n.T(&goi18n.Message{ID: "KindDir", Other: "目录"})
 		}
-		if _, err := fmt.Fprintf(p.Out, "  类型  %s\n", kind); err != nil {
+		if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{ID: "SummaryKind", Other: "  类型  {{.V}}"}, i18n.Data{"V": kind})); err != nil {
 			return err
 		}
 		if r.IsDir || r.Stats.Files > 1 {
-			desc := fmt.Sprintf("%s 个文件", HumanCount(r.Stats.Files))
+			desc := i18n.T(&goi18n.Message{ID: "SummaryFiles", Other: "{{.Count}} 个文件"},
+				i18n.Data{"Count": HumanCount(r.Stats.Files)}, r.Stats.Files)
 			if r.Stats.Dirs > 0 {
-				desc += fmt.Sprintf(" / %s 个子目录", HumanCount(r.Stats.Dirs))
+				desc += i18n.T(&goi18n.Message{ID: "SummaryDirs", Other: " / {{.Count}} 个子目录"},
+					i18n.Data{"Count": HumanCount(r.Stats.Dirs)}, r.Stats.Dirs)
 			}
 			desc += " / " + HumanBytes(r.Stats.Bytes, r.Stats.Truncated)
 			if r.Stats.Incomplete {
-				desc += "（统计不完整：有无法读取的内容，实际可能更多）"
+				desc += i18n.T(&goi18n.Message{ID: "IncompleteStats", Other: "（统计不完整：有无法读取的内容，实际可能更多）"})
 			}
-			if _, err := fmt.Fprintf(p.Out, "  内容  %s\n", desc); err != nil {
+			if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{ID: "SummaryContent", Other: "  内容  {{.V}}"}, i18n.Data{"V": desc})); err != nil {
 				return err
 			}
 		}
 		if r.Git.InRepo {
-			if _, err := fmt.Fprintf(p.Out, "  仓库  %s（目标在版本库工作区内，未提交的内容无法从远端找回）\n", r.Git.RepoRoot); err != nil {
+			if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{
+				ID: "SummaryRepo", Other: "  仓库  {{.Repo}}（目标在版本库工作区内，未提交的内容无法从远端找回）",
+			}, i18n.Data{"Repo": r.Git.RepoRoot})); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(p.Out, "  目的  %s\n", dest); err != nil {
+		if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{ID: "SummaryDest", Other: "  目的  {{.V}}"}, i18n.Data{"V": dest})); err != nil {
 			return err
 		}
 		if i+1 == detailLimit && len(req.Risks) > detailLimit {
-			if _, err := fmt.Fprintf(p.Out, "\n  …… 还有 %d 个目标（用 -n 可查看完整清单）\n", len(req.Risks)-detailLimit); err != nil {
+			if _, err := fmt.Fprintln(p.Out, i18n.T(&goi18n.Message{
+				ID: "SummaryMore", Other: "\n  …… 还有 {{.N}} 个目标（用 -n 可查看完整清单）",
+			}, i18n.Data{"N": len(req.Risks) - detailLimit}, len(req.Risks)-detailLimit)); err != nil {
 				return err
 			}
 			break

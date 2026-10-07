@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/spf13/pflag"
 
+	i18n "saferm/internal/i18n"
 	"saferm/internal/trash"
 	"saferm/internal/volume"
 )
@@ -15,8 +17,8 @@ func (a *app) runWhere(args []string) int {
 	fs := pflag.NewFlagSet("saferm where", pflag.ContinueOnError)
 	fs.SortFlags = false
 	fs.SetOutput(a.stderr)
-	showHelp := fs.BoolP("help", "h", false, "显示帮助")
-	fs.StringVar(&a.configPath, "config", "", "指定配置文件")
+	showHelp := fs.BoolP("help", "h", false, i18n.T(&goi18n.Message{ID: "FlagHelp", Other: "显示帮助"}))
+	fs.StringVar(&a.configPath, "config", "", i18n.T(&goi18n.Message{ID: "FlagConfig", Other: "指定配置文件"}))
 	// 与主命令保持同一套 rm 兼容面：--preserve-root / -r / -R 在这里也接受并忽略
 	addRMCompatFlags(fs)
 
@@ -24,7 +26,7 @@ func (a *app) runWhere(args []string) int {
 		// 修掉一个静默失败：pflag 在 ContinueOnError 下不自己打印错误，
 		// 之前这里直接 return，用户只看到退出码 1、一句话都没有。
 		a.reportFlagError(err, args)
-		fmt.Fprintln(a.stderr, "用法：saferm where [选项]（saferm where --help 查看选项）")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "UsageWhere", Other: "用法：saferm where [选项]（saferm where --help 查看选项）"}))
 		return exitUsage
 	}
 	if *showHelp {
@@ -42,7 +44,7 @@ func (a *app) runWhere(args []string) int {
 
 	probes, err := volume.ProbeVolumes(volumeConfig(cfg, version, ""))
 	if err != nil {
-		fmt.Fprintf(a.stderr, "saferm: 探测卷信息失败：%v\n", err)
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "ErrProbeVolumes", Other: "saferm: 探测卷信息失败：{{.Err}}"}, i18n.Data{"Err": err.Error()}))
 		return exitUsage
 	}
 
@@ -62,7 +64,8 @@ func (a *app) runWhere(args []string) int {
 		}
 		ops, bad, err := trash.Unfinished(p.TrashRoot)
 		if err != nil {
-			fmt.Fprintf(a.stderr, "saferm: 读取 %s 的清单失败：%v\n", p.TrashRoot, err)
+			fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "ErrReadManifest", Other: "saferm: 读取 {{.Root}} 的清单失败：{{.Err}}"},
+				i18n.Data{"Root": p.TrashRoot, "Err": err.Error()}))
 			continue
 		}
 		summary.BadManifests += bad
@@ -80,7 +83,7 @@ func (a *app) runWhere(args []string) int {
 	}
 
 	if err := summary.Render(a.stdout); err != nil {
-		fmt.Fprintf(a.stderr, "saferm: 输出失败：%v\n", err)
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "ErrRender", Other: "saferm: 输出失败：{{.Err}}"}, i18n.Data{"Err": err.Error()}))
 		return exitUsage
 	}
 
@@ -97,7 +100,7 @@ func (a *app) runWhere(args []string) int {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `saferm —— 移动而非删除的安全 rm
+	fmt.Fprint(w, i18n.T(&goi18n.Message{ID: "HelpMain", Other: `saferm —— 移动而非删除的安全 rm
 
 用法：
   saferm [选项] <路径>...     把路径移动到同卷的回收目录
@@ -130,11 +133,11 @@ func printUsage(w io.Writer) {
 
 手工恢复：把回收目录里对应操作目录的内容整体搬回该卷的根目录即可，
           目录结构已按原样保留。详见 docs/saferm-design.md。
-`)
+`}))
 }
 
 func printWhereHelp(w io.Writer) {
-	fmt.Fprint(w, `saferm where —— 查看生效配置与各卷的回收目录
+	fmt.Fprint(w, i18n.T(&goi18n.Message{ID: "HelpWhere", Other: `saferm where —— 查看生效配置与各卷的回收目录
 
 用法：
   saferm where [选项]
@@ -145,5 +148,5 @@ func printWhereHelp(w io.Writer) {
 
 只读操作：不创建目录、不写标记、不移动任何文件。
 某个卷不可用、或存在未正常收尾的操作时，返回退出码 1，便于脚本判断。
-`)
+`}))
 }

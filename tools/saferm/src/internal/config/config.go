@@ -21,13 +21,15 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/pelletier/go-toml/v2"
+
+	"saferm/internal/i18n"
 )
 
 // Config 是配置文件的结构，与设计文档 §7.2 一一对应。
@@ -99,7 +101,7 @@ func Parse(r io.Reader) (Config, error) {
 	// 键名写错必须报错：拼错一个键而工具"照常工作"，比直接失败危险得多
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return Default(), fmt.Errorf("解析配置文件失败：%s", explain(err))
+		return Default(), i18n.E(&goi18n.Message{ID: "CfgParseFailed", Other: "解析配置文件失败：{{.V}}"}, i18n.Data{"V": explain(err)})
 	}
 	return cfg, nil
 }
@@ -109,12 +111,12 @@ func explain(err error) string {
 	var strict *toml.StrictMissingError
 	if errors.As(err, &strict) {
 		// strict 模式的报错本身就是一段带行号的定位，直接透传
-		return "有无法识别的配置项（键名是不是拼错了？）：\n" + strict.String()
+		return i18n.T(&goi18n.Message{ID: "CfgUnknownKeys", Other: "有无法识别的配置项（键名是不是拼错了？）：\n"}) + strict.String()
 	}
 	var dec *toml.DecodeError
 	if errors.As(err, &dec) {
 		// 语法错误 / 类型不符：String() 自带行号与出错位置
-		return "语法或类型不符：\n" + dec.String()
+		return i18n.T(&goi18n.Message{ID: "CfgSyntax", Other: "语法或类型不符：\n"}) + dec.String()
 	}
 	return err.Error()
 }
@@ -167,24 +169,24 @@ func Load(explicitPath string) (cfg Config, used string, err error) {
 			if os.IsNotExist(statErr) {
 				return Default(), "", nil
 			}
-			return Default(), "", fmt.Errorf("检查配置文件 %q 失败：%w", path, statErr)
+			return Default(), "", i18n.E(&goi18n.Message{ID: "CfgStatFailed", Other: "检查配置文件 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": path, "Err": statErr.Error()})
 		}
 	} else if _, statErr := os.Stat(path); statErr != nil {
 		if os.IsNotExist(statErr) {
-			return Default(), "", fmt.Errorf("指定的配置文件不存在：%s", path)
+			return Default(), "", i18n.E(&goi18n.Message{ID: "CfgNotFound", Other: "指定的配置文件不存在：{{.V}}"}, i18n.Data{"V": path})
 		}
-		return Default(), "", fmt.Errorf("检查配置文件 %q 失败：%w", path, statErr)
+		return Default(), "", i18n.E(&goi18n.Message{ID: "CfgStatFailed", Other: "检查配置文件 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": path, "Err": statErr.Error()})
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return Default(), "", fmt.Errorf("打开配置文件 %q 失败：%w", path, err)
+		return Default(), "", i18n.E(&goi18n.Message{ID: "CfgOpenFailed", Other: "打开配置文件 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": path, "Err": err.Error()})
 	}
 	defer f.Close()
 
 	cfg, err = Parse(f)
 	if err != nil {
-		return Default(), "", fmt.Errorf("%s：%w", path, err)
+		return Default(), "", i18n.E(&goi18n.Message{ID: "CfgLoadFailed", Other: "{{.Path}}：{{.Err}}"}, i18n.Data{"Path": path, "Err": err.Error()})
 	}
 	return cfg, path, nil
 }

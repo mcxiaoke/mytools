@@ -5,8 +5,11 @@ import (
 	"sort"
 	"strings"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
 	"saferm/internal/config"
 	"saferm/internal/guard"
+	i18n "saferm/internal/i18n"
 	"saferm/internal/ui"
 	"saferm/internal/volume"
 )
@@ -93,12 +96,12 @@ func volumeConfig(cfg config.Config, version, trashRootFlag string) volume.Confi
 // 所以把生效值明确摆出来，比任何文档都直接。
 func effectiveConfigLines(cfg config.Config) []string {
 	lines := []string{
-		cfgLine("trash.default_root", "%s", orDefault(cfg.Trash.DefaultRoot, "(空)")),
+		cfgLine("trash.default_root", "%s", orDefault(cfg.Trash.DefaultRoot, i18n.T(&goi18n.Message{ID: "CfgEmpty", Other: "(空)"}))),
 	}
 	if len(cfg.Trash.Roots) == 0 {
-		lines = append(lines, cfgLine("trash.roots", "未配置（各卷统一用 <卷根>/.saferm-trash）"))
+		lines = append(lines, cfgLine("trash.roots", "%s", i18n.T(&goi18n.Message{ID: "CfgRootsUnset", Other: "未配置（各卷统一用 <卷根>/.saferm-trash）"})))
 	} else {
-		lines = append(lines, cfgLine("trash.roots", "按卷覆盖："))
+		lines = append(lines, cfgLine("trash.roots", "%s", i18n.T(&goi18n.Message{ID: "CfgRootsPerVolume", Other: "按卷覆盖："})))
 		keys := make([]string, 0, len(cfg.Trash.Roots))
 		for k := range cfg.Trash.Roots {
 			keys = append(keys, k)
@@ -110,18 +113,22 @@ func effectiveConfigLines(cfg config.Config) []string {
 	}
 
 	lines = append(lines,
-		cfgLine("confirm.file_threshold", "%s（超过即需确认；0 表示不按此项判断）",
-			ui.HumanCount(cfg.Confirm.FileThreshold)),
-		cfgLine("confirm.danger_file_threshold", "%s（超过即升为危险级）",
-			ui.HumanCount(cfg.Confirm.DangerFileThreshold)),
-		cfgLine("confirm.bytes_threshold", "%s / %d 字节",
-			ui.HumanBytes(cfg.Confirm.BytesThreshold, false), cfg.Confirm.BytesThreshold),
+		cfgLine("confirm.file_threshold", "%s",
+			i18n.T(&goi18n.Message{ID: "CfgFileThreshold", Other: "{{.V}}（超过即需确认；0 表示不按此项判断）"},
+				i18n.Data{"V": ui.HumanCount(cfg.Confirm.FileThreshold)})),
+		cfgLine("confirm.danger_file_threshold", "%s",
+			i18n.T(&goi18n.Message{ID: "CfgDangerThreshold", Other: "{{.V}}（超过即升为危险级）"},
+				i18n.Data{"V": ui.HumanCount(cfg.Confirm.DangerFileThreshold)})),
+		cfgLine("confirm.bytes_threshold", "%s",
+			i18n.T(&goi18n.Message{ID: "CfgBytesThreshold", Other: "{{.Human}} / {{.Raw}} 字节"},
+				i18n.Data{"Human": ui.HumanBytes(cfg.Confirm.BytesThreshold, false), "Raw": cfg.Confirm.BytesThreshold})),
 		cfgLine("confirm.always_confirm_dir", "%s", yesNo(cfg.Confirm.AlwaysConfirmDir)),
 		cfgLine("guard.protect_vcs_root", "%s", yesNo(cfg.Guard.ProtectVCSRoot)),
 		cfgLine("guard.git_detect", "%s", yesNo(cfg.Guard.GitDetect)),
 	)
 	if len(cfg.Guard.ExtraProtected) == 0 {
-		lines = append(lines, cfgLine("guard.extra_protected", "无（内置保护项始终生效，配置只能追加）"))
+		lines = append(lines, cfgLine("guard.extra_protected", "%s",
+			i18n.T(&goi18n.Message{ID: "CfgExtraProtectedNone", Other: "无（内置保护项始终生效，配置只能追加）"})))
 	} else {
 		lines = append(lines, cfgLine("guard.extra_protected", "%s",
 			strings.Join(cfg.Guard.ExtraProtected, " / ")))
@@ -146,7 +153,7 @@ func orDefault(s, fallback string) string {
 
 func yesNo(b bool) string {
 	if b {
-		return "是"
+		return i18n.T(&goi18n.Message{ID: "Yes", Other: "是"})
 	}
-	return "否"
+	return i18n.T(&goi18n.Message{ID: "No", Other: "否"})
 }

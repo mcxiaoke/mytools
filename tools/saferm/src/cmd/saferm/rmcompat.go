@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/spf13/pflag"
+
+	i18n "saferm/internal/i18n"
 )
 
 // 本文件集中处理"从 rm 迁移过来"这件事：哪些 rm 参数被接受并忽略、
@@ -39,10 +42,10 @@ func (ignoreFlagValue) Set(string) error { return nil }
 //     saferm 已有的行为——挂载点会被当作卷根拒绝，而且回收根必须与目标同卷。
 func addRMCompatFlags(fs *pflag.FlagSet) {
 	var ignoreRecurse, ignoreRecurseUpper bool
-	fs.BoolVarP(&ignoreRecurse, "recursive", "r", false, "接受但忽略（目录递归是默认行为）")
-	fs.BoolVarP(&ignoreRecurseUpper, "recursive-all", "R", false, "接受但忽略（同上）")
+	fs.BoolVarP(&ignoreRecurse, "recursive", "r", false, i18n.T(&goi18n.Message{ID: "FlagRecursive", Other: "接受但忽略（目录递归是默认行为）"}))
+	fs.BoolVarP(&ignoreRecurseUpper, "recursive-all", "R", false, i18n.T(&goi18n.Message{ID: "FlagRecursiveAll", Other: "接受但忽略（同上）"}))
 
-	fs.Var(ignoreFlagValue{}, "preserve-root", "接受但忽略（卷根保护恒为开启，无法关闭）")
+	fs.Var(ignoreFlagValue{}, "preserve-root", i18n.T(&goi18n.Message{ID: "FlagPreserveRoot", Other: "接受但忽略（卷根保护恒为开启，无法关闭）"}))
 	// 允许不带值：`--preserve-root` 等价于 `--preserve-root=true`
 	fs.Lookup("preserve-root").NoOptDefVal = "true"
 }
@@ -50,16 +53,19 @@ func addRMCompatFlags(fs *pflag.FlagSet) {
 // rmOnlyFlags 是"rm 有、saferm 故意没有"的参数 → 等价写法或拒绝理由。
 //
 // 键的写法：短选项用 "-d"，长选项用 "--dir"（不含取值部分）。
-var rmOnlyFlags = map[string]string{
-	"-d":    "saferm 没有 -d（rm 用它只删空目录）：直接给目录路径即可，目录默认走确认级，加 -y 可跳过",
-	"--dir": "saferm 没有 --dir：直接给目录路径即可，目录默认走确认级，加 -y 可跳过",
+// 用函数而不是包级变量：文案必须在 i18n.Init() 之后取，包级变量做不到。
+func rmOnlyFlags() map[string]string {
+	return map[string]string{
+		"-d":    i18n.T(&goi18n.Message{ID: "RmOnlyD", Other: "saferm 没有 -d（rm 用它只删空目录）：直接给目录路径即可，目录默认走确认级，加 -y 可跳过"}),
+		"--dir": i18n.T(&goi18n.Message{ID: "RmOnlyDir", Other: "saferm 没有 --dir：直接给目录路径即可，目录默认走确认级，加 -y 可跳过"}),
 
-	"-I":            "saferm 没有 -I：跳过确认级用 -y，强制确认用 -i",
-	"--interactive": "saferm 的确认开关是 -i（强制确认）与 -y（跳过确认级）",
+		"-I":            i18n.T(&goi18n.Message{ID: "RmOnlyI", Other: "saferm 没有 -I：跳过确认级用 -y，强制确认用 -i"}),
+		"--interactive": i18n.T(&goi18n.Message{ID: "RmOnlyInteractive", Other: "saferm 的确认开关是 -i（强制确认）与 -y（跳过确认级）"}),
 
-	"--one-file-system": "saferm 不需要 --one-file-system：回收目录必须与目标同卷，本工具不做跨文件系统的移动",
+		"--one-file-system": i18n.T(&goi18n.Message{ID: "RmOnlyOneFileSystem", Other: "saferm 不需要 --one-file-system：回收目录必须与目标同卷，本工具不做跨文件系统的移动"}),
 
-	"--no-preserve-root": "saferm 拒绝关闭卷根保护（这正是本工具存在的意义之一）；需要释放空间请手工处置回收目录",
+		"--no-preserve-root": i18n.T(&goi18n.Message{ID: "RmOnlyNoPreserveRoot", Other: "saferm 拒绝关闭卷根保护（这正是本工具存在的意义之一）；需要释放空间请手工处置回收目录"}),
+	}
 }
 
 // rmCompatHint 在参数解析失败后做一次尽力而为的扫描，
@@ -68,6 +74,7 @@ var rmOnlyFlags = map[string]string{
 // 只在解析已经失败时调用，所以这里不需要严格的"这是不是参数"判断——
 // 但 `--` 之后一律视为路径，不再扫描。
 func rmCompatHint(args []string) string {
+	flags := rmOnlyFlags()
 	for _, a := range args {
 		if a == "--" {
 			return ""
@@ -77,7 +84,7 @@ func rmCompatHint(args []string) string {
 			if i := strings.IndexByte(name, '='); i >= 0 {
 				name = name[:i]
 			}
-			if h, ok := rmOnlyFlags["--"+name]; ok {
+			if h, ok := flags["--"+name]; ok {
 				return h
 			}
 			continue
@@ -85,7 +92,7 @@ func rmCompatHint(args []string) string {
 		if strings.HasPrefix(a, "-") && len(a) > 1 {
 			// 短选项可能被合并（如 -rf），逐个字符查
 			for _, r := range a[1:] {
-				if h, ok := rmOnlyFlags["-"+string(r)]; ok {
+				if h, ok := flags["-"+string(r)]; ok {
 					return h
 				}
 			}

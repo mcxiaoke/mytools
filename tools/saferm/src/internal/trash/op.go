@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
+	"saferm/internal/i18n"
 	"saferm/internal/platform"
 )
 
@@ -81,7 +84,7 @@ type OpInfo struct {
 // 找不到原路径，事故变得不可解释（设计文档 §18 的结论）。
 func Begin(trashRoot, volumeRoot string, sources []Source, opts Options) (*Session, error) {
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("没有需要处理的目标")
+		return nil, i18n.E(&goi18n.Message{ID: "ErrNoSources", Other: "没有需要处理的目标"})
 	}
 
 	opID, opDir, err := claimOpDir(trashRoot, opts)
@@ -157,7 +160,7 @@ func (s *Session) Items() []Item {
 // 失败意味着目标原封不动留在原处。
 func (s *Session) Move(i int, stats Stats) error {
 	if i < 0 || i >= len(s.manifest.Items) {
-		return fmt.Errorf("条目索引越界：%d", i)
+		return i18n.E(&goi18n.Message{ID: "ErrItemIndex", Other: "条目索引越界：{{.V}}"}, i18n.Data{"V": i})
 	}
 	it := &s.manifest.Items[i]
 	if it.State == StateSkipped || it.State == StateFailed {
@@ -195,25 +198,25 @@ func (s *Session) rename(i int) error {
 	}
 
 	if it.Destination == "" {
-		return fmt.Errorf("条目 %q 没有镜像落点", it.Input)
+		return i18n.E(&goi18n.Message{ID: "ErrNoMirrorDest", Other: "条目 {{.V}} 没有镜像落点"}, i18n.Data{"V": it.Input})
 	}
 
 	// 目标已存在就拒绝，绝不覆盖 —— 覆盖会让"可恢复"变成"两败俱伤"。
 	if _, err := os.Lstat(it.Destination); err == nil {
-		return fmt.Errorf("回收目录里已存在 %q，拒绝覆盖", it.Destination)
+		return i18n.E(&goi18n.Message{ID: "ErrDestExists", Other: "回收目录里已存在 {{.V}}，拒绝覆盖"}, i18n.Data{"V": it.Destination})
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("检查落点 %q 失败：%w", it.Destination, err)
+		return i18n.E(&goi18n.Message{ID: "ErrCheckDest", Other: "检查落点 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": it.Destination, "Err": err.Error()})
 	}
 
 	if err := os.MkdirAll(filepath.Dir(it.Destination), 0o700); err != nil {
-		return fmt.Errorf("创建镜像目录 %q 失败：%w", filepath.Dir(it.Destination), err)
+		return i18n.E(&goi18n.Message{ID: "ErrMkdirMirror", Other: "创建镜像目录 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": filepath.Dir(it.Destination), "Err": err.Error()})
 	}
 
 	if err := os.Rename(it.Source, it.Destination); err != nil {
 		if isCrossDevice(err) {
-			return fmt.Errorf("目标与回收目录不在同一个卷，rename 失败（本工具不做「复制+删除」的降级）：%w", err)
+			return i18n.E(&goi18n.Message{ID: "ErrCrossVolume", Other: "目标与回收目录不在同一个卷，rename 失败（本工具不做「复制+删除」的降级）：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 		}
-		return fmt.Errorf("移动 %q 失败：%w", it.Source, err)
+		return i18n.E(&goi18n.Message{ID: "ErrMove", Other: "移动 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": it.Source, "Err": err.Error()})
 	}
 	return nil
 }
@@ -295,10 +298,10 @@ func claimOpDir(trashRoot string, opts Options) (opID, opDir string, err error) 
 			return id, dir, nil
 		}
 		if !os.IsExist(mkErr) {
-			return "", "", fmt.Errorf("创建操作目录 %q 失败：%w", dir, mkErr)
+			return "", "", i18n.E(&goi18n.Message{ID: "ErrCreateOpDir", Other: "创建操作目录 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": dir, "Err": mkErr.Error()})
 		}
 	}
-	return "", "", fmt.Errorf("在 %q 下无法分配操作目录名（连续撞名）", trashRoot)
+	return "", "", i18n.E(&goi18n.Message{ID: "ErrOpDirCollision", Other: "在 {{.V}} 下无法分配操作目录名（连续撞名）"}, i18n.Data{"V": trashRoot})
 }
 
 // MirrorPath 计算 src 在操作目录内的镜像位置。
@@ -321,9 +324,10 @@ func MirrorPath(opDir, volumeRoot, src string) (string, error) {
 	// 超长时报错而不是截断改名：截断会破坏目录结构，
 	// 而树结构正是"手工恢复不乱"的前提（设计文档 §4.4）。
 	if len(mirror) > maxPathLength {
-		return "", fmt.Errorf(
-			"镜像路径过长（%d 字符，上限 %d）：%s。请为本卷配置更浅的回收根",
-			len(mirror), maxPathLength, mirror)
+		return "", i18n.E(&goi18n.Message{
+			ID:    "ErrMirrorPathTooLong",
+			Other: "镜像路径过长（{{.Len}} 字符，上限 {{.Max}}）：{{.Path}}。请为本卷配置更浅的回收根",
+		}, i18n.Data{"Len": len(mirror), "Max": maxPathLength, "Path": mirror})
 	}
 	return mirror, nil
 }
@@ -337,17 +341,17 @@ func relativeToVolume(volumeRoot, p string) (string, error) {
 	pp := filepath.Clean(p)
 
 	if len(pp) <= len(vr) || !hasVolumePrefix(pp, vr) {
-		return "", fmt.Errorf("路径 %q 不在卷 %q 之内", p, volumeRoot)
+		return "", i18n.E(&goi18n.Message{ID: "ErrNotInVolume", Other: "路径 {{.Path}} 不在卷 {{.Volume}} 之内"}, i18n.Data{"Path": p, "Volume": volumeRoot})
 	}
 
 	rel := strings.TrimLeft(pp[len(vr):], "/\\")
 	if rel == "" {
-		return "", fmt.Errorf("路径 %q 就是卷根 %q，不能作为删除目标", p, volumeRoot)
+		return "", i18n.E(&goi18n.Message{ID: "ErrIsVolumeRoot", Other: "路径 {{.Path}} 就是卷根 {{.Volume}}，不能作为删除目标"}, i18n.Data{"Path": p, "Volume": volumeRoot})
 	}
 	// Clean 已经消掉了 . 与 ..，这里再挡一次，避免镜像出带上级引用的路径
 	for _, part := range strings.FieldsFunc(rel, func(r rune) bool { return r == '\\' || r == '/' }) {
 		if part == ".." {
-			return "", fmt.Errorf("路径 %q 相对卷根含有上级引用，拒绝", p)
+			return "", i18n.E(&goi18n.Message{ID: "ErrParentRef", Other: "路径 {{.Path}} 相对卷根含有上级引用，拒绝"}, i18n.Data{"Path": p})
 		}
 	}
 	return rel, nil
@@ -388,7 +392,7 @@ func newItem(opDir, volumeRoot string, src Source) (Item, error) {
 func kindOf(p string) (string, error) {
 	info, err := os.Lstat(p)
 	if err != nil {
-		return "", fmt.Errorf("lstat %q 失败：%w", p, err)
+		return "", i18n.E(&goi18n.Message{ID: "ErrLstat", Other: "lstat {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": p, "Err": err.Error()})
 	}
 	if info.IsDir() {
 		return "dir", nil

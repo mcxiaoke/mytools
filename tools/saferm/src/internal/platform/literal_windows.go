@@ -3,9 +3,12 @@
 package platform
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
+
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
+	"saferm/internal/i18n"
 )
 
 // winReservedDevices 是 Win32 的保留设备名（不区分大小写）。
@@ -33,9 +36,10 @@ func checkLiteralPath(p string) error {
 	}
 	base = strings.TrimRight(base, " ")
 	if winReservedDevices[base] {
-		return fmt.Errorf(
-			"%q 是 Windows 保留设备名（con/prn/aux/nul/com1-9/lpt1-9），任何 API 都无法按字面访问它；本工具拒绝处理该路径，原数据未改动",
-			base)
+		return i18n.E(&goi18n.Message{
+			ID:    "ErrReservedDevice",
+			Other: "{{.V}} 是 Windows 保留设备名（con/prn/aux/nul/com1-9/lpt1-9），任何 API 都无法按字面访问它；本工具拒绝处理该路径，原数据未改动",
+		}, i18n.Data{"V": base})
 	}
 	return nil
 }

@@ -2,10 +2,13 @@ package trash
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
+	"saferm/internal/i18n"
 )
 
 // 条目状态机（设计文档 §9）：pending → in-progress → done / skipped / failed。
@@ -83,21 +86,21 @@ func ManifestPath(trashRoot, opID string) string {
 // Save 原子地写入清单：先写临时文件再 rename，避免留下半截 JSON。
 func (m *Manifest) Save() error {
 	if m.TrashRoot == "" || m.OpID == "" {
-		return fmt.Errorf("清单缺少回收根或操作号，拒绝写入")
+		return i18n.E(&goi18n.Message{ID: "ErrManifestMissingKeys", Other: "清单缺少回收根或操作号，拒绝写入"})
 	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化清单失败：%w", err)
+		return i18n.E(&goi18n.Message{ID: "ErrMarshalManifest", Other: "序列化清单失败：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 	}
 	data = append(data, '\n')
 
 	path := ManifestPath(m.TrashRoot, m.OpID)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("写入清单临时文件失败：%w", err)
+		return i18n.E(&goi18n.Message{ID: "ErrWriteManifestTmp", Other: "写入清单临时文件失败：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("提交清单失败：%w", err)
+		return i18n.E(&goi18n.Message{ID: "ErrCommitManifest", Other: "提交清单失败：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 	}
 	return nil
 }
@@ -110,7 +113,7 @@ func LoadManifest(path string) (*Manifest, error) {
 	}
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("解析清单 %q 失败：%w", path, err)
+		return nil, i18n.E(&goi18n.Message{ID: "ErrParseManifest", Other: "解析清单 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": path, "Err": err.Error()})
 	}
 	return &m, nil
 }

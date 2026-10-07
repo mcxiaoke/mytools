@@ -112,6 +112,21 @@ D:\.saferm-trash\
 
 ---
 
+## 多语言
+
+saferm 支持中英双语，语言文件**内嵌在二进制里**，不依赖任何外部资源文件：
+
+- **中文系统**（Windows 显示语言 / Unix 的 `LANG` 等环境变量）默认输出中文；
+- 其它语言环境默认输出英文；
+- 环境变量 `SAFERM_LANG` 可强制指定：`SAFERM_LANG=en saferm ...` 或 `SAFERM_LANG=zh-CN saferm ...`
+  （也接受 `zh` / `en-US` 等写法，设为 `auto` 表示按系统自动检测）。
+
+消息抽取与翻译基于 [go-i18n](https://github.com/nicksnyder/go-i18n)：
+调用点写中文原文（源语言），`goi18n extract` 生成 `internal/i18n/locales/active.zh-CN.toml`，
+英文翻译维护在同目录的 `en.toml`，新增文案后跑一次 extract、补一条英文翻译即可。
+
+---
+
 ## 从 rm 迁移
 
 > 完整实测见 [`docs/COMPAT-rm-vs-saferm-20261007.md`](docs/COMPAT-rm-vs-saferm-20261007.md)：

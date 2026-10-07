@@ -44,6 +44,10 @@ else
     exit 1
 fi
 
+# 本脚本的断言基于中文文案。saferm 会按系统语言自动选择输出语言，
+# 在非中文环境下用 SAFERM_LANG 强制固定，保证断言在任何机器上都成立。
+export SAFERM_LANG=zh-CN
+
 # --- 夹具 ---
 STAMP="$(date +%Y%m%d-%H%M%S)"
 FIXTURE="$TMP_NATIVE/saferm-e2e-sh-$STAMP"          # 不在仓库里

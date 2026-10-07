@@ -54,6 +54,10 @@ if (-not (Test-Path $exe)) {
 }
 if (-not (Test-Path $exe)) { Write-Error "构建后仍找不到 $exe"; exit 1 }
 
+# 本脚本的断言基于中文文案。saferm 会按系统语言自动选择输出语言，
+# 在非中文环境下用 SAFERM_LANG 强制固定，保证断言在任何机器上都成立。
+$env:SAFERM_LANG = "zh-CN"
+
 # --- 夹具 ---
 $stamp     = Get-Date -Format "yyyyMMdd-HHmmss"
 $tempBase  = [System.IO.Path]::GetTempPath().TrimEnd('\', '/')

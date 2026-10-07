@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/spf13/pflag"
 
 	"saferm/internal/config"
 	"saferm/internal/guard"
+	i18n "saferm/internal/i18n"
 	"saferm/internal/platform"
 	"saferm/internal/trash"
 	"saferm/internal/ui"
@@ -112,22 +114,22 @@ func (a *app) newRemoveFlagSet() (*pflag.FlagSet, *removeFlags) {
 	fs.SortFlags = false
 	fs.SetOutput(a.stderr)
 
-	fs.BoolVarP(&f.dryRun, "dry-run", "n", false, "只显示将要移动到何处，不落盘")
-	fs.BoolVarP(&f.yes, "yes", "y", false, "跳过确认级提示")
-	fs.BoolVarP(&f.force, "force", "f", false, "路径不存在不报错；并跳过确认级提示")
-	fs.BoolVarP(&f.interactive, "interactive", "i", false, "强制确认（覆盖 -y / -f）")
-	fs.BoolVar(&f.yesIAmSure, "yes-i-am-sure", false, "跳过危险级确认（唯一开关，名字故意写长）")
-	fs.BoolVar(&f.allowDangerous, "allow-dangerous", false, "绕过危险路径护栏")
-	fs.BoolVarP(&f.verbose, "verbose", "v", false, "打印每个目标的详细处理过程")
-	fs.BoolVar(&f.literal, "literal", false, "强制把参数当作字面路径，不展开通配符")
-	fs.StringVar(&f.trashRoot, "trash-root", "", "覆盖回收目录（单次生效）")
-	fs.StringVar(&a.configPath, "config", "", "指定配置文件")
+	fs.BoolVarP(&f.dryRun, "dry-run", "n", false, i18n.T(&goi18n.Message{ID: "FlagDryRun", Other: "只显示将要移动到何处，不落盘"}))
+	fs.BoolVarP(&f.yes, "yes", "y", false, i18n.T(&goi18n.Message{ID: "FlagYes", Other: "跳过确认级提示"}))
+	fs.BoolVarP(&f.force, "force", "f", false, i18n.T(&goi18n.Message{ID: "FlagForce", Other: "路径不存在不报错；并跳过确认级提示"}))
+	fs.BoolVarP(&f.interactive, "interactive", "i", false, i18n.T(&goi18n.Message{ID: "FlagInteractive", Other: "强制确认（覆盖 -y / -f）"}))
+	fs.BoolVar(&f.yesIAmSure, "yes-i-am-sure", false, i18n.T(&goi18n.Message{ID: "FlagYesIAmSure", Other: "跳过危险级确认（唯一开关，名字故意写长）"}))
+	fs.BoolVar(&f.allowDangerous, "allow-dangerous", false, i18n.T(&goi18n.Message{ID: "FlagAllowDangerous", Other: "绕过危险路径护栏"}))
+	fs.BoolVarP(&f.verbose, "verbose", "v", false, i18n.T(&goi18n.Message{ID: "FlagVerbose", Other: "打印每个目标的详细处理过程"}))
+	fs.BoolVar(&f.literal, "literal", false, i18n.T(&goi18n.Message{ID: "FlagLiteral", Other: "强制把参数当作字面路径，不展开通配符"}))
+	fs.StringVar(&f.trashRoot, "trash-root", "", i18n.T(&goi18n.Message{ID: "FlagTrashRoot", Other: "覆盖回收目录（单次生效）"}))
+	fs.StringVar(&a.configPath, "config", "", i18n.T(&goi18n.Message{ID: "FlagConfig", Other: "指定配置文件"}))
 
 	// rm 兼容参数（-r/-R 与 --preserve-root）集中在 rmcompat.go 里注册
 	addRMCompatFlags(fs)
 
-	fs.BoolVarP(&f.help, "help", "h", false, "显示帮助")
-	fs.BoolVarP(&f.showVersion, "version", "V", false, "显示版本")
+	fs.BoolVarP(&f.help, "help", "h", false, i18n.T(&goi18n.Message{ID: "FlagHelp", Other: "显示帮助"}))
+	fs.BoolVarP(&f.showVersion, "version", "V", false, i18n.T(&goi18n.Message{ID: "FlagVersion", Other: "显示版本"}))
 
 	fs.Usage = func() { printUsage(a.stdout) }
 	return fs, f
@@ -138,7 +140,7 @@ func (a *app) runRemove(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		// 把"哪个参数不对"讲清楚，再给用法；已知的 rm 参数补等价写法
 		a.reportFlagError(err, args)
-		fmt.Fprintln(a.stderr, "用法：saferm [选项] <路径>...（saferm --help 查看全部选项）")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "UsageRemove", Other: "用法：saferm [选项] <路径>...（saferm --help 查看全部选项）"}))
 		return exitUsage
 	}
 	if f.help {
@@ -152,7 +154,7 @@ func (a *app) runRemove(args []string) int {
 
 	operands := fs.Args()
 	if len(operands) == 0 {
-		fmt.Fprintln(a.stderr, "saferm: 没有给出任何路径")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "ErrNoOperands", Other: "saferm: 没有给出任何路径"}))
 		printUsage(a.stderr)
 		return exitUsage
 	}
@@ -166,7 +168,7 @@ func (a *app) runRemove(args []string) int {
 		return exitUsage
 	}
 	if f.verbose && cfgPath != "" {
-		fmt.Fprintf(a.stdout, "配置文件 %s\n", cfgPath)
+		fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "ConfigLoaded", Other: "配置文件 {{.V}}"}, i18n.Data{"V": cfgPath}))
 	}
 
 	// 字面优先的通配符展开：展开结果会被当作**新的目标**重新走一遍全部护栏
@@ -191,8 +193,10 @@ func (a *app) runRemove(args []string) int {
 
 	// 两个长开关同时出现：护栏与危险级确认都被关掉了，必须显式警告
 	if f.allowDangerous && f.yesIAmSure {
-		fmt.Fprintln(a.stderr, "警告：--allow-dangerous 与 --yes-i-am-sure 同时生效，")
-		fmt.Fprintln(a.stderr, "      危险路径护栏与危险级确认均已关闭，本次操作可能不可逆。")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{
+			ID:    "WarnDoubleBypass",
+			Other: "警告：--allow-dangerous 与 --yes-i-am-sure 同时生效，\n      危险路径护栏与危险级确认均已关闭，本次操作可能不可逆。",
+		}))
 	}
 
 	// 解析落点（§7.4 的全部校验在这里完成）
@@ -211,7 +215,7 @@ func (a *app) runRemove(args []string) int {
 	}
 	if len(placements) == 0 {
 		// 目标全部被 -f 跳过：什么都不做，且明确说清原数据未动
-		fmt.Fprintln(a.stderr, "saferm: 没有任何可移动的目标（原数据未改动）")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "ErrNoMovableTargets", Other: "saferm: 没有任何可移动的目标（原数据未改动）"}))
 		return exitOK
 	}
 
@@ -244,7 +248,7 @@ func (a *app) runRemove(args []string) int {
 		return exitUsage
 	}
 	if !approved {
-		fmt.Fprintln(a.stderr, "saferm: 已取消，原数据未改动。")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "MsgCancelled", Other: "saferm: 已取消，原数据未改动。"}))
 		return exitCancelled
 	}
 
@@ -394,7 +398,7 @@ func (a *app) execute(groups []group, verbose bool) int {
 			return a.setupFailed(totalDone, totalSkipped, totalFailed, failures, opLines)
 		}
 		for _, w := range warnings {
-			fmt.Fprintf(a.stderr, "saferm: 提示：%s\n", w)
+			fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "MoveHint", Other: "saferm: 提示：{{.W}}"}, i18n.Data{"W": w}))
 		}
 
 		sources := make([]trash.Source, 0, len(g.items))
@@ -424,11 +428,13 @@ func (a *app) execute(groups []group, verbose bool) int {
 			it := g.items[idx]
 			stats := trash.Stats{Files: it.stats.Files + it.stats.Dirs, Bytes: it.stats.Bytes}
 			if err := sess.Move(idx, stats); err != nil {
-				failures = append(failures, fmt.Sprintf("%s：%v", it.input, err))
+				failures = append(failures, i18n.T(&goi18n.Message{ID: "FailureItem", Other: "{{.Input}}：{{.Err}}"},
+					i18n.Data{"Input": it.input, "Err": err.Error()}))
 				continue
 			}
 			if verbose {
-				fmt.Fprintf(a.stdout, "已移动 %s\n     → %s\n", it.target, items[idx].Destination)
+				fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "MovedTo", Other: "已移动 {{.Target}}\n     → {{.Dest}}"},
+					i18n.Data{"Target": it.target, "Dest": items[idx].Destination}))
 			}
 		}
 
@@ -439,9 +445,9 @@ func (a *app) execute(groups []group, verbose bool) int {
 
 		info := sess.Info()
 		opLines = append(opLines,
-			fmt.Sprintf("  操作号    %s", info.ID),
-			fmt.Sprintf("  回收目录  %s", g.trashRoot),
-			fmt.Sprintf("  清单      %s", info.Manifest))
+			i18n.T(&goi18n.Message{ID: "OpLineID", Other: "  操作号    {{.V}}"}, i18n.Data{"V": info.ID}),
+			i18n.T(&goi18n.Message{ID: "OpLineTrashRoot", Other: "  回收目录  {{.V}}"}, i18n.Data{"V": g.trashRoot}),
+			i18n.T(&goi18n.Message{ID: "OpLineManifest", Other: "  清单      {{.V}}"}, i18n.Data{"V": info.Manifest}))
 	}
 
 	a.printResult(totalDone, totalSkipped, totalFailed, failures, opLines)
@@ -466,61 +472,73 @@ func (a *app) setupFailed(done, skipped, failed int, failures, opLines []string)
 
 func (a *app) printWarnings(warnings []string) {
 	for _, w := range warnings {
-		fmt.Fprintf(a.stderr, "saferm: 警告：%s\n", w)
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "GuardWarning", Other: "saferm: 警告：{{.W}}"}, i18n.Data{"W": w}))
 	}
 }
 
 func (a *app) printSkipped(skipped []guard.Skip, verbose bool) {
 	for _, s := range skipped {
 		if verbose {
-			fmt.Fprintf(a.stdout, "跳过（%s）：%s\n", s.Reason, s.Input)
+			fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "SkippedEntry", Other: "跳过（{{.Reason}}）：{{.Input}}"},
+				i18n.Data{"Reason": s.Reason, "Input": s.Input}))
 		}
 	}
 }
 
 func (a *app) printPreview(groups []group, level ui.Level) {
-	fmt.Fprintln(a.stdout, "dry-run：不会创建任何目录、不会移动任何文件")
-	fmt.Fprintf(a.stdout, "确认级别：%s\n", level)
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "DryRunHeader", Other: "dry-run：不会创建任何目录、不会移动任何文件"}))
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "ConfirmLevel", Other: "确认级别：{{.V}}"}, i18n.Data{"V": level.String()}))
 	opID := a.predictedOpID()
 	for _, g := range groups {
 		for _, it := range g.items {
 			if it.skipReason != "" {
-				fmt.Fprintf(a.stdout, "\n  跳过    %s（%s）\n", it.target, it.skipReason)
+				fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewSkip", Other: "\n  跳过    {{.Target}}（{{.Reason}}）"},
+					i18n.Data{"Target": it.target, "Reason": it.skipReason}))
 				continue
 			}
-			fmt.Fprintf(a.stdout, "\n  目标    %s\n", it.target)
-			kind := "文件"
+			fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewTarget", Other: "\n  目标    {{.Target}}"},
+				i18n.Data{"Target": it.target}))
+			kind := i18n.T(&goi18n.Message{ID: "KindFile", Other: "文件"})
 			if it.isDir {
-				kind = "目录"
+				kind = i18n.T(&goi18n.Message{ID: "KindDir", Other: "目录"})
 			}
-			fmt.Fprintf(a.stdout, "  类型    %s\n", kind)
+			fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewKind", Other: "  类型    {{.V}}"}, i18n.Data{"V": kind}))
 			if it.stats.Files+it.stats.Dirs > 0 {
-				fmt.Fprintf(a.stdout, "  内容    %s 个条目 / %s\n",
-					ui.HumanCount(it.stats.Files+it.stats.Dirs),
-					ui.HumanBytes(it.stats.Bytes, it.stats.Truncated))
+				fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewContent", Other: "  内容    {{.Count}} 个条目 / {{.Size}}"},
+					i18n.Data{
+						"Count": ui.HumanCount(it.stats.Files + it.stats.Dirs),
+						"Size":  ui.HumanBytes(it.stats.Bytes, it.stats.Truncated),
+					}, it.stats.Files+it.stats.Dirs))
 			}
-			fmt.Fprintf(a.stdout, "  目的    %s\n", previewDest(g, opID, it.target))
+			fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewDest", Other: "  目的    {{.V}}"},
+				i18n.Data{"V": previewDest(g, opID, it.target)}))
 			if it.git.InRepo {
-				fmt.Fprintf(a.stdout, "  仓库    %s（在版本库工作区内）\n", it.git.RepoRoot)
+				fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "PreviewInRepo", Other: "  仓库    {{.Repo}}（在版本库工作区内）"},
+					i18n.Data{"Repo": it.git.RepoRoot}))
 			}
 		}
 	}
-	fmt.Fprintln(a.stdout, "\n原数据未被改动。去掉 -n 即为真正执行。")
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "DryRunFooter", Other: "\n原数据未被改动。去掉 -n 即为真正执行。"}))
 }
 
 func (a *app) printResult(done, skipped, failed int, failures []string, opLines []string) {
-	fmt.Fprintf(a.stdout, "\n已处理：成功 %d / 跳过 %d / 失败 %d\n", done, skipped, failed)
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "ResultSummary", Other: "\n已处理：成功 {{.Done}} / 跳过 {{.Skipped}} / 失败 {{.Failed}}"},
+		i18n.Data{
+			"Done":    ui.HumanCount(int64(done)),
+			"Skipped": ui.HumanCount(int64(skipped)),
+			"Failed":  ui.HumanCount(int64(failed)),
+		}))
 	for _, line := range opLines {
 		fmt.Fprintln(a.stdout, line)
 	}
 	if len(failures) > 0 {
-		fmt.Fprintln(a.stderr, "\n以下目标未能移动（原数据仍在原处，未被删除）：")
+		fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "FailuresHeader", Other: "\n以下目标未能移动（原数据仍在原处，未被删除）："}))
 		for _, f := range failures {
-			fmt.Fprintf(a.stderr, "  - %s\n", f)
+			fmt.Fprintln(a.stderr, i18n.T(&goi18n.Message{ID: "FailuresItem", Other: "  - {{.V}}"}, i18n.Data{"V": f}))
 		}
 	}
-	fmt.Fprintln(a.stdout, "\n原数据没有被永久删除：目标只是被移动到了回收目录。")
-	fmt.Fprintln(a.stdout, "手工恢复：把对应操作目录里的内容整体搬回该卷的根目录即可（目录结构已原样保留）。")
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "ResultNoPermanentDelete", Other: "\n原数据没有被永久删除：目标只是被移动到了回收目录。"}))
+	fmt.Fprintln(a.stdout, i18n.T(&goi18n.Message{ID: "ResultManualRestore", Other: "手工恢复：把对应操作目录里的内容整体搬回该卷的根目录即可（目录结构已原样保留）。"}))
 }
 
 // expandOperands 做"字面路径优先"的通配符展开。
@@ -548,11 +566,14 @@ func expandOperands(operands []string, literal bool) ([]string, error) {
 		}
 		matches, err := filepath.Glob(op)
 		if err != nil {
-			return nil, fmt.Errorf("通配符 %q 无效：%w", op, err)
+			return nil, i18n.E(&goi18n.Message{ID: "ErrInvalidGlob", Other: "通配符 {{.Pattern}} 无效：{{.Err}}"},
+				i18n.Data{"Pattern": op, "Err": err.Error()})
 		}
 		if len(matches) == 0 {
-			return nil, fmt.Errorf(
-				"通配符 %q 没有匹配到任何路径。展开为空时本工具拒绝继续（避免把空模式当成当前目录）", op)
+			return nil, i18n.E(&goi18n.Message{
+				ID:    "ErrGlobNoMatch",
+				Other: "通配符 {{.Pattern}} 没有匹配到任何路径。展开为空时本工具拒绝继续（避免把空模式当成当前目录）",
+			}, i18n.Data{"Pattern": op})
 		}
 		sort.Strings(matches)
 		out = append(out, matches...)

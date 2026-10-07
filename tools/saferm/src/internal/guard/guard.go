@@ -15,8 +15,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
+	"saferm/internal/i18n"
 	"saferm/internal/platform"
 )
 
@@ -69,7 +73,7 @@ type Violation struct {
 
 func (v Violation) Error() string { return v.Message() }
 
-// Message 生成面向用户的拒绝说明（中文，见设计文档 §8.4）。
+// Message 生成面向用户的拒绝说明（源语言为中文，英文翻译见 internal/i18n/locales）。
 func (v Violation) Message() string {
 	where := v.Path
 	if where == "" {
@@ -77,43 +81,43 @@ func (v Violation) Message() string {
 	}
 	suffix := ""
 	if v.Detail != "" {
-		suffix = "（" + v.Detail + "）"
+		suffix = i18n.T(&goi18n.Message{ID: "DetailSuffix", Other: "（{{.V}}）"}, i18n.Data{"V": v.Detail})
 	}
 	switch v.Reason {
 	case ReasonEmptyOperand:
-		return "参数是空字符串或纯空白。若要删除名为 $null 的文件，PowerShell 里请写 saferm '$null'（用单引号）"
+		return i18n.T(&goi18n.Message{ID: "ViolationEmptyOperand", Other: "参数是空字符串或纯空白。若要删除名为 $null 的文件，PowerShell 里请写 saferm '$null'（用单引号）"})
 	case ReasonNoOperands:
-		return "没有给出任何路径"
+		return i18n.T(&goi18n.Message{ID: "ViolationNoOperands", Other: "没有给出任何路径"})
 	case ReasonNotExist:
-		return fmt.Sprintf("路径不存在：%s。本工具不做路径猜测，需要忽略不存在的路径请显式加 -f", where)
+		return i18n.T(&goi18n.Message{ID: "ViolationNotExist", Other: "路径不存在：{{.Where}}。本工具不做路径猜测，需要忽略不存在的路径请显式加 -f"}, i18n.Data{"Where": where})
 	case ReasonUnreadable:
-		return fmt.Sprintf("无法读取 %s：%s", where, v.Detail)
+		return i18n.T(&goi18n.Message{ID: "ViolationUnreadable", Other: "无法读取 {{.Where}}：{{.Err}}"}, i18n.Data{"Where": where, "Err": v.Detail})
 	case ReasonUnresolvedPath:
-		return fmt.Sprintf("无法可靠地规范化 %s，为避免绕过护栏，拒绝执行：%s", where, v.Detail)
+		return i18n.T(&goi18n.Message{ID: "ViolationUnresolvedPath", Other: "无法可靠地规范化 {{.Where}}，为避免绕过护栏，拒绝执行：{{.Err}}"}, i18n.Data{"Where": where, "Err": v.Detail})
 	case ReasonDuplicateOperand:
-		return fmt.Sprintf("同一批参数里有重复项：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationDuplicateOperand", Other: "同一批参数里有重复项：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonNestedOperand:
-		return fmt.Sprintf("同一批参数里存在上下级关系：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationNestedOperand", Other: "同一批参数里存在上下级关系：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonIsCwd:
-		return fmt.Sprintf("拒绝：目标是当前工作目录：%s", where)
+		return i18n.T(&goi18n.Message{ID: "ViolationIsCwd", Other: "拒绝：目标是当前工作目录：{{.Where}}"}, i18n.Data{"Where": where})
 	case ReasonAncestorOfCwd:
-		return fmt.Sprintf("拒绝：目标是当前工作目录的上级：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationAncestorOfCwd", Other: "拒绝：目标是当前工作目录的上级：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonVolumeRoot:
-		return fmt.Sprintf("拒绝：目标是卷根：%s", where)
+		return i18n.T(&goi18n.Message{ID: "ViolationVolumeRoot", Other: "拒绝：目标是卷根：{{.Where}}"}, i18n.Data{"Where": where})
 	case ReasonProtectedPath:
-		return fmt.Sprintf("拒绝：目标是受保护的系统或用户关键路径：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationProtectedPath", Other: "拒绝：目标是受保护的系统或用户关键路径：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonVCSRoot:
-		return fmt.Sprintf("拒绝：目标是版本库根目录：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationVCSRoot", Other: "拒绝：目标是版本库根目录：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonInsideTrash:
-		return fmt.Sprintf("拒绝：目标位于回收目录内：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationInsideTrash", Other: "拒绝：目标位于回收目录内：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonAncestorOfTrash:
-		return fmt.Sprintf("拒绝：目标包含回收目录，移动会把回收目录搬进它自己内部：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationAncestorOfTrash", Other: "拒绝：目标包含回收目录，移动会把回收目录搬进它自己内部：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonCrossVolume:
-		return fmt.Sprintf("拒绝：回收目录与目标不在同一个卷，无法用一次 rename 完成移动（本工具刻意不做「复制+删除」的降级）：%s%s。请为该卷配置回收根，saferm where 可看当前解析结果", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationCrossVolume", Other: "拒绝：回收目录与目标不在同一个卷，无法用一次 rename 完成移动（本工具刻意不做「复制+删除」的降级）：{{.Where}}{{.Suffix}}。请为该卷配置回收根，saferm where 可看当前解析结果"}, i18n.Data{"Where": where, "Suffix": suffix})
 	case ReasonTrashUnusable:
-		return fmt.Sprintf("拒绝：回收目录不可用：%s%s", where, suffix)
+		return i18n.T(&goi18n.Message{ID: "ViolationTrashUnusable", Other: "拒绝：回收目录不可用：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 	}
-	return fmt.Sprintf("拒绝：%s%s", where, suffix)
+	return i18n.T(&goi18n.Message{ID: "ViolationGeneric", Other: "拒绝：{{.Where}}{{.Suffix}}"}, i18n.Data{"Where": where, "Suffix": suffix})
 }
 
 // Violations 是一批拒绝理由，实现 error 以便一次性汇报。
@@ -124,7 +128,7 @@ func (vs Violations) Error() string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "预检未通过，共 %d 项，整批未执行（原数据未改动）", len(vs))
+	fmt.Fprint(&b, i18n.T(&goi18n.Message{ID: "PreflightFailed", Other: "预检未通过，共 {{.N}} 项，整批未执行（原数据未改动）"}, i18n.Data{"N": len(vs)}, len(vs)))
 	for _, v := range vs {
 		b.WriteString("\n  - ")
 		b.WriteString(v.Message())
@@ -187,8 +191,9 @@ func (r Report) Failed() bool { return len(r.Violations) > 0 }
 // 绕过策略只在这一处实现，避免各处自行判断导致某条规则被漏掉或被多绕一次。
 func (r *Report) Add(v Violation, allowDangerous bool) {
 	if v.Reason.Bypassable() && allowDangerous {
-		r.Warnings = append(r.Warnings, fmt.Sprintf(
-			"--allow-dangerous 生效，已放行本应拒绝的路径：%s", v.Message()))
+		r.Warnings = append(r.Warnings, i18n.T(&goi18n.Message{
+			ID: "AllowDangerousWarning", Other: "--allow-dangerous 生效，已放行本应拒绝的路径：{{.Msg}}",
+		}, i18n.Data{"Msg": v.Message()}))
 		return
 	}
 	r.Violations = append(r.Violations, v)
@@ -250,7 +255,7 @@ func Check(operands []string, opts Options) (Report, error) {
 		if first, dup := seen[pathKey(t.Path)]; dup {
 			c.reject(Violation{
 				Reason: ReasonDuplicateOperand, Input: in, Path: t.Path,
-				Detail: fmt.Sprintf("与 %q 指向同一位置", first),
+				Detail: i18n.T(&goi18n.Message{ID: "DetailSameAs", Other: "与 {{.V}} 指向同一位置"}, i18n.Data{"V": strconv.Quote(first)}),
 			})
 			continue
 		}
@@ -298,7 +303,7 @@ func (c *checker) normalize(in string) (Target, *Skip, bool) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if c.opts.IgnoreMissing {
-				return Target{}, &Skip{Input: in, Path: abs, Reason: "路径不存在"}, false
+				return Target{}, &Skip{Input: in, Path: abs, Reason: i18n.T(&goi18n.Message{ID: "SkipNotExists", Other: "路径不存在"})}, false
 			}
 			c.reject(Violation{Reason: ReasonNotExist, Input: in, Path: abs})
 			return Target{}, nil, false
@@ -322,14 +327,14 @@ func (c *checker) checkCwdRelation(t Target) {
 	if equalPath(t.Path, c.cwd) {
 		c.reject(Violation{
 			Reason: ReasonIsCwd, Input: t.Input, Path: t.Path,
-			Detail: "要删当前所在目录，请先 cd 到别处；确认无误可用 --allow-dangerous",
+			Detail: i18n.T(&goi18n.Message{ID: "DetailIsCwd", Other: "要删当前所在目录，请先 cd 到别处；确认无误可用 --allow-dangerous"}),
 		})
 		return
 	}
 	if isAncestor(t.Path, c.cwd) {
 		c.reject(Violation{
 			Reason: ReasonAncestorOfCwd, Input: t.Input, Path: t.Path,
-			Detail: "当前工作目录 " + c.cwd,
+			Detail: i18n.T(&goi18n.Message{ID: "DetailCwdIs", Other: "当前工作目录 {{.V}}"}, i18n.Data{"V": c.cwd}),
 		})
 	}
 }
@@ -344,7 +349,8 @@ func (c *checker) checkVolumeRoot(t Target) {
 		return
 	}
 	if equalPath(t.Path, root) {
-		c.reject(Violation{Reason: ReasonVolumeRoot, Input: t.Input, Path: t.Path, Detail: "卷挂载点 " + root})
+		c.reject(Violation{Reason: ReasonVolumeRoot, Input: t.Input, Path: t.Path,
+			Detail: i18n.T(&goi18n.Message{ID: "DetailVolumeMount", Other: "卷挂载点 {{.V}}"}, i18n.Data{"V": root})})
 	}
 }
 
@@ -355,7 +361,7 @@ func (c *checker) checkProtected(t Target) {
 			if isInsideInclusive(t.Path, p.Path) {
 				c.reject(Violation{
 					Reason: ReasonProtectedPath, Input: t.Input, Path: t.Path,
-					Detail: "位于受保护目录 " + p.Path + " 之内",
+					Detail: i18n.T(&goi18n.Message{ID: "DetailInsideProtected", Other: "位于受保护目录 {{.V}} 之内"}, i18n.Data{"V": p.Path}),
 				})
 				return
 			}
@@ -364,7 +370,7 @@ func (c *checker) checkProtected(t Target) {
 		if equalPath(t.Path, p.Path) {
 			c.reject(Violation{
 				Reason: ReasonProtectedPath, Input: t.Input, Path: t.Path,
-				Detail: "受保护目录本身 " + p.Path,
+				Detail: i18n.T(&goi18n.Message{ID: "DetailProtectedItself", Other: "受保护目录本身 {{.V}}"}, i18n.Data{"V": p.Path}),
 			})
 			return
 		}
@@ -379,7 +385,7 @@ func (c *checker) checkProtected(t Target) {
 		if equalPath(t.Path, filepath.Join(root, name)) {
 			c.reject(Violation{
 				Reason: ReasonProtectedPath, Input: t.Input, Path: t.Path,
-				Detail: "卷根下的系统目录 " + name,
+				Detail: i18n.T(&goi18n.Message{ID: "DetailSystemDirOnVolume", Other: "卷根下的系统目录 {{.V}}"}, i18n.Data{"V": name}),
 			})
 			return
 		}
@@ -399,7 +405,7 @@ func (c *checker) checkVCSRoot(t Target) {
 		if equalPath(filepath.Base(t.Path), marker) {
 			c.reject(Violation{
 				Reason: ReasonVCSRoot, Input: t.Input, Path: t.Path,
-				Detail: "这是版本库元数据目录 " + marker,
+				Detail: i18n.T(&goi18n.Message{ID: "DetailVCSMetadataDir", Other: "这是版本库元数据目录 {{.V}}"}, i18n.Data{"V": marker}),
 			})
 			return
 		}
@@ -407,7 +413,7 @@ func (c *checker) checkVCSRoot(t Target) {
 		if _, err := os.Lstat(child); err == nil {
 			c.reject(Violation{
 				Reason: ReasonVCSRoot, Input: t.Input, Path: t.Path,
-				Detail: "目录含版本库元数据 " + marker + "，误删会丢掉未推送的内容",
+				Detail: i18n.T(&goi18n.Message{ID: "DetailVCSMetadataChild", Other: "目录含版本库元数据 {{.V}}，误删会丢掉未推送的内容"}, i18n.Data{"V": marker}),
 			})
 			return
 		}
@@ -425,7 +431,7 @@ func (c *checker) checkNested(targets []Target) {
 			if isAncestor(targets[i].Path, targets[j].Path) {
 				c.reject(Violation{
 					Reason: ReasonNestedOperand, Input: targets[i].Input, Path: targets[i].Path,
-					Detail: fmt.Sprintf("它是 %q 的上级，移动它会连带把后者一起搬走", targets[j].Input),
+					Detail: i18n.T(&goi18n.Message{ID: "DetailNestedAncestor", Other: "它是 {{.V}} 的上级，移动它会连带把后者一起搬走"}, i18n.Data{"V": strconv.Quote(targets[j].Input)}),
 				})
 			}
 		}
@@ -445,13 +451,13 @@ func CheckTrashRelation(target, trashRoot string) (Violation, bool) {
 	if isInsideInclusive(target, trashRoot) {
 		return Violation{
 			Reason: ReasonInsideTrash, Path: target,
-			Detail: "回收目录 " + trashRoot,
+			Detail: i18n.T(&goi18n.Message{ID: "DetailInsideTrash", Other: "回收目录 {{.V}}"}, i18n.Data{"V": trashRoot}),
 		}, true
 	}
 	if isAncestor(target, trashRoot) {
 		return Violation{
 			Reason: ReasonAncestorOfTrash, Path: target,
-			Detail: "回收目录位于该目标之内：" + trashRoot,
+			Detail: i18n.T(&goi18n.Message{ID: "DetailTrashInsideTarget", Other: "回收目录位于该目标之内：{{.V}}"}, i18n.Data{"V": trashRoot}),
 		}, true
 	}
 	return Violation{}, false

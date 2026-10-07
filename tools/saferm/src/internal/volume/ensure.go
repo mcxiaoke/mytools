@@ -1,10 +1,12 @@
 package volume
 
 import (
-	"fmt"
 	"os"
 	"time"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
+	"saferm/internal/i18n"
 	"saferm/internal/platform"
 )
 
@@ -24,27 +26,28 @@ func EnsureRoot(root, version string) (warnings []string, err error) {
 	info, statErr := os.Lstat(abs)
 	switch {
 	case statErr == nil && !info.IsDir():
-		return nil, fmt.Errorf("回收目录 %q 已存在且不是目录，拒绝使用", abs)
+		return nil, i18n.E(&goi18n.Message{ID: "ErrEnsureNotDir", Other: "回收目录 {{.V}} 已存在且不是目录，拒绝使用"}, i18n.Data{"V": abs})
 	case os.IsNotExist(statErr):
 		if mkErr := os.MkdirAll(abs, 0o700); mkErr != nil {
-			return nil, fmt.Errorf("创建回收目录 %q 失败：%w", abs, mkErr)
+			return nil, i18n.E(&goi18n.Message{ID: "ErrEnsureCreate", Other: "创建回收目录 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": abs, "Err": mkErr.Error()})
 		}
 	case statErr != nil:
-		return nil, fmt.Errorf("访问回收目录 %q 失败：%w", abs, statErr)
+		return nil, i18n.E(&goi18n.Message{ID: "ErrEnsureAccess", Other: "访问回收目录 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": abs, "Err": statErr.Error()})
 	}
 
 	// 认领前复核：非空且无标记的目录一律拒绝（§4.7 规则 4）。
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		return nil, fmt.Errorf("读取回收目录 %q 失败：%w", abs, err)
+		return nil, i18n.E(&goi18n.Message{ID: "ErrEnsureRead", Other: "读取回收目录 {{.V}} 失败：{{.Err}}"}, i18n.Data{"V": abs, "Err": err.Error()})
 	}
 	if len(entries) > 0 {
 		if _, ok, mErr := ReadMarker(abs); mErr != nil {
 			return nil, mErr
 		} else if !ok {
-			return nil, fmt.Errorf(
-				"回收目录 %q 非空且没有 %s 标记，拒绝使用；请检查配置是否写成了别的目录",
-				abs, MarkerName)
+			return nil, i18n.E(&goi18n.Message{
+				ID:    "ErrEnsureNoMarker",
+				Other: "回收目录 {{.Root}} 非空且没有 {{.Marker}} 标记，拒绝使用；请检查配置是否写成了别的目录",
+			}, i18n.Data{"Root": abs, "Marker": MarkerName})
 		}
 		return nil, nil
 	}
@@ -60,7 +63,9 @@ func EnsureRoot(root, version string) (warnings []string, err error) {
 	// 失败不影响功能，但要让用户知道 —— 尤其 Windows 上回收根若在同步目录里，
 	// 不排除会被上传。
 	if err := platform.SetHidden(abs); err != nil {
-		warnings = append(warnings, fmt.Sprintf("未能给回收目录 %q 设置隐藏属性：%v", abs, err))
+		warnings = append(warnings, i18n.T(&goi18n.Message{
+			ID: "WarnHideFailed", Other: "未能给回收目录 {{.V}} 设置隐藏属性：{{.Err}}",
+		}, i18n.Data{"V": abs, "Err": err.Error()}))
 	}
 	return warnings, nil
 }

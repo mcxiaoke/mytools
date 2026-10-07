@@ -7,13 +7,15 @@
 package volume
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
+
 	"saferm/internal/guard"
+	"saferm/internal/i18n"
 	"saferm/internal/platform"
 )
 
@@ -124,8 +126,8 @@ func Resolve(targets []string, cfg Config) ([]Placement, guard.Violations, error
 		if !same {
 			viols = append(viols, guard.Violation{
 				Reason: guard.ReasonCrossVolume, Path: target,
-				Detail: fmt.Sprintf("目标在 %s，回收目录 %s 在 %s",
-					volRoot, choice.root, mustVolumeRoot(choice.root)),
+				Detail: i18n.T(&goi18n.Message{ID: "DetailCrossVolume", Other: "目标在 {{.Target}}，回收目录 {{.Trash}} 在 {{.Volume}}"},
+					i18n.Data{"Target": volRoot, "Trash": choice.root, "Volume": mustVolumeRoot(choice.root)}),
 			})
 			continue
 		}
@@ -186,15 +188,17 @@ func resolveRootForVolume(volRoot string, cfg Config) rootChoice {
 		if ok {
 			return choice
 		}
-		problems = append(problems, fmt.Sprintf("%s（%s）", cd.path, choice.problem))
+		problems = append(problems, i18n.T(&goi18n.Message{ID: "ProblemEntry", Other: "{{.Path}}（{{.Problem}}）"},
+			i18n.Data{"Path": cd.path, "Problem": choice.problem}))
 	}
 	// 全部候选都不可用时，仍把首选候选路径带回去：`where` 与报错都需要展示
 	// "本来打算用哪个目录"，否则用户不知道该去修哪个配置。
 	primary, _ := platform.AbsClean(candidates[0].path)
 	return rootChoice{
-		root:    primary,
-		source:  candidates[0].source,
-		problem: "该卷上没有可用的回收目录：" + strings.Join(problems, "；"),
+		root:   primary,
+		source: candidates[0].source,
+		problem: i18n.T(&goi18n.Message{ID: "ErrNoUsableTrash", Other: "该卷上没有可用的回收目录：{{.Problems}}"},
+			i18n.Data{"Problems": strings.Join(problems, i18n.T(&goi18n.Message{ID: "ListSeparator", Other: "；"}))}),
 	}
 }
 
@@ -206,14 +210,14 @@ func inspectCandidate(root, source string, fallback bool) (rootChoice, bool) {
 
 	abs, err := platform.AbsClean(root)
 	if err != nil {
-		choice.problem = "路径无法规范化：" + err.Error()
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrAbsClean", Other: "路径无法规范化：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 		return choice, false
 	}
 	choice.root = abs
 
 	// 回收根本身不能是卷根：那等于往盘根倒文件，配置写错时必须拦住
 	if vr, err := platform.VolumeRoot(abs); err == nil && samePath(vr, abs) {
-		choice.problem = "它是卷根，不能用作回收目录"
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrTrashIsVolumeRoot", Other: "它是卷根，不能用作回收目录"})
 		return choice, false
 	}
 
@@ -223,17 +227,17 @@ func inspectCandidate(root, source string, fallback bool) (rootChoice, bool) {
 			choice.needCreate = true
 			return choice, true
 		}
-		choice.problem = "无法访问：" + err.Error()
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrAccessTrash", Other: "无法访问：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 		return choice, false
 	}
 	if !info.IsDir() {
-		choice.problem = "它不是目录"
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrTrashNotDir", Other: "它不是目录"})
 		return choice, false
 	}
 
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		choice.problem = "无法读取目录内容：" + err.Error()
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrReadTrash", Other: "无法读取目录内容：{{.Err}}"}, i18n.Data{"Err": err.Error()})
 		return choice, false
 	}
 	if len(entries) == 0 {
@@ -244,7 +248,8 @@ func inspectCandidate(root, source string, fallback bool) (rootChoice, bool) {
 		choice.problem = err.Error()
 		return choice, false
 	} else if !ok {
-		choice.problem = "目录非空且没有 " + MarkerName + " 标记，可能是配置写错的已有目录"
+		choice.problem = i18n.T(&goi18n.Message{ID: "ErrTrashNoMarker", Other: "目录非空且没有 {{.Marker}} 标记，可能是配置写错的已有目录"},
+			i18n.Data{"Marker": MarkerName})
 		return choice, false
 	}
 	return choice, true
@@ -288,7 +293,7 @@ func mustVolumeRoot(p string) string {
 	if vr, err := platform.VolumeRoot(p); err == nil {
 		return vr
 	}
-	return "未知卷"
+	return i18n.T(&goi18n.Message{ID: "UnknownVolume", Other: "未知卷"})
 }
 
 // samePath 是比较两个绝对路径是否指向同一位置（大小写规则交给平台处理）。
