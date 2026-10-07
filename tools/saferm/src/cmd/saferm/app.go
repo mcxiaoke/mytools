@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"saferm/internal/config"
 	"saferm/internal/guard"
 	"saferm/internal/platform"
 	"saferm/internal/trash"
@@ -37,6 +38,10 @@ type app struct {
 	isTTY func() bool
 	now   func() time.Time
 	pid   int
+
+	// loadConfig 加载配置；留空则读真实配置文件（config.Load）。
+	// 测试注入它是为了让用例不受开发机上 %APPDATA%\saferm\config.toml 的影响。
+	loadConfig func(explicitPath string) (config.Config, string, error)
 
 	// configPath 是 --config 的值；为空表示用默认位置。
 	configPath string
@@ -152,6 +157,18 @@ func (a *app) runRemove(args []string) int {
 		return exitUsage
 	}
 
+	// 配置加载放在所有文件系统操作之前（设计文档 §7.1）：
+	// 文件存在但解析失败 / 键名写错 → 硬失败，绝不静默回退默认值。
+	// 否则用户以为护栏按配置生效了，实际用的是另一套值，是最危险的失败模式。
+	cfg, cfgPath, err := a.effectiveConfig()
+	if err != nil {
+		fmt.Fprintf(a.stderr, "saferm: %v\n", err)
+		return exitUsage
+	}
+	if f.verbose && cfgPath != "" {
+		fmt.Fprintf(a.stdout, "配置文件 %s\n", cfgPath)
+	}
+
 	// 字面优先的通配符展开：展开结果会被当作**新的目标**重新走一遍全部护栏
 	expanded, err := expandOperands(operands, f.literal)
 	if err != nil {
@@ -160,10 +177,7 @@ func (a *app) runRemove(args []string) int {
 	}
 
 	// 护栏（设计文档 §5）：任何文件系统写操作之前跑完
-	rep, err := guard.Check(expanded, guard.Options{
-		IgnoreMissing:  f.force,
-		AllowDangerous: f.allowDangerous,
-	})
+	rep, err := guard.Check(expanded, guardOptions(cfg, f))
 	if err != nil {
 		fmt.Fprintf(a.stderr, "saferm: %v\n", err)
 		return exitUsage
@@ -186,8 +200,7 @@ func (a *app) runRemove(args []string) int {
 	for _, t := range rep.Targets {
 		paths = append(paths, t.Path)
 	}
-	cfg := volume.Config{Version: version, DefaultRoot: f.trashRoot}
-	placements, viols, err := volume.Resolve(paths, cfg)
+	placements, viols, err := volume.Resolve(paths, volumeConfig(cfg, version, f.trashRoot))
 	if err != nil {
 		fmt.Fprintf(a.stderr, "saferm: %v\n", err)
 		return exitUsage
@@ -202,9 +215,10 @@ func (a *app) runRemove(args []string) int {
 		return exitOK
 	}
 
-	groups := a.groupPlacements(rep, placements)
+	confirm := confirmConfig(cfg)
+	groups := a.groupPlacements(rep, placements, scanLimits(confirm), cfg.Guard.GitDetect)
 	risks := movableRisks(groups)
-	level := ui.Decide(risks, ui.DefaultConfirmConfig())
+	level := ui.Decide(risks, confirm)
 	if f.interactive && level == ui.LevelNone {
 		level = ui.LevelConfirm
 	}
@@ -255,7 +269,10 @@ type groupItem struct {
 }
 
 // groupPlacements 按回收根把目标分组，并把 -f 跳过的条目挂到对应组里。
-func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement) []group {
+//
+// limits 与 gitDetect 都来自生效配置：扫描上限来自危险级阈值，
+// gitDetect 为 false 时不做版本库检测（也就不会因为"在仓库里"升为危险级）。
+func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement, limits ui.ScanLimits, gitDetect bool) []group {
 	byTrashRoot := map[string]*group{}
 	var order []string
 
@@ -266,7 +283,6 @@ func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement) [
 		dirOf[t.Path] = t.Info != nil && t.Info.IsDir()
 	}
 
-	limits := scanLimits()
 	for _, p := range placements {
 		g, ok := byTrashRoot[p.TrashRoot]
 		if !ok {
@@ -275,6 +291,10 @@ func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement) [
 			order = append(order, p.TrashRoot)
 		}
 		t := byPath[p.Target]
+		var git ui.GitInfo
+		if gitDetect {
+			git = ui.DetectGit(p.Target)
+		}
 		// 每个目标只扫一次：扫描可能是这次调用里最贵的操作
 		stats := ui.Scan(p.Target, limits)
 		g.items = append(g.items, groupItem{
@@ -282,7 +302,7 @@ func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement) [
 			input:  t.Input,
 			stats:  stats,
 			isDir:  dirOf[p.Target],
-			git:    ui.DetectGit(p.Target),
+			git:    git,
 		})
 	}
 
@@ -308,11 +328,6 @@ func (a *app) groupPlacements(rep guard.Report, placements []volume.Placement) [
 		out = append(out, *byTrashRoot[key])
 	}
 	return out
-}
-
-func scanLimits() ui.ScanLimits {
-	cfg := ui.DefaultConfirmConfig()
-	return ui.ScanLimits{MaxFiles: cfg.DangerFileThreshold, MaxBytes: cfg.BytesThreshold}
 }
 
 // movableRisks 给出"会被真的移动"的目标画像，顺序与 destinations 一致。

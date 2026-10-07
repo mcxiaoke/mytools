@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"saferm/internal/config"
 	"saferm/internal/platform"
 	"saferm/internal/volume"
 )
@@ -34,7 +35,26 @@ func newTestApp(t *testing.T, stdin string, interactive bool, args ...string) (*
 		isTTY:  func() bool { return interactive },
 		now:    func() time.Time { return fixed },
 		pid:    1234,
+		// 默认注入"没有配置文件"：测试不能被开发机上真实存在的
+		// %APPDATA%\saferm\config.toml 影响。要测配置时用 newTestAppWithConfig。
+		loadConfig: func(string) (config.Config, string, error) { return config.Default(), "", nil },
 	}
+	return a, out, errBuf
+}
+
+// newTestAppWithConfig 让用例注入一份生效配置，用来验证配置确实被用上了。
+func newTestAppWithConfig(t *testing.T, cfg config.Config, cfgPath string, stdin string, interactive bool, args ...string) (*app, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	a, out, errBuf := newTestApp(t, stdin, interactive, args...)
+	a.loadConfig = func(string) (config.Config, string, error) { return cfg, cfgPath, nil }
+	return a, out, errBuf
+}
+
+// newTestAppWithRealConfigLoader 走真实的配置加载（只读用例显式给出的 --config 路径）。
+func newTestAppWithRealConfigLoader(t *testing.T, stdin string, interactive bool, args ...string) (*app, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	a, out, errBuf := newTestApp(t, stdin, interactive, args...)
+	a.loadConfig = config.Load
 	return a, out, errBuf
 }
 

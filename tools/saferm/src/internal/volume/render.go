@@ -11,8 +11,11 @@ import (
 // ProbeSummary 是 `saferm where` 的渲染结果，纯函数、无副作用，便于测试。
 type ProbeSummary struct {
 	ConfigPath string
-	Version    string
-	Probes     []Probe
+	// ConfigLines 是"生效配置"的预格式化行（设计文档 §8.1 要求 where 打印生效配置）。
+	// 为空则不输出该段。内容由 cmd 层从 config 组装，volume 不依赖 config 包。
+	ConfigLines []string
+	Version     string
+	Probes      []Probe
 	// Unfinished 是没有正常收尾的操作（进程被杀/断电等），需要用户去核对。
 	Unfinished []UnfinishedOp
 	// BadManifests 是解析失败的清单数量。
@@ -47,6 +50,17 @@ func (s ProbeSummary) Render(w io.Writer) error {
 	} else {
 		if _, err := fmt.Fprintf(w, "配置文件      %s\n", s.ConfigPath); err != nil {
 			return err
+		}
+	}
+
+	if len(s.ConfigLines) > 0 {
+		if _, err := fmt.Fprintln(w, "\n生效配置（优先级：命令行 > 配置文件 > 内置默认值）"); err != nil {
+			return err
+		}
+		for _, line := range s.ConfigLines {
+			if _, err := fmt.Fprintf(w, "  %s\n", line); err != nil {
+				return err
+			}
 		}
 	}
 

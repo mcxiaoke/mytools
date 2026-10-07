@@ -26,14 +26,27 @@ func (a *app) runWhere(args []string) int {
 		return exitOK
 	}
 
-	cfg := volume.Config{Version: version}
-	probes, err := volume.ProbeVolumes(cfg)
+	// where 也必须走同一套配置加载：它报告的必须是**实际生效**的回收根，
+	// 而不是"默认值下的回收根"，否则这份自检会误导人（设计文档 §8.1）。
+	cfg, cfgPath, err := a.effectiveConfig()
+	if err != nil {
+		fmt.Fprintf(a.stderr, "saferm: %v\n", err)
+		return exitUsage
+	}
+
+	probes, err := volume.ProbeVolumes(volumeConfig(cfg, version, ""))
 	if err != nil {
 		fmt.Fprintf(a.stderr, "saferm: 探测卷信息失败：%v\n", err)
 		return exitUsage
 	}
 
-	summary := volume.ProbeSummary{Version: version, Probes: probes, Notes: volume.DefaultNotes()}
+	summary := volume.ProbeSummary{
+		Version:     version,
+		ConfigPath:  cfgPath,
+		ConfigLines: effectiveConfigLines(cfg),
+		Probes:      probes,
+		Notes:       volume.DefaultNotes(),
+	}
 
 	// 顺带核对有没有"没有正常收尾"的操作：进程被杀或断电之后，
 	// 用户需要知道上一次到底搬走了什么（设计文档 §8.1）。
