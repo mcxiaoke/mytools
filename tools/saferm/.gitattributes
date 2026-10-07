@@ -1,0 +1,13 @@
+# saferm 目录的换行符规则。
+#
+# 仓库根没有 .gitattributes，CRLF 来自 core.autocrlf=true——也就是**新克隆/重新
+# 检出后，所有文本文件在工作区都会变成 CRLF**。这对 .ps1 / .md 无所谓，但会让
+# tests/*.sh 的 shebang 变成 `#!/usr/bin/env bash\r`，在 WSL/Linux 下直接
+# "bad interpreter" 而跑不起来。
+#
+# 所以这里只把 shell 脚本钉成 LF，范围限定在 saferm 目录内。
+#
+# 刻意**不**给 *.ps1 写 eol 规则：PowerShell 两种换行都能正常执行，而写上
+# eol=crlf 会在 core.safecrlf 开启时与"工作区里已经是 LF"的文件冲突，
+# 导致 `git add` 直接报错。为一个不解决问题的好处去和 safecrlf 较劲不值得。
+*.sh text eol=lf

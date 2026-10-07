@@ -98,9 +98,21 @@ func TestDecide(t *testing.T) {
 			want:  LevelDanger,
 		},
 		{
-			name:  "在版本库工作区内即危险级",
-			risks: []Risk{{Target: "d", IsDir: true, Stats: ScanStats{Files: 1}, Git: GitInfo{InRepo: true, RepoRoot: "/repo"}}},
+			name:  "目标自身是版本库根即危险级",
+			risks: []Risk{{Target: "/repo", IsDir: true, Stats: ScanStats{Files: 1}, Git: GitInfo{InRepo: true, RepoRoot: "/repo", IsRepoRoot: true}}},
 			want:  LevelDanger,
+		},
+		{
+			// 常开信号不能用来分级：仅仅"位于某个仓库内"不升危险级，
+			// 否则开发者几乎所有文件都在仓库里，-y 就永远没用了（§14 D10 同理）
+			name:  "仅位于版本库工作区内不升危险级",
+			risks: []Risk{{Target: "/repo/src/a.txt", Stats: ScanStats{Files: 1}, Git: GitInfo{InRepo: true, RepoRoot: "/repo"}}},
+			want:  LevelNone,
+		},
+		{
+			name:  "仓库内的目录按体量走确认级",
+			risks: []Risk{{Target: "/repo/src", IsDir: true, Stats: ScanStats{Files: 60}, Git: GitInfo{InRepo: true, RepoRoot: "/repo"}}},
+			want:  LevelConfirm,
 		},
 		{
 			name: "单个体量很小的文件也要确认（因为目录条件命中）",

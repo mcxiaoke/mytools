@@ -63,30 +63,43 @@ func DefaultConfirmConfig() ConfirmConfig {
 
 // Decide 决定整批需要哪一级确认。
 //
-// 刻意**不把"目标在工作目录之外"当危险级条件**：从固定目录启动时删任何别的
-// 路径都要手敲名字太吵，结局是用户养成无脑加 --yes-i-am-sure 的习惯，
-// 危险级就形同虚设。危险级只由"体量"与"在版本库工作区内"这类客观信号触发。
+// 危险级只由两类信号触发：
+//  1. **体量**：条目数超过 danger_file_threshold；
+//  2. **目标自身就是版本库根**（直接含 .git/.hg/.svn）。
+//
+// 刻意**不把"位于版本库工作区内"当危险级条件**。它曾经是触发条件，但那是**常开**的：
+// 开发者几乎所有文件都在某个仓库里，于是 `saferm -y` 在任何真实项目里都失效，
+// 结局就是无脑加 `--yes-i-am-sure`，危险级彻底形同虚设 —— 与 §14 D10 否掉
+// "目标在 cwd 之外"是同一条理由。常开的信号不能用来分级。
+//
+// "在仓库内"仍然会被检测并**展示**仓库根路径，因为"这里可能有还没推到远端的东西"
+// 是有用的信息；只是它不该决定级别。真想按"未提交/未推送"分级，得调 `git status`，
+// 那是 §14 D7 明确推迟到 v2 的增强档。
+//
+// 目标自身是仓库根之所以仍算危险信号：护栏第 8 条本来就拒绝它（除非被
+// --allow-dangerous 绕过、或 protect_vcs_root=false），这里算第二道防线。
+
 func Decide(risks []Risk, cfg ConfirmConfig) Level {
 	if len(risks) == 0 {
 		return LevelNone
 	}
 
 	var files, dirs, bytes int64
-	var incomplete, inRepo, anyDir bool
+	var incomplete, isRepoRoot, anyDir bool
 	for _, r := range risks {
 		files += r.Stats.Files
 		dirs += r.Stats.Dirs
 		bytes += r.Stats.Bytes
 		incomplete = incomplete || r.Stats.Incomplete
-		inRepo = inRepo || r.Git.InRepo
+		isRepoRoot = isRepoRoot || r.Git.IsRepoRoot
 		anyDir = anyDir || r.IsDir
 	}
 
-	// 危险级：体量很大，或在版本库工作区内（后者正是本次事故的场景）
+	// 危险级：体量很大，或目标本身就是版本库根
 	if cfg.DangerFileThreshold > 0 && files+dirs > cfg.DangerFileThreshold {
 		return LevelDanger
 	}
-	if inRepo {
+	if isRepoRoot {
 		return LevelDanger
 	}
 

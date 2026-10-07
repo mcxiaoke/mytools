@@ -123,10 +123,8 @@ func (a *app) newRemoveFlagSet() (*pflag.FlagSet, *removeFlags) {
 	fs.StringVar(&f.trashRoot, "trash-root", "", "覆盖回收目录（单次生效）")
 	fs.StringVar(&a.configPath, "config", "", "指定配置文件")
 
-	// rm 兼容：递归本来就是默认行为，接受但忽略
-	var ignoreRecurse, ignoreRecurseUpper bool
-	fs.BoolVarP(&ignoreRecurse, "recursive", "r", false, "忽略（目录递归是默认行为）")
-	fs.BoolVarP(&ignoreRecurseUpper, "recursive-all", "R", false, "忽略（同上）")
+	// rm 兼容参数（-r/-R 与 --preserve-root）集中在 rmcompat.go 里注册
+	addRMCompatFlags(fs)
 
 	fs.BoolVarP(&f.help, "help", "h", false, "显示帮助")
 	fs.BoolVarP(&f.showVersion, "version", "V", false, "显示版本")
@@ -138,6 +136,8 @@ func (a *app) newRemoveFlagSet() (*pflag.FlagSet, *removeFlags) {
 func (a *app) runRemove(args []string) int {
 	fs, f := a.newRemoveFlagSet()
 	if err := fs.Parse(args); err != nil {
+		// 把"哪个参数不对"讲清楚，再给用法；已知的 rm 参数补等价写法
+		a.reportFlagError(err, args)
 		fmt.Fprintln(a.stderr, "用法：saferm [选项] <路径>...（saferm --help 查看全部选项）")
 		return exitUsage
 	}

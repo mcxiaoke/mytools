@@ -11,10 +11,8 @@
   与 tests/run-e2e.sh 逐条对应，两边跑同一份检查清单。
 
   夹具位置很有讲究：
-    - 普通用例放在**系统临时目录**（不在任何 Git 工作区内）。放在本仓库内部时，
-      每个目标都会因为"位于版本库工作区内"被升为危险级（这是设计文档 §6.1 的
-      预期行为，不是 bug），普通 `-y` 就推不动了。
-    - 另有一条专门用例放在本仓库的 temp/ 下，反过来断言这个危险级升级确实生效。
+    - 普通用例放在**系统临时目录**，不在任何 Git 工作区内，避免"仓库内"语境干扰断言。
+    - 第 7 节需要"目标位于仓库内"这个语境，单独放在本仓库的 temp/ 下。
 
   清理只针对本脚本自己刚创建的那个唯一命名的夹具目录，且做前缀校验，不用通配符。
 
@@ -218,22 +216,42 @@ Assert-True "非交互删目录：目标原封不动" (Test-Path (Join-Path $dir
 Assert-True "非交互删目录：不创建回收目录" (-not (Test-Path $trash3))
 
 # ===========================================================================
-Write-Section "7. 位于版本库工作区内 → 危险级（-y 不够，必须 --yes-i-am-sure）"
-# 夹具放在本仓库的 temp/ 下：它本身没有 .git，但在仓库工作区之内。
+Write-Section "7. 版本库：仓库内普通目标只需 -y；仓库根仍是危险级"
+# 这组夹具放在本仓库的 temp/ 下：它本身没有 .git，但位于仓库工作区之内。
 $repoWork = Join-Path $repoFix "work"
 New-Item -ItemType Directory -Path $repoWork -Force | Out-Null
 $inRepoTarget = Join-Path $repoWork "r.txt"
-Set-Content -Path $inRepoTarget -Value "in repo"
+Set-Content -Path $inRepoTarget -Value "in repo" -NoNewline
 $trashRepo = Join-Path $repoFix "trash"
 
+# (a) 仓库内的普通目标：不再因"在版本库工作区内"升危险级，-y 恢复可用。
+#     这条防的是"常开信号拿来分级"——否则 -y 在任何真实项目里都会失效。
 $r = Invoke-Saferm -CmdArgs @("-y", "--trash-root", $trashRepo, $inRepoTarget)
-Assert-True "仓库内 + 仅 -y：退出码 1" ($r.Code -eq 1) "code=$($r.Code) $($r.Out)"
-Assert-True "仓库内 + 仅 -y：要求 --yes-i-am-sure" ($r.Out -match "--yes-i-am-sure") $r.Out
-Assert-True "仓库内 + 仅 -y：目标原封不动" (Test-Path $inRepoTarget)
+Assert-True "仓库内普通文件 + 仅 -y：退出码 0" ($r.Code -eq 0) "code=$($r.Code) $($r.Out)"
+Assert-True "仓库内普通文件 + 仅 -y：文件已移走" (-not (Test-Path $inRepoTarget))
 
-$r = Invoke-Saferm -CmdArgs @("--yes-i-am-sure", "--trash-root", $trashRepo, $inRepoTarget)
-Assert-True "仓库内 + --yes-i-am-sure：退出码 0" ($r.Code -eq 0) "code=$($r.Code) $($r.Out)"
-Assert-True "仓库内 + --yes-i-am-sure：文件已移走" (-not (Test-Path $inRepoTarget))
+# (b) 仓库根本身：默认被护栏第 8 条拒绝
+$repoRoot = Join-Path $repoFix "myrepo"
+New-Item -ItemType Directory -Path (Join-Path $repoRoot ".git") -Force | Out-Null
+Set-Content -Path (Join-Path $repoRoot "top.txt") -Value "top" -NoNewline
+$trashRepo2 = Join-Path $repoFix "trash2"
+
+$r = Invoke-Saferm -CmdArgs @("-y", "--trash-root", $trashRepo2, $repoRoot)
+Assert-True "仓库根：默认被护栏拒绝（退出码 1）" ($r.Code -eq 1) "code=$($r.Code) $($r.Out)"
+Assert-True "仓库根：拒绝理由写明是版本库" ($r.Out -match "版本库") $r.Out
+
+# 放开护栏第 8 条后由危险级接手：仍然需要 --yes-i-am-sure（第二道防线）
+$noGuard = Join-Path $repoFix "noguard.toml"
+Set-Content -Path $noGuard -Value "[guard]`nprotect_vcs_root = false`n"
+
+$r = Invoke-Saferm -CmdArgs @("-y", "--config", $noGuard, "--trash-root", $trashRepo2, $repoRoot)
+Assert-True "仓库根 + 放开护栏 + 仅 -y：仍被拦（退出码 1）" ($r.Code -eq 1) "code=$($r.Code) $($r.Out)"
+Assert-True "仓库根 + 放开护栏 + 仅 -y：要求 --yes-i-am-sure" ($r.Out -match "--yes-i-am-sure") $r.Out
+Assert-True "仓库根 + 仅 -y：目标原封不动" (Test-Path (Join-Path $repoRoot "top.txt"))
+
+$r = Invoke-Saferm -CmdArgs @("--yes-i-am-sure", "--config", $noGuard, "--trash-root", $trashRepo2, $repoRoot)
+Assert-True "仓库根 + --yes-i-am-sure：放行（退出码 0）" ($r.Code -eq 0) "code=$($r.Code) $($r.Out)"
+Assert-True "仓库根 + --yes-i-am-sure：已移走" (-not (Test-Path $repoRoot))
 
 # ===========================================================================
 Write-Section "8. dry-run 必须零副作用"

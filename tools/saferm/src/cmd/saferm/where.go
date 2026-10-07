@@ -17,8 +17,14 @@ func (a *app) runWhere(args []string) int {
 	fs.SetOutput(a.stderr)
 	showHelp := fs.BoolP("help", "h", false, "显示帮助")
 	fs.StringVar(&a.configPath, "config", "", "指定配置文件")
+	// 与主命令保持同一套 rm 兼容面：--preserve-root / -r / -R 在这里也接受并忽略
+	addRMCompatFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
+		// 修掉一个静默失败：pflag 在 ContinueOnError 下不自己打印错误，
+		// 之前这里直接 return，用户只看到退出码 1、一句话都没有。
+		a.reportFlagError(err, args)
+		fmt.Fprintln(a.stderr, "用法：saferm where [选项]（saferm where --help 查看选项）")
 		return exitUsage
 	}
 	if *showHelp {
@@ -109,6 +115,7 @@ func printUsage(w io.Writer) {
       --config <文件>         指定配置文件
       --trash-root <目录>     覆盖回收目录（单次生效）
   -r, -R                      接受但忽略（目录递归本来就是默认行为）
+      --preserve-root         接受但忽略（卷根保护恒为开启，无法关闭）
   -v, --verbose               打印每个目标的详细处理过程
   -h, --help                  显示帮助
   -V, --version               显示版本
@@ -117,7 +124,7 @@ func printUsage(w io.Writer) {
   · 拒绝删除：卷根、当前目录及其上级、系统关键目录、版本库根目录、回收目录自身
   · 拒绝跨卷：回收目录必须与目标同卷，本工具不做「复制+删除」的降级
   · 不跟随符号链接与 junction：移动的是链接本身
-  · 大目录 / 版本库工作区内 → 危险级，必须手敲目标名称确认
+  · 大目录 / 目标本身是版本库根 → 危险级，必须手敲目标名称确认（-y 无效）
   · 非交互环境（管道、CI）默认拒绝，需显式加 --yes 或 --yes-i-am-sure
   · 任何失败都意味着「原数据未改动」，绝不降级成永久删除
 

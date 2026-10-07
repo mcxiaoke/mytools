@@ -179,33 +179,44 @@ func TestEndToEndConfigCanRelaxGuard(t *testing.T) {
 	}
 }
 
-// [guard].git_detect = false 时，位于仓库工作区内的目标不再升为危险级，
-// 因此确认级输入 yes 就够（默认配置下这里必须是危险级、yes 无效）。
+// [guard].git_detect 控制的是"要不要做版本库检测"，它同时决定两件事：
+// 摘要里是否显示仓库路径，以及"目标自身是仓库根"是否升危险级。
+//
+// 这里用**仓库根本身**当目标来验证（普通子目录已经不再因"在仓库内"升危险级，
+// 那是 TestEndToEndInRepoTargetNoLongerNeedsDangerFlag 负责的回归）。
 func TestEndToEndGitDetectCanBeDisabled(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "myrepo")
-	sub := filepath.Join(repo, "src")
 	mustMkdir(t, filepath.Join(repo, ".git"))
-	mustWrite(t, filepath.Join(sub, "a.txt"), "x")
+	mustWrite(t, filepath.Join(repo, "a.txt"), "x")
 
-	// 默认：危险级，输入 yes 无效 → 取消
-	res := run(t, "yes\n", true, "--trash-root", filepath.Join(base, "trashA"), sub)
+	// 放开护栏第 8 条，好让"仓库根 → 危险级"这条路径能被观察到
+	defaults := config.Default()
+	defaults.Guard.ProtectVCSRoot = false
+
+	// 默认：目标自身是仓库根 → 危险级，输入 yes 无效 → 取消
+	res := runWithConfig(t, defaults, "", "yes\n", true, "--trash-root", filepath.Join(base, "trashA"), repo)
 	if res.code != exitCancelled {
-		t.Fatalf("默认配置下此目标应为危险级（yes 无效，退出码 3），实际 %d\nstderr:\n%s",
-			res.code, res.stderr)
+		t.Fatalf("默认配置下仓库根应为危险级（yes 无效，退出码 3），实际 %d\nstdout:\n%s\nstderr:\n%s",
+			res.code, res.stdout, res.stderr)
+	}
+	// 摘要里要指出这是版本库根
+	if !strings.Contains(res.stdout, "版本库") {
+		t.Errorf("摘要应点明这是版本库根：\n%s", res.stdout)
 	}
 
-	// 关掉 git_detect：不再是危险级，输入 yes 即可放行
+	// 关掉 git_detect：不再做检测，也就不再升危险级，确认级输入 yes 即可放行
 	noGit := config.Default()
+	noGit.Guard.ProtectVCSRoot = false
 	noGit.Guard.GitDetect = false
 	trashB := filepath.Join(base, "trashB")
 
-	res = runWithConfig(t, noGit, "", "yes\n", true, "--trash-root", trashB, sub)
+	res = runWithConfig(t, noGit, "", "yes\n", true, "--trash-root", trashB, repo)
 	if res.code != exitOK {
 		t.Fatalf("关掉 git_detect 后确认级输入 yes 应放行（退出码 0），实际 %d\nstdout:\n%s\nstderr:\n%s",
 			res.code, res.stdout, res.stderr)
 	}
-	mustNotExist(t, sub)
+	mustNotExist(t, repo)
 }
 
 // [guard].extra_protected 只能"追加"保护，且必须真的生效。

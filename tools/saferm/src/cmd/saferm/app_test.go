@@ -250,8 +250,9 @@ func TestEndToEndNonInteractiveNeedsExplicitFlag(t *testing.T) {
 
 // 危险级：输入 yes 不算，必须手敲目标名称。
 //
-// 注意目标必须是仓库的**子目录**：仓库根本身会被护栏第 8 条直接拒绝，
-// 根本走不到确认这一步。
+// 目标取**仓库根本身**（直接含 .git），这正是唯一会升危险级的 Git 信号。
+// 但仓库根本来会被护栏第 8 条拒绝，所以这里配 `protect_vcs_root = false`
+// 先把它放进来——这样测的正是"护栏被绕过之后，危险级作为第二道防线"这条路径。
 func TestEndToEndDangerLevelRequiresTypedName(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "myrepo")
@@ -260,13 +261,17 @@ func TestEndToEndDangerLevelRequiresTypedName(t *testing.T) {
 	mustWrite(t, filepath.Join(sub, "a.txt"), "x")
 	trashRoot := filepath.Join(base, "trash")
 
+	// 放开护栏第 8 条，让仓库根能走到确认这一步（危险级仍应拦住它）
+	repoRootAllowed := config.Default()
+	repoRootAllowed.Guard.ProtectVCSRoot = false
+
 	// 输入 yes：危险级不接受
-	res := run(t, "yes\n", true, "--trash-root", trashRoot, sub)
+	res := runWithConfig(t, repoRootAllowed, "", "yes\n", true, "--trash-root", trashRoot, repo)
 	if res.code != exitCancelled {
 		t.Fatalf("危险级输入 yes 应被取消（退出码 3），实际 %d\nstdout:\n%s\nstderr:\n%s",
 			res.code, res.stdout, res.stderr)
 	}
-	if _, err := os.Stat(sub); err != nil {
+	if _, err := os.Stat(repo); err != nil {
 		t.Fatalf("取消后目标必须原封不动：%v", err)
 	}
 	mustNotExist(t, trashRoot)
@@ -277,11 +282,11 @@ func TestEndToEndDangerLevelRequiresTypedName(t *testing.T) {
 	}
 
 	// 输入目标名称：放行
-	res = run(t, "src\n", true, "--trash-root", trashRoot, sub)
+	res = runWithConfig(t, repoRootAllowed, "", "myrepo\n", true, "--trash-root", trashRoot, repo)
 	if res.code != exitOK {
 		t.Fatalf("手敲目标名后退出码 = %d，期望 0\nstdout:\n%s\nstderr:\n%s", res.code, res.stdout, res.stderr)
 	}
-	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+	if _, err := os.Stat(repo); !os.IsNotExist(err) {
 		t.Fatalf("目标应已被移动，实际 err=%v", err)
 	}
 }
@@ -290,12 +295,16 @@ func TestEndToEndDangerLevelRequiresTypedName(t *testing.T) {
 func TestEndToEndDangerLevelNeedsLongFlagWhenNonInteractive(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "repo")
-	sub := filepath.Join(repo, "src")
 	mustMkdir(t, filepath.Join(repo, ".git"))
-	mustWrite(t, filepath.Join(sub, "a.txt"), "x")
+	mustWrite(t, filepath.Join(repo, "a.txt"), "x")
 	trashRoot := filepath.Join(base, "trash")
 
-	res := run(t, "", false, "-y", "--trash-root", trashRoot, sub)
+	// 目标自身就是仓库根 → 危险级。用 protect_vcs_root=false 先放过护栏第 8 条，
+	// 测的正是"护栏被绕过/关闭之后危险级仍然拦得住"。
+	cfg := config.Default()
+	cfg.Guard.ProtectVCSRoot = false
+
+	res := runWithConfig(t, cfg, "", "", false, "-y", "--trash-root", trashRoot, repo)
 	if res.code != exitUsage {
 		t.Fatalf("-y 不应放行危险级，实际退出码 %d\nstderr:\n%s", res.code, res.stderr)
 	}
@@ -305,10 +314,30 @@ func TestEndToEndDangerLevelNeedsLongFlagWhenNonInteractive(t *testing.T) {
 	mustNotExist(t, trashRoot)
 
 	// 加上长开关后放行
-	res = run(t, "", false, "-y", "--yes-i-am-sure", "--trash-root", trashRoot, sub)
+	res = runWithConfig(t, cfg, "", "", false, "-y", "--yes-i-am-sure", "--trash-root", trashRoot, repo)
 	if res.code != exitOK {
 		t.Fatalf("加 --yes-i-am-sure 后退出码 = %d，期望 0\nstderr:\n%s", res.code, res.stderr)
 	}
+}
+
+// 仓库里的**普通目标**不再因为"在版本库工作区内"而升危险级：-y 就该够用。
+//
+// 这是本次语义调整的核心回归测试。"在仓库内"是常开信号（开发者几乎所有文件都在
+// 某个仓库里），拿它触发危险级会让 -y 在任何真实项目里都失效。
+func TestEndToEndInRepoTargetNoLongerNeedsDangerFlag(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "myrepo")
+	sub := filepath.Join(repo, "src")
+	mustMkdir(t, filepath.Join(repo, ".git"))
+	mustWrite(t, filepath.Join(sub, "a.txt"), "x")
+	trashRoot := filepath.Join(base, "trash")
+
+	res := run(t, "", false, "-y", "--trash-root", trashRoot, sub)
+	if res.code != exitOK {
+		t.Fatalf("仓库内的普通目标应该 -y 就能移动（退出码 0），实际 %d\nstdout:\n%s\nstderr:\n%s",
+			res.code, res.stdout, res.stderr)
+	}
+	mustNotExist(t, sub)
 }
 
 // 通配符：字面优先，展开为空必须报错且不移动任何东西。

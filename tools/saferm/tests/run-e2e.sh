@@ -5,10 +5,8 @@
 # "拒绝时原数据有没有被动过"。进程内的交互式路径由 src/ 的 Go 测试覆盖。
 #
 # 夹具位置：
-#   - 普通用例放在系统临时目录（不在任何 Git 工作区内）。若放在本仓库内部，
-#     每个目标都会因"位于版本库工作区内"被升为危险级（设计文档 §6.1 的预期行为），
-#     普通 `-y` 就推不动了。
-#   - 另有一条用例放在本仓库 temp/ 下，反过来断言这个危险级升级确实生效。
+#   - 普通用例放在系统临时目录，不在任何 Git 工作区内，避免"仓库内"语境干扰断言。
+#   - 第 7 节需要"目标位于仓库内"这个语境，单独放在本仓库 temp/ 下。
 #
 # 清理只删本脚本自己刚建的那个唯一命名目录，且先做前缀校验，不用通配符。
 #
@@ -203,20 +201,40 @@ check "非交互删目录：目标原封不动" "$([ -f "$DIRTARGET/f.txt" ] && 
 check "非交互删目录：不创建回收目录" "$([ ! -e "$TRASH3" ] && echo 0 || echo 1)"
 
 # ===========================================================================
-section "7. 位于版本库工作区内 → 危险级（-y 不够，必须 --yes-i-am-sure）"
+section "7. 版本库：仓库内普通目标只需 -y；仓库根仍是危险级"
 REPOWORK="$REPO_FIX/work"
 TRASHREPO="$REPO_FIX/trash"
 mkdir -p "$REPOWORK"
 printf '%s' "in repo" > "$REPOWORK/r.txt"
 
+# (a) 仓库内的普通目标：不再因"在版本库工作区内"升危险级，-y 恢复可用。
+#     这条防的是"常开信号拿来分级"——否则 -y 在任何真实项目里都会失效。
 run_saferm -y --trash-root "$TRASHREPO" "$REPOWORK/r.txt"
-check "仓库内 + 仅 -y：退出码 1" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)" "code=$CODE $OUT"
-check "仓库内 + 仅 -y：要求 --yes-i-am-sure" "$(contains "$OUT" "--yes-i-am-sure" && echo 0 || echo 1)" "$OUT"
-check "仓库内 + 仅 -y：目标原封不动" "$([ -f "$REPOWORK/r.txt" ] && echo 0 || echo 1)"
+check "仓库内普通文件 + 仅 -y：退出码 0" "$([ "$CODE" -eq 0 ] && echo 0 || echo 1)" "code=$CODE $OUT"
+check "仓库内普通文件 + 仅 -y：文件已移走" "$([ ! -e "$REPOWORK/r.txt" ] && echo 0 || echo 1)"
 
-run_saferm --yes-i-am-sure --trash-root "$TRASHREPO" "$REPOWORK/r.txt"
-check "仓库内 + --yes-i-am-sure：退出码 0" "$([ "$CODE" -eq 0 ] && echo 0 || echo 1)" "code=$CODE $OUT"
-check "仓库内 + --yes-i-am-sure：文件已移走" "$([ ! -e "$REPOWORK/r.txt" ] && echo 0 || echo 1)"
+# (b) 仓库根本身：默认被护栏第 8 条拒绝
+REPO2="$REPO_FIX/myrepo"
+TRASH2="$REPO_FIX/trash2"
+mkdir -p "$REPO2/.git"
+printf '%s' "top" > "$REPO2/top.txt"
+
+run_saferm -y --trash-root "$TRASH2" "$REPO2"
+check "仓库根：默认被护栏拒绝（退出码 1）" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)" "code=$CODE $OUT"
+check "仓库根：拒绝理由写明是版本库" "$(contains "$OUT" "版本库" && echo 0 || echo 1)" "$OUT"
+
+# 放开护栏第 8 条后由危险级接手：仍然需要 --yes-i-am-sure（第二道防线）
+NOGUARD="$REPO_FIX/noguard.toml"
+printf '[guard]\nprotect_vcs_root = false\n' > "$NOGUARD"
+
+run_saferm -y --config "$NOGUARD" --trash-root "$TRASH2" "$REPO2"
+check "仓库根 + 放开护栏 + 仅 -y：仍被拦（退出码 1）" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)" "code=$CODE $OUT"
+check "仓库根 + 放开护栏 + 仅 -y：要求 --yes-i-am-sure" "$(contains "$OUT" "--yes-i-am-sure" && echo 0 || echo 1)" "$OUT"
+check "仓库根 + 仅 -y：目标原封不动" "$([ -f "$REPO2/top.txt" ] && echo 0 || echo 1)"
+
+run_saferm --yes-i-am-sure --config "$NOGUARD" --trash-root "$TRASH2" "$REPO2"
+check "仓库根 + --yes-i-am-sure：放行（退出码 0）" "$([ "$CODE" -eq 0 ] && echo 0 || echo 1)" "code=$CODE $OUT"
+check "仓库根 + --yes-i-am-sure：已移走" "$([ ! -e "$REPO2" ] && echo 0 || echo 1)"
 
 # ===========================================================================
 section "8. dry-run 必须零副作用"
