@@ -181,6 +181,10 @@ func (s *Session) Move(i int, stats Stats) error {
 
 // rename 完成实际的移动：先建好镜像路径的父目录，再同卷改名。
 //
+// 超长路径不依赖系统设置：Go 的 os 包对超长路径会自动加 verbatim 前缀。
+// Windows 保留设备名（nul/con/aux…）在 guard 预检阶段就已被拒绝
+// （AbsClean 的字面性检查），走不到这里。
+//
 // 失败路径上会把状态推进到 in-progress 并落盘，这样"进程正好在改名中途被杀"
 // 也能从清单里看出这一项处于不确定状态。
 func (s *Session) rename(i int) error {

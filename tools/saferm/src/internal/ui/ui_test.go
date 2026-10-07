@@ -419,3 +419,57 @@ func TestAskSummaryFlagsIncompleteScan(t *testing.T) {
 		t.Fatalf("截断的数值应标为下界：\n%s", out.String())
 	}
 }
+
+// 预授权（-y/-f、--yes-i-am-sure）与运行环境无关：命中即放行，
+// 不打印摘要也不再追问。回归背景：此前 SkipConfirm / YesIAmSure 只在
+// 非交互分支生效，交互终端下 -y 仍会追问，与设计文档 §8.2 矛盾。
+func TestAskPreApprovalAppliesInBothEnvironments(t *testing.T) {
+	req := Request{
+		Level: LevelConfirm,
+		Risks: []Risk{{Target: "/tmp/proj", IsDir: true, Stats: ScanStats{Files: 60}}},
+		Dest:  []string{"/trash/op/proj"},
+	}
+	dangerReq := Request{
+		Level: LevelDanger,
+		Risks: []Risk{{Target: "/tmp/saferm", IsDir: true, Stats: ScanStats{Files: 6000}}},
+		Dest:  []string{"/trash/op/saferm"},
+	}
+
+	cases := []struct {
+		name     string
+		req      Request
+		approval Approval
+		tty      bool
+		wantOK   bool
+	}{
+		{"交互 + 确认级 + -y", req, Approval{SkipConfirm: true}, true, true},
+		{"非交互 + 确认级 + -y", req, Approval{SkipConfirm: true}, false, true},
+		{"交互 + 危险级 + --yes-i-am-sure", dangerReq, Approval{YesIAmSure: true}, true, true},
+		{"非交互 + 危险级 + --yes-i-am-sure", dangerReq, Approval{YesIAmSure: true}, false, true},
+		{"非交互 + 确认级 + --yes-i-am-sure 不放行", req, Approval{YesIAmSure: true}, false, false},
+		{"非交互 + 危险级 + -y 不放行", dangerReq, Approval{SkipConfirm: true}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			p := &Prompter{In: strings.NewReader(""), Out: &out, IsTTY: func() bool { return tc.tty }}
+			ok, err := p.Ask(tc.req, tc.approval)
+			if ok != tc.wantOK {
+				t.Fatalf("Ask = %v (err=%v)，期望 %v", ok, err, tc.wantOK)
+			}
+			if !tc.wantOK {
+				if !errors.Is(err, ErrNonInteractive) {
+					t.Fatalf("期望 ErrNonInteractive，实际 %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("不该报错，实际 %v", err)
+			}
+			// 预授权放行时不应打印任何确认摘要
+			if out.Len() != 0 {
+				t.Fatalf("预授权放行不应打印确认摘要，实际输出：\n%s", out.String())
+			}
+		})
+	}
+}

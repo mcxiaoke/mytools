@@ -14,7 +14,15 @@ import (
 //
 // 刻意不用 filepath.EvalSymlinks：那会解析最后一级的符号链接，
 // 与"删链接本身而不是链接目标"的语义冲突（设计文档 §5.0）。
+//
+// 末段为 Windows 保留设备名（nul/con/aux…）的路径会在这里被拒绝：
+// Go 1.26 的 filepath.Abs 会把它们改写成设备命名空间形式，guard 若拿着
+// 被改写过的路径继续走，就会对错误的对象做判断。拒绝发生在任何检查
+// 与移动之前，原数据必然原封不动（C6/C7）。
 func AbsClean(p string) (string, error) {
+	if err := checkLiteralPath(p); err != nil {
+		return "", err
+	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute path %q: %w", p, err)

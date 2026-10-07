@@ -57,9 +57,18 @@ func confirmConfig(cfg config.Config) ui.ConfirmConfig {
 // scanLimits 决定扫描的早退上限：拿危险级阈值当上限，
 // 数到那儿就够判断"要不要升为危险级"了，不必把几十万文件数完（设计文档 §6.1）。
 //
-// 上限为 0 表示"该维度不设限"，ScanLimits 自己按 > 0 判断。
+// 文件数上限取"危险级阈值 + 1"：计数是逐条 +1，截断时计数恰好等于上限。
+// 若上限就是阈值本身，Decide 里"严格大于阈值"的比较将永远无法命中，
+// 单个 5001 个文件的目录只会走到确认级——危险级的体量触发成了死代码。
+// +1 让"恰好超过阈值"仍能被观察到（阈值 = 0 表示不按此项判断）。
+//
+// 字节数不需要 +1：单个条目可以贡献任意大的字节数，截断时字节数已经越过阈值。
 func scanLimits(cc ui.ConfirmConfig) ui.ScanLimits {
-	return ui.ScanLimits{MaxFiles: cc.DangerFileThreshold, MaxBytes: cc.BytesThreshold}
+	maxFiles := int64(0)
+	if cc.DangerFileThreshold > 0 {
+		maxFiles = cc.DangerFileThreshold + 1
+	}
+	return ui.ScanLimits{MaxFiles: maxFiles, MaxBytes: cc.BytesThreshold}
 }
 
 // volumeConfig 把 [trash] 段交给 volume。

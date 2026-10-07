@@ -177,13 +177,17 @@ func (p *Prompter) Ask(req Request, ap Approval) (bool, error) {
 		return true, nil
 	}
 
+	// 预授权（-y/-f 对确认级、--yes-i-am-sure 对危险级）的语义是"跳过确认提示"，
+	// 与运行环境无关：命中即直接放行，不打印摘要也不再追问。
+	// 此前这段只在非交互分支生效，交互终端下 -y 仍会追问，与设计文档 §8.2 矛盾。
+	if req.Level == LevelConfirm && ap.SkipConfirm {
+		return true, nil
+	}
+	if req.Level == LevelDanger && ap.YesIAmSure {
+		return true, nil
+	}
+
 	if !p.Interactive() {
-		if req.Level == LevelConfirm && ap.SkipConfirm {
-			return true, nil
-		}
-		if req.Level == LevelDanger && ap.YesIAmSure {
-			return true, nil
-		}
 		return false, fmt.Errorf("%w。%s", ErrNonInteractive, p.hint(req.Level))
 	}
 

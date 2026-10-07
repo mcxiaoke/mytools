@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -545,4 +546,71 @@ func TestEndToEndUnknownFlagFails(t *testing.T) {
 	if !strings.Contains(res.stderr, "用法") {
 		t.Errorf("应给出用法提示：\n%s", res.stderr)
 	}
+}
+
+// 危险级体量触发的边界：文件数恰好超过 danger_file_threshold 必须升为危险级。
+//
+// 回归背景：扫描早退上限曾与阈值相等，而计数逐条 +1，截断时计数恰好等于阈值，
+// Decide 的"严格大于"永远无法命中——5001 个文件的目录只会走到确认级，
+// 危险级的体量触发成了死代码。早退上限改为"阈值 + 1"后，这条边界必须成立。
+func TestEndToEndDangerLevelBulkBoundary(t *testing.T) {
+	base := t.TempDir()
+	trashRoot := filepath.Join(base, "trash")
+
+	cfg := config.Default()
+	cfg.Confirm.FileThreshold = 5
+	cfg.Confirm.DangerFileThreshold = 10
+	cfg.Confirm.AlwaysConfirmDir = false
+
+	build := func(t *testing.T, n int) string {
+		t.Helper()
+		dir := filepath.Join(base, fmt.Sprintf("d%02d", n))
+		for i := 0; i < n; i++ {
+			mustWrite(t, filepath.Join(dir, fmt.Sprintf("f%02d.txt", i)), "x")
+		}
+		return dir
+	}
+
+	// 用 dry-run 打印的"确认级别"断言：dry-run 不落盘，也不需要任何放行开关
+	cases := []struct {
+		n    int
+		want string
+	}{
+		{3, "无需确认"},
+		{9, "确认级"},  // 超过 file_threshold，未到 danger_file_threshold
+		{10, "确认级"}, // 恰好等于阈值：不算"超过"
+		{11, "危险级"}, // 恰好超过阈值：必须升为危险级
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%d 个文件", tc.n), func(t *testing.T) {
+			dir := build(t, tc.n)
+			res := runWithConfig(t, cfg, "", "", false, "-n", "--trash-root", trashRoot, dir)
+			if res.code != exitOK {
+				t.Fatalf("dry-run 退出码 = %d\nstdout:\n%s\nstderr:\n%s", res.code, res.stdout, res.stderr)
+			}
+			if !strings.Contains(res.stdout, "确认级别："+tc.want) {
+				t.Errorf("期望确认级别 %s\nstdout:\n%s", tc.want, res.stdout)
+			}
+		})
+	}
+}
+
+// 交互终端下 -y 也必须跳过确认级提示。
+//
+// 回归背景：SkipConfirm 此前只在非交互分支生效，TTY 下 -y 会打印摘要并等待
+// 输入，EOF 按取消处理（退出码 3），与设计文档 §8.2 的 -y 语义矛盾。
+func TestEndToEndInteractiveYesSkipsConfirmLevel(t *testing.T) {
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	trashRoot := filepath.Join(base, "trash")
+	mustWrite(t, filepath.Join(work, "a.txt"), "x")
+
+	// 目录默认走确认级（always_confirm_dir）：TTY + -y 应直接放行
+	res := run(t, "", true, "-y", "--trash-root", trashRoot, work)
+	if res.code != exitOK {
+		t.Fatalf("交互下 -y 应跳过确认级，退出码 = %d\nstdout:\n%s\nstderr:\n%s",
+			res.code, res.stdout, res.stderr)
+	}
+	mustNotExist(t, work)
+	findFileUnder(t, trashRoot, "a.txt")
 }

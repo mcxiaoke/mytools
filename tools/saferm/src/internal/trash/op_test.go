@@ -385,11 +385,15 @@ func TestMirrorPathRejectsVolumeRootAndOutside(t *testing.T) {
 
 	// 找一个与本卷不同的卷上的路径；只有一个卷时跳过（跨卷能力另有专测）
 	outside := otherVolumePath(t, volumeRoot)
-	if outside == "" {
-		t.Skip("本机只有一个卷，跳过卷外断言")
-	}
-	if _, err := MirrorPath(opDir, volumeRoot, outside); err == nil {
-		t.Fatalf("卷外路径 %q 不能算出镜像落点", outside)
+	// MirrorPath 是纯词法检查（真实的跨卷防线在 volume.Resolve 的 SameVolume，
+	// 有专测覆盖）。当卷根是 `/` 时，任何绝对路径在词法上都位于它之下，
+	// "卷外路径算不出镜像落点"这一断言无从谈起，只能跳过。
+	volClean := strings.TrimRight(filepath.Clean(volumeRoot), "/")
+	lexicallyInside := volClean == "" || strings.HasPrefix(filepath.Clean(outside), volClean+"/")
+	if outside != "" && !lexicallyInside {
+		if _, err := MirrorPath(opDir, volumeRoot, outside); err == nil {
+			t.Fatalf("卷外路径 %q 不能算出镜像落点", outside)
+		}
 	}
 }
 

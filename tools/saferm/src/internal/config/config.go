@@ -59,7 +59,9 @@ type ConfirmSection struct {
 type GuardSection struct {
 	// ProtectVCSRoot 为 true 时，目录含 .git/.hg/.svn 直接拒绝。
 	ProtectVCSRoot bool `toml:"protect_vcs_root"`
-	// GitDetect 为 true 时，目标在版本库工作区内会升为危险级。
+	// GitDetect 为 true 时检测目标与版本库的关系：仓库根路径会在确认摘要中
+	// 展示；目标**自身**是仓库根时升为危险级（"仅在仓库内"不升级，
+	// 理由见设计文档 §14 D11）。
 	GitDetect bool `toml:"git_detect"`
 	// ExtraProtected 是额外受保护的绝对路径（按子树保护）。
 	ExtraProtected []string `toml:"extra_protected"`

@@ -347,6 +347,9 @@ func movableRisks(groups []group) []ui.Risk {
 }
 
 // destinations 给出预计落点，顺序与 movableRisks 一致。
+//
+// 落点必须与真正执行时的 trash.MirrorPath 同一套规则：预览与实际不一致
+// 会破坏"确认的就是发生的"这一前提。
 func (a *app) destinations(groups []group) []string {
 	opID := a.predictedOpID()
 	var out []string
@@ -355,19 +358,20 @@ func (a *app) destinations(groups []group) []string {
 			if it.skipReason != "" {
 				continue
 			}
-			out = append(out, filepath.Join(g.trashRoot, opID, mirrorRel(g.volumeRoot, it.target)))
+			out = append(out, previewDest(g, opID, it.target))
 		}
 	}
 	return out
 }
 
-// mirrorRel 是"去掉卷挂载点前缀"后的相对路径，与 trash.MirrorPath 的规则一致。
-func mirrorRel(volumeRoot, target string) string {
-	rel, err := filepath.Rel(filepath.Clean(volumeRoot), filepath.Clean(target))
+// previewDest 计算预计落点；算不出来时退回目标本身并让它可见，
+// 而不是悄悄显示一个错的位置。
+func previewDest(g group, opID, target string) string {
+	dest, err := trash.MirrorPath(filepath.Join(g.trashRoot, opID), g.volumeRoot, target)
 	if err != nil {
 		return target
 	}
-	return rel
+	return dest
 }
 
 // execute 真正开始搬：按组创建回收根、写清单、逐项移动、结算。
@@ -386,9 +390,8 @@ func (a *app) execute(groups []group, verbose bool) int {
 	for _, g := range groups {
 		warnings, err := volume.EnsureRoot(g.trashRoot, version)
 		if err != nil {
-			// 预检通过但创建失败：不做任何降级，直接报错（C7）
 			fmt.Fprintf(a.stderr, "saferm: %v\n", err)
-			return exitUsage
+			return a.setupFailed(totalDone, totalSkipped, totalFailed, failures, opLines)
 		}
 		for _, w := range warnings {
 			fmt.Fprintf(a.stderr, "saferm: 提示：%s\n", w)
@@ -413,7 +416,7 @@ func (a *app) execute(groups []group, verbose bool) int {
 		})
 		if err != nil {
 			fmt.Fprintf(a.stderr, "saferm: %v\n", err)
-			return exitUsage
+			return a.setupFailed(totalDone, totalSkipped, totalFailed, failures, opLines)
 		}
 
 		items := sess.Items()
@@ -446,6 +449,19 @@ func (a *app) execute(groups []group, verbose bool) int {
 		return exitPartial
 	}
 	return exitOK
+}
+
+// setupFailed 是"预检通过但动手阶段失败"的统一出口（C7：失败意味着没删）。
+//
+// 如果前面的组已经移动成功，这已经不是"未发生任何移动"的用法错误（退出码 1
+// 会撒谎）：必须按部分失败结算（退出码 2），并把已完成组的操作号与清单路径
+// 如实打印出来，否则脚本与人都无法对账哪些东西进了回收目录。
+func (a *app) setupFailed(done, skipped, failed int, failures, opLines []string) int {
+	if len(opLines) == 0 {
+		return exitUsage
+	}
+	a.printResult(done, skipped, failed, failures, opLines)
+	return exitPartial
 }
 
 func (a *app) printWarnings(warnings []string) {
@@ -483,8 +499,7 @@ func (a *app) printPreview(groups []group, level ui.Level) {
 					ui.HumanCount(it.stats.Files+it.stats.Dirs),
 					ui.HumanBytes(it.stats.Bytes, it.stats.Truncated))
 			}
-			fmt.Fprintf(a.stdout, "  目的    %s\n",
-				filepath.Join(g.trashRoot, opID, mirrorRel(g.volumeRoot, it.target)))
+			fmt.Fprintf(a.stdout, "  目的    %s\n", previewDest(g, opID, it.target))
 			if it.git.InRepo {
 				fmt.Fprintf(a.stdout, "  仓库    %s（在版本库工作区内）\n", it.git.RepoRoot)
 			}

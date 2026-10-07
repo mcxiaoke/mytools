@@ -195,6 +195,38 @@ func TestSetHiddenDoesNotBreakNormalUse(t *testing.T) {
 	}
 }
 
+// AbsClean 的字面性：末段为 Windows 保留设备名的路径必须在规范化之前被拒绝，
+// 否则 Go 1.26 的 filepath.Abs 会把它改写成设备命名空间形式
+// （C:\work\nul → \\.\nul，目录前缀一并丢失），guard 会拿着错误路径继续走。
+// Linux 上 nul 是合法文件名，绝不能拒绝。
+func TestAbsCleanRejectsReservedDeviceNamesOnlyOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		got, err := AbsClean(filepath.Join("some", "dir", "nul"))
+		if err != nil {
+			t.Fatalf("Linux 上 nul 是合法文件名，不应拒绝：%v", err)
+		}
+		if !filepath.IsAbs(got) {
+			t.Fatalf("AbsClean = %q, want absolute", got)
+		}
+		return
+	}
+
+	cases := []string{`C:\work\nul`, `C:\work\NUL.txt`, `nul`, `sub\con`, `aux .log`}
+	for _, c := range cases {
+		if _, err := AbsClean(c); err == nil {
+			t.Errorf("AbsClean(%q) 应拒绝 Windows 保留设备名，实际通过", c)
+		}
+	}
+
+	// 普通路径不受影响，也不能把 null 误伤成 nul
+	ok := []string{`C:\work\null`, `C:\work\nul2.txt`, `C:\work\null.txt`}
+	for _, c := range ok {
+		if _, err := AbsClean(c); err != nil {
+			t.Errorf("AbsClean(%q) 不应拒绝：%v", c, err)
+		}
+	}
+}
+
 func mustGetwd(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()

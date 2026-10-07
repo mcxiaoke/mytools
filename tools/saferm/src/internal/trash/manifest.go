@@ -148,7 +148,10 @@ func Unfinished(trashRoot string) (ops []UnfinishedOp, badCount int, err error) 
 			badCount++
 			continue
 		}
-		if m.FinishedAt != nil && m.State == OpDone {
+		// 只有"从未正常收尾"（FinishedAt 为空，即进程被杀/断电）的操作才算未完成。
+		// partial / failed 是正常收尾的批次：结果已经记录在清单里，不算悬案，
+		// 否则一次含失败项的历史批次会让 `where` 永远返回非零退出码。
+		if m.FinishedAt != nil {
 			continue
 		}
 		ops = append(ops, UnfinishedOp{
