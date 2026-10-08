@@ -29,7 +29,6 @@ type Config struct {
 	} `yaml:"server"`
 	Index struct {
 		Interval        string   `yaml:"interval"`        // re-index interval, e.g. "5m"
-		Persist         string   `yaml:"persist"`         // index persistence file path
 		MaxDepth        int      `yaml:"maxDepth"`        // max walk depth (0 = unlimited)
 		RescanDepth     int      `yaml:"rescanDepth"`     // levels always walked each pass (<=0 -> defaultRescanDepth); deeper dirs skip by stamp
 		FullInterval    string   `yaml:"fullInterval"`    // force a full rebuild after this duration (default "24h"; "0" disables)
@@ -142,6 +141,16 @@ func (c *Config) BuiltinExcludesEnabled() bool {
 // IndexIncremental reports whether incremental indexing is enabled (default true).
 func (c *Config) IndexIncremental() bool {
 	return c.Index.Incremental == nil || *c.Index.Incremental
+}
+
+// IndexPath returns the full path to the compact index database file.
+// If DataDir is empty, an empty string is returned so ad-hoc configs (such as in tests)
+// do not write index files to the current working directory.
+func (c *Config) IndexPath() string {
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, "filelist.db")
 }
 
 // InlineHTMLBlocked reports whether inline html/svg rendering is blocked (default true).
@@ -412,13 +421,6 @@ func LoadConfig(path string) (*Config, error) {
 	// resolve relative paths to absolute (relative to config file directory)
 	cfg.DataDir = resolvePath(cfg.DataDir, baseDir)
 	cfg.Log.File = resolvePath(cfg.Log.File, baseDir)
-
-	// resolve persist: if empty, default to dataDir/filelist.idx (already resolved)
-	if cfg.Index.Persist == "" {
-		cfg.Index.Persist = filepath.Join(cfg.DataDir, "filelist.idx")
-	} else {
-		cfg.Index.Persist = resolvePath(cfg.Index.Persist, baseDir)
-	}
 
 	// normalize base path (sub-directory reverse proxy deployment)
 	cfg.Server.BasePath, err = normalizeBasePath(cfg.Server.BasePath)

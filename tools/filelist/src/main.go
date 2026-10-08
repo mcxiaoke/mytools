@@ -173,13 +173,8 @@ func printStartup(cfg *Config, configPath string) {
 		logDest = "stdout"
 	}
 	fmt.Fprintf(w, "Log\t%s (%s)\n", logDest, cfg.Log.Level)
-	fmt.Fprintf(w, "Index\tinterval=%s, persist=%s, incremental=%v, maxDepth=%s\n",
-		cfg.Index.Interval, func() string {
-			if cfg.Index.Persist != "" {
-				return cfg.Index.Persist
-			}
-			return "auto"
-		}(), cfg.IndexIncremental(), func() string {
+	fmt.Fprintf(w, "Index\tinterval=%s, path=%s, incremental=%v, maxDepth=%s\n",
+		cfg.Index.Interval, cfg.IndexPath(), cfg.IndexIncremental(), func() string {
 			if cfg.Index.MaxDepth <= 0 {
 				return "unlimited"
 			}
@@ -255,7 +250,6 @@ dataDir: ./data            # directory for index files and other runtime data
 
 index:
   interval: 5m              # re-index interval (30s, 5m, 1h)
-  persist: ""                # index cache file (empty = auto: dataDir/filelist.idx)
   maxDepth: 0                # max walk depth (0 = unlimited)
   rescanDepth: 3             # top levels always re-walked each pass (deep changes detection)
   fullInterval: 24h          # force a full rebuild after this duration (0s = off)

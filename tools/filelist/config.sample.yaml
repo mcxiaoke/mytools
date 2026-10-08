@@ -3,9 +3,8 @@
 # All fields below show their default values.
 #
 # ── File Locations ──────────────────────────────────────────────
-# dataDir       Runtime data directory (index cache, etc.)
+# dataDir       Runtime data directory (index database, etc.)
 # log.file      Log file path (empty = stdout)
-# index.persist Index cache file (empty = auto: <dataDir>/filelist.idx)
 # ───────────────────────────────────────────────────────────────
 
 server:
@@ -35,8 +34,6 @@ dataDir: ./data          # runtime data directory (index cache, etc.)
 
 index:
   interval: 5m           # re-index interval (30s, 5m, 1h, etc.)
-  persist: ""            # index cache file (empty = auto: <dataDir>/filelist.idx)
-                         #   set explicitly to override; ~ is expanded
   maxDepth: 0            # max directory walk depth (0 = unlimited; 1 = only the
                          #   entries directly under each root)
   rescanDepth: 3         # top N levels of each root are ALWAYS re-walked every

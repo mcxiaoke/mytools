@@ -5,6 +5,7 @@ build/
 data/
 logs/
 *.idx
+*.db
 *.log
 
 # actual config (keep sample)

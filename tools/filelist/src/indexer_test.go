@@ -177,7 +177,7 @@ func testIndexer(t *testing.T, rootPath string, mutate func(cfg *Config)) *Index
 	if mutate != nil {
 		mutate(cfg)
 	}
-	return &Indexer{cfg: cfg, entries: map[string]Entry{}, dirStamp: map[string]stamp{}}
+	return &Indexer{cfg: cfg}
 }
 
 func writeFile(t *testing.T, p, content string) {
@@ -204,10 +204,10 @@ func TestBuildIndex_IncrementalNoChangeIsCheap(t *testing.T) {
 
 	settle()
 	first := idx.BuildIndex(false) // full build (empty index)
-	if first.Added != 3 {     // a.txt, sub, sub/b.txt
+	if first.Added != 3 {          // a.txt, sub, sub/b.txt
 		t.Fatalf("first pass: Added=%d, want 3", first.Added)
 	}
-	if got := len(idx.entries); got != 3 {
+	if got := idx.TotalEntries(); got != 3 {
 		t.Fatalf("first pass: entries=%d, want 3", got)
 	}
 
@@ -219,7 +219,7 @@ func TestBuildIndex_IncrementalNoChangeIsCheap(t *testing.T) {
 	if second.Added != 0 || second.Changed != 0 || second.Removed != 0 {
 		t.Errorf("second pass: unexpected diff: %+v", second)
 	}
-	if got := len(idx.entries); got != 3 {
+	if got := idx.TotalEntries(); got != 3 {
 		t.Fatalf("second pass: entries=%d, want 3", got)
 	}
 }
@@ -247,10 +247,10 @@ func TestBuildIndex_IncrementalAddRemove(t *testing.T) {
 	if pass.Added != 1 {
 		t.Errorf("add pass: Added=%d, want 1", pass.Added)
 	}
-	if got := len(idx.entries); got != 4 {
+	if got := idx.TotalEntries(); got != 4 {
 		t.Errorf("add pass: entries=%d, want 4", got)
 	}
-	if _, ok := idx.entries["/v/sub/b.txt"]; !ok {
+	if _, ok := idx.AllEntries()["/v/sub/b.txt"]; !ok {
 		t.Error("add pass: existing entry /v/sub/b.txt was lost")
 	}
 
@@ -263,7 +263,7 @@ func TestBuildIndex_IncrementalAddRemove(t *testing.T) {
 	if pass.Removed != 1 {
 		t.Errorf("remove pass: Removed=%d, want 1", pass.Removed)
 	}
-	if got := len(idx.entries); got != 3 { // sub, sub/b.txt, c.txt
+	if got := idx.TotalEntries(); got != 3 { // sub, sub/b.txt, c.txt
 		t.Errorf("after remove: entries=%d, want 3", got)
 	}
 }
@@ -281,10 +281,10 @@ func TestBuildIndex_MaxDepth(t *testing.T) {
 	// children (top.txt, d1). Entries under d1 (depth 2+) must not appear.
 	idx := testIndexer(t, dir, func(c *Config) { c.Index.MaxDepth = 1 })
 	idx.BuildIndex(false)
-	if got := len(idx.entries); got != 2 { // top.txt, d1
+	if got := idx.TotalEntries(); got != 2 { // top.txt, d1
 		t.Fatalf("maxDepth=1: entries=%d, want 2 (top.txt, d1)", got)
 	}
-	for p := range idx.entries {
+	for p := range idx.AllEntries() {
 		if strings.Contains(p, "l1.txt") || strings.Contains(p, "l2.txt") || p == "/v/d1/d2" {
 			t.Errorf("maxDepth=1: depth-2+ entry %q must not be indexed", p)
 		}
@@ -300,7 +300,7 @@ func TestBuildIndex_ExcludeFiles(t *testing.T) {
 
 	idx := testIndexer(t, dir, nil)
 	idx.BuildIndex(false)
-	for p := range idx.entries {
+	for p := range idx.AllEntries() {
 		if p != "/v/ok.txt" {
 			t.Errorf("excluded file %q made it into the index", p)
 		}
@@ -325,8 +325,8 @@ func TestBuildIndex_ExcludeDirsConsistentWithList(t *testing.T) {
 
 	idx := testIndexer(t, dir, nil)
 	idx.BuildIndex(false)
-	if len(idx.entries) != 0 {
-		t.Errorf("excluded dir leaked into index: %+v", idx.entries)
+	if idx.TotalEntries() != 0 {
+		t.Errorf("excluded dir leaked into index: %+v", idx.AllEntries())
 	}
 	list, err := idx.ListDir("/v")
 	if err != nil {
@@ -351,7 +351,7 @@ func TestBuildIndex_DoesNotFollowDirSymlink(t *testing.T) {
 
 	idx := testIndexer(t, dir, nil)
 	idx.BuildIndex(false)
-	for p := range idx.entries {
+	for p := range idx.AllEntries() {
 		if p == "/v/link/secret.txt" || p == "/v/outside/secret.txt" {
 			t.Errorf("index walked through a directory symlink: %q", p)
 		}
@@ -386,7 +386,7 @@ func TestPersistSaveLoadRoundTrip(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "sub", "b.txt"), "b")
 
 	idx := testIndexer(t, dir, nil)
-	idx.persistPath = filepath.Join(t.TempDir(), "filelist.idx")
+	idx.persistPath = filepath.Join(t.TempDir(), "filelist.db")
 	settle()
 	idx.BuildIndex(false)
 	if err := idx.save(); err != nil {
@@ -399,20 +399,17 @@ func TestPersistSaveLoadRoundTrip(t *testing.T) {
 	if err := idx2.load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := len(idx2.entries); got != 3 {
+	if got := idx2.TotalEntries(); got != 3 {
 		t.Fatalf("after load: entries=%d, want 3", got)
 	}
-	if _, ok := idx2.entries["/v/sub/b.txt"]; !ok {
+	if _, ok := idx2.AllEntries()["/v/sub/b.txt"]; !ok {
 		t.Error("after load: missing /v/sub/b.txt")
 	}
-	if _, ok := idx2.dirStamp["/v/sub"]; !ok {
+	if _, ok := idx2.compact.Load().folderMap["/v/sub"]; !ok {
 		t.Error("after load: missing dir stamp for /v/sub")
 	}
 
 	// a no-change incremental pass on the restored index must skip everything
-	idx2.mu.Lock()
-	idx2.gen = 0
-	idx2.mu.Unlock()
 	r := idx2.BuildIndex(false)
 	if r.Skipped == 0 {
 		t.Error("incremental pass after restore should skip the untouched root")
@@ -484,7 +481,7 @@ func TestBuildIndex_RescanDepthDetectsDeepChanges(t *testing.T) {
 	if res.Added != 1 {
 		t.Fatalf("Added=%d, want 1 (deep change must be detected by rescanDepth walk)", res.Added)
 	}
-	if _, ok := idx.entries["/v/Books/图鉴/new.txt"]; !ok {
+	if _, ok := idx.AllEntries()["/v/Books/图鉴/new.txt"]; !ok {
 		t.Error("new deep entry missing from index")
 	}
 
@@ -515,21 +512,31 @@ func TestBuildIndex_ForceFullDropsStaleEntries(t *testing.T) {
 	idx.BuildIndex(false)
 
 	// stale entry left over from e.g. a removed root or an old config
-	idx.mu.Lock()
-	idx.entries["/v/ghost.txt"] = newEntry("ghost.txt", "/v/ghost.txt", 1, time.Now(), false)
-	idx.mu.Unlock()
+	oldC := idx.compact.Load()
+	folders := make([]CompactFolder, len(oldC.Folders))
+	copy(folders, oldC.Folders)
+	folders[0].FileCount++
+
+	off, nlen := oldC.Arena.Append("ghost.txt")
+	ghostC := &CompactIndex{
+		Folders:   folders,
+		Files:     append(append([]CompactFile{}, oldC.Files...), CompactFile{FolderID: 0, NameOff: off, NameLen: nlen}),
+		Arena:     oldC.Arena,
+		folderMap: oldC.folderMap,
+	}
+	idx.compact.Store(ghostC)
 
 	res := idx.BuildIndex(true)
 	if res.Removed == 0 {
 		t.Fatalf("Removed=%d, want >=1 (forced full must GC unseen entries)", res.Removed)
 	}
-	if _, ok := idx.entries["/v/ghost.txt"]; ok {
+	if _, ok := idx.AllEntries()["/v/ghost.txt"]; ok {
 		t.Error("ghost entry survived a forced full rebuild")
 	}
 
-	idx.mu.RLock()
+	idx.mu.Lock()
 	fresh := time.Since(idx.lastFull) < time.Minute
-	idx.mu.RUnlock()
+	idx.mu.Unlock()
 	if !fresh {
 		t.Error("lastFull was not refreshed by the forced full rebuild")
 	}

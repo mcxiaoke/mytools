@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/gob"
 	"fmt"
 	"os"
 	"path"
@@ -9,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,25 +29,6 @@ type Entry struct {
 	gen   uint64 // generation stamp used by incremental GC
 	lname string // lower-cased name, for search
 	lpath string // lower-cased path, for search
-}
-
-// stamp is the change signature of a directory: modification time + size.
-// A directory whose stamp is unchanged is assumed to have an unchanged subtree.
-type stamp struct {
-	Mod  time.Time
-	Size int64
-	Gen  uint64
-}
-
-// persistVersion bumps whenever the on-disk layout changes; older files are
-// discarded and rebuilt instead of being misread.
-const persistVersion = 2
-
-// persistData is the on-disk index cache.
-type persistData struct {
-	Version int
-	Entries map[string]Entry
-	Dirs    map[string]stamp
 }
 
 // scanProgressInterval is how often a long-running scan logs its progress.
@@ -72,23 +53,16 @@ type buildResult struct {
 	Duration time.Duration `json:"durationMs"`
 }
 
-// Indexer maintains an in-memory index of all configured directories
-// and supports background re-indexing with disk persistence.
+// Indexer coordinates the in-memory compact index of all configured directories
+// and background re-indexing with disk persistence.
 //
-// Incremental strategy:
-//   - every entry/directory carries a generation stamp;
-//   - a directory whose (mtime, size) is unchanged has its whole subtree
-//     skipped — no ReadDir, no stat of the files inside;
-//   - files whose (mtime, size) are unchanged reuse the existing entry;
-//   - entries not seen in this generation and not under a skipped subtree
-//     are dropped.
-//
-// When nothing changed, a pass costs one stat per root and nothing else.
+// Concurrency Model:
+//   - Searches read the immutable snapshot via atomic.Pointer[CompactIndex] with ZERO locks.
+//   - Background scanning builds a new CompactIndex independently.
+//   - A short atomic pointer swap updates the active index.
 type Indexer struct {
-	mu       sync.RWMutex
-	entries  map[string]Entry // virtual path -> entry
-	dirStamp map[string]stamp // virtual path -> directory signature
-	gen      uint64
+	mu      sync.Mutex
+	compact atomic.Pointer[CompactIndex]
 
 	cfg          *Config
 	persistPath  string
@@ -102,7 +76,7 @@ type Indexer struct {
 	indexSaved   bool // true once the current index has been persisted at least once
 }
 
-// NewIndexer creates a new indexer, optionally loading a persisted index.
+// NewIndexer creates a new indexer, optionally loading a persisted compact index.
 func NewIndexer(cfg *Config) *Indexer {
 	interval, err := time.ParseDuration(cfg.Index.Interval)
 	if err != nil {
@@ -121,23 +95,23 @@ func NewIndexer(cfg *Config) *Indexer {
 
 	idx := &Indexer{
 		cfg:          cfg,
-		persistPath:  cfg.Index.Persist,
+		persistPath:  cfg.IndexPath(),
 		interval:     interval,
 		fullInterval: fullInterval,
 		stopCh:       make(chan struct{}),
-		entries:      make(map[string]Entry),
-		dirStamp:     make(map[string]stamp),
 	}
 
-	// try loading persisted index for fast startup
-	if cfg.Index.Persist != "" {
-		if err := idx.load(); err != nil {
+	// try loading persisted compact index for fast startup
+	if idx.persistPath != "" {
+		if loaded, err := LoadCompactIndex(idx.persistPath, cfg.Roots); err != nil {
 			logger.Warn("indexer: load persisted index: %v (will re-build)", err)
-		} else if fi, serr := os.Stat(idx.persistPath); serr == nil {
-			// Approximate the last full rebuild with the persist file's
-			// mtime. Incremental saves may make it newer than the actual
-			// last full, which only delays the next full — never skips one.
-			idx.lastFull = fi.ModTime()
+		} else {
+			idx.compact.Store(loaded)
+			idx.indexSaved = true
+			logger.Info("indexer: loaded %d entries from persisted database (%s)", loaded.TotalEntries(), idx.persistPath)
+			if fi, serr := os.Stat(idx.persistPath); serr == nil {
+				idx.lastFull = fi.ModTime()
+			}
 		}
 	}
 
@@ -218,8 +192,8 @@ func (idx *Indexer) Excluded(name string, isDir bool) bool {
 // BuildIndex refreshes the in-memory index using the incremental strategy
 // (or a full rebuild when index.incremental is false, the index is empty,
 // or forceFull is set).
-// Scanning runs under a read lock so searches are not blocked; only the final
-// merge takes the write lock briefly.
+// Searches continue to operate lock-free during building; only the final pointer
+// swap replaces the active snapshot.
 func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 	start := time.Now()
 
@@ -229,9 +203,6 @@ func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 		return idx.lastResult
 	}
 	idx.building = true
-	idx.gen++
-	gen := idx.gen
-	incremental := idx.cfg.IndexIncremental() && len(idx.entries) > 0 && !forceFull
 	idx.mu.Unlock()
 
 	defer func() {
@@ -240,7 +211,9 @@ func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 		idx.mu.Unlock()
 	}()
 
-	// ---- scan phase (read lock: searches keep working) ----
+	oldCompact := idx.compact.Load()
+	incremental := idx.cfg.IndexIncremental() && oldCompact != nil && len(oldCompact.Folders) > 0 && !forceFull
+
 	switch {
 	case forceFull && idx.cfg.IndexIncremental():
 		logger.Info("indexer: starting forced full scan of %d root(s) (index.fullInterval %s reached)",
@@ -250,59 +223,19 @@ func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 	default:
 		logger.Info("indexer: starting full scan of %d root(s)", len(idx.cfg.Roots))
 	}
-	idx.mu.RLock()
-	updates, touched, retained, res, walkErrs := idx.scan(gen, incremental)
-	idx.mu.RUnlock()
 
-	// ---- merge phase (write lock, short) ----
+	newCompact, res, walkErrs := buildCompactPass(idx.cfg, oldCompact, incremental)
+
+	idx.compact.Store(newCompact)
+
 	idx.mu.Lock()
-	for p, e := range updates {
-		e.gen = gen
-		idx.entries[p] = e
-	}
-	for p, st := range touched {
-		st.Gen = gen
-		idx.dirStamp[p] = st
-	}
-	if !incremental {
-		// full rebuild: drop everything this pass did not see
-		for p := range idx.entries {
-			if idx.entries[p].gen != gen {
-				delete(idx.entries, p)
-				res.Removed++
-			}
-		}
-		for p := range idx.dirStamp {
-			if idx.dirStamp[p].Gen != gen {
-				delete(idx.dirStamp, p)
-			}
-		}
-	} else {
-		for p, e := range idx.entries {
-			if e.gen == gen {
-				continue
-			}
-			if hasRetainedAncestor(p, retained) {
-				continue
-			}
-			delete(idx.entries, p)
-			res.Removed++
-		}
-		for p, st := range idx.dirStamp {
-			if st.Gen == gen || hasRetainedAncestor(p, retained) {
-				continue
-			}
-			delete(idx.dirStamp, p)
-		}
-	}
 	idx.lastBuild = time.Now()
 	if !incremental {
 		idx.lastFull = time.Now()
 	}
 	res.Duration = time.Since(start)
 	idx.lastResult = res
-	total := len(idx.entries)
-	incrementalFlag := incremental
+	total := newCompact.TotalEntries()
 	idx.mu.Unlock()
 
 	for _, e := range walkErrs {
@@ -311,13 +244,13 @@ func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 	logger.Info("indexer: %d entries (+%d ~%d -%d, skipped %d subtrees) in %v%s",
 		total, res.Added, res.Changed, res.Removed, res.Skipped, res.Duration,
 		func() string {
-			if incrementalFlag {
+			if incremental {
 				return ""
 			}
 			return " [full]"
 		}())
 
-	if idx.persistPath != "" && (res.Added+res.Changed+res.Removed > 0 || idx.indexSaved == false) {
+	if idx.persistPath != "" && (res.Added+res.Changed+res.Removed > 0 || !idx.indexSaved) {
 		if err := idx.save(); err != nil {
 			logger.Error("indexer: persist failed: %v", err)
 		}
@@ -326,229 +259,14 @@ func (idx *Indexer) BuildIndex(forceFull bool) buildResult {
 	return res
 }
 
-// scan walks the configured roots and returns the diff to apply.
-// It must be called with at least the read lock held.
-func (idx *Indexer) scan(gen uint64, incremental bool) (map[string]Entry, map[string]stamp, map[string]bool, buildResult, []error) {
-	updates := make(map[string]Entry)
-	touched := make(map[string]stamp)
-	retained := make(map[string]bool)
-	var res buildResult
-	var errs []error
-	progress := &scanProgress{start: time.Now(), lastLog: time.Now()}
-
-	for _, r := range idx.cfg.Roots {
-		info, err := os.Stat(r.Path)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("cannot access %s: %w", r.Path, err))
-			continue
-		}
-		if !info.IsDir() {
-			errs = append(errs, fmt.Errorf("%s is not a directory", r.Path))
-			continue
-		}
-
-		st := stamp{Mod: info.ModTime(), Size: info.Size()}
-		// The root itself may only be stamp-skipped when rescanDepth is 0:
-		// a deep change (e.g. a new subdirectory two levels down) does not
-		// update the root's mtime, so skipping the root unconditionally
-		// would hide the whole subtree from every incremental pass.
-		if incremental && idx.cfg.Index.RescanDepth <= 0 && idx.dirStamp[r.URL].same(st) {
-			retained[r.URL] = true
-			res.Skipped++
-			continue
-		}
-		touched[r.URL] = st
-		logger.Info("indexer: scanning root %s -> %s", r.URL, r.Path)
-		idx.walkRoot(r, r.URL, 0, gen, incremental, updates, touched, retained, progress, &res, &errs)
-	}
-
-	return updates, touched, retained, res, errs
-}
-
-// walkRoot recursively walks a directory, recording changes into updates.
-// depth is the depth of dir itself (root = 0).
-func (idx *Indexer) walkRoot(r RootMapping, vdir string, depth int, gen uint64, incremental bool,
-	updates map[string]Entry, touched map[string]stamp, retained map[string]bool,
-	progress *scanProgress, res *buildResult, errs *[]error) {
-
-	realDir, ok := idx.MapVirtualToReal(vdir)
-	if !ok {
-		return
-	}
-
-	items, err := os.ReadDir(realDir)
-	if err != nil {
-		*errs = append(*errs, fmt.Errorf("read dir %s: %w", realDir, err))
-		return
-	}
-
-	// periodic progress line so very large scans are not silent
-	progress.dirs++
-	progress.entries += len(items)
-	progress.current = realDir
-	if now := time.Now(); now.Sub(progress.lastLog) >= scanProgressInterval {
-		progress.lastLog = now
-		logger.Info("indexer: scan in progress: %d entries in %d dirs, at %s (elapsed %s)",
-			progress.entries, progress.dirs, progress.current, now.Sub(progress.start).Round(time.Second))
-	}
-
-	maxDepth := idx.cfg.Index.MaxDepth
-	for _, de := range items {
-		name := de.Name()
-		if name == "" {
-			continue
-		}
-		vpath := path.Join(vdir, name)
-
-		if de.IsDir() {
-			if idx.Excluded(name, true) {
-				continue
-			}
-			fi, err := de.Info()
-			if err != nil {
-				continue
-			}
-			st := stamp{Mod: fi.ModTime(), Size: fi.Size()}
-			old, existed := idx.entries[vpath]
-			if !existed {
-				res.Added++
-			} else if !old.IsDir || !old.ModTime.Equal(st.Mod) || old.Size != st.Size {
-				res.Changed++
-			}
-			updates[vpath] = newEntry(name, vpath, fi.Size(), fi.ModTime(), true)
-
-				// Subtree skip applies only at depth >= RescanDepth: the top
-				// levels are always re-read so changes whose mtime impact
-				// does not reach the root are still detected.
-				if incremental && depth+1 >= idx.cfg.Index.RescanDepth && idx.dirStamp[vpath].same(st) {
-					// subtree unchanged: skip ReadDir/stat for everything below
-					retained[vpath] = true
-					res.Skipped++
-					continue
-				}
-			if maxDepth > 0 && depth+1 >= maxDepth {
-				// depth limit reached: keep the directory entry, do not descend
-				continue
-			}
-			touched[vpath] = st
-				idx.walkRoot(r, vpath, depth+1, gen, incremental, updates, touched, retained, progress, res, errs)
-			continue
-		}
-
-		// Symlinks are reported by ReadDir as non-directories, so we never
-		// follow them while walking (no loops, no escaping the root).
-		if idx.Excluded(name, false) {
-			continue
-		}
-		fi, err := de.Info()
-		if err != nil {
-			continue
-		}
-		mod, size := fi.ModTime(), fi.Size()
-		old, existed := idx.entries[vpath]
-		switch {
-		case !existed:
-			res.Added++
-			updates[vpath] = newEntry(name, vpath, size, mod, false)
-		case old.IsDir || !old.ModTime.Equal(mod) || old.Size != size:
-			res.Changed++
-			updates[vpath] = newEntry(name, vpath, size, mod, false)
-		default:
-			// unchanged file: reuse the existing entry, just restamp it
-			updates[vpath] = old
-		}
-	}
-}
-
-// newEntry builds an index entry with the search helper fields filled in.
-func newEntry(name, vpath string, size int64, mod time.Time, isDir bool) Entry {
-	return Entry{
-		Name:    name,
-		Path:    vpath,
-		Size:    size,
-		ModTime: mod,
-		IsDir:   isDir,
-		lname:   strings.ToLower(name),
-		lpath:   strings.ToLower(vpath),
-	}
-}
-
-// same reports whether two directory stamps are equal.
-func (s stamp) same(o stamp) bool { return s.Size == o.Size && s.Mod.Equal(o.Mod) }
-
-// hasRetainedAncestor reports whether vpath itself or any of its parent
-// directories was skipped as unchanged during this pass.
-func hasRetainedAncestor(vpath string, retained map[string]bool) bool {
-	if retained[vpath] {
-		return true
-	}
-	for i := len(vpath) - 1; i >= 0; i-- {
-		if vpath[i] == '/' {
-			if retained[vpath[:i]] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// Search queries the index for entries matching the given substring.
-// Results are scored and sorted by relevance (highest first, ties broken
-// by path): name match scores 100/80/60 (exact/prefix/contains); a
-// directory whose full path matches scores 40. Files whose name does not
-// match are never returned just because a parent directory matched —
-// otherwise one matching directory would flood the results with every
-// file below it. Each result carries MatchType ("name" or "path").
+// Search queries the compact index and returns matching entries scored and sorted.
+// Operates completely lock-free on the immutable snapshot.
 func (idx *Indexer) Search(query string, limit int) []Entry {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	c := idx.compact.Load()
+	if c == nil {
 		return nil
 	}
-
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
-	type scored struct {
-		entry Entry
-		score int
-	}
-
-	var results []scored
-	for _, e := range idx.entries {
-		var matchType string
-		var score int
-		switch {
-		case e.lname == query:
-			matchType, score = "name", 100
-		case strings.HasPrefix(e.lname, query):
-			matchType, score = "name", 80
-		case strings.Contains(e.lname, query):
-			matchType, score = "name", 60
-		case e.IsDir && strings.Contains(e.lpath, query):
-			matchType, score = "path", 40
-		default:
-			continue
-		}
-		e.MatchType = matchType
-		results = append(results, scored{e, score})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].score != results[j].score {
-			return results[i].score > results[j].score
-		}
-		return results[i].entry.Path < results[j].entry.Path
-	})
-
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
-	}
-
-	out := make([]Entry, len(results))
-	for i, r := range results {
-		out[i] = r.entry
-	}
-	return out
+	return c.Search(query, limit)
 }
 
 // ListDir returns the immediate contents of a directory at the given virtual path.
@@ -601,8 +319,8 @@ func (idx *Indexer) fullDue() bool {
 	if idx.fullInterval <= 0 {
 		return false
 	}
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 	return time.Since(idx.lastFull) >= idx.fullInterval
 }
 
@@ -637,52 +355,58 @@ func (idx *Indexer) Stop() {
 
 // IsBuilding returns whether the index is currently being (re)built.
 func (idx *Indexer) IsBuilding() bool {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 	return idx.building
 }
 
 // Stats returns index statistics for the /api/stats endpoint.
 func (idx *Indexer) Stats() map[string]any {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	c := idx.compact.Load()
+	indexed := 0
+	if c != nil {
+		indexed = c.TotalEntries()
+	}
+	idx.mu.Lock()
+	building := idx.building
+	lastBuild := idx.lastBuild
+	lastPass := idx.lastResult
+	idx.mu.Unlock()
+
 	return map[string]any{
-		"indexed":     len(idx.entries),
-		"building":    idx.building,
-		"lastBuild":   idx.lastBuild,
+		"indexed":     indexed,
+		"building":    building,
+		"lastBuild":   lastBuild,
 		"incremental": idx.cfg.IndexIncremental(),
-		"lastPass":    idx.lastResult,
+		"lastPass":    lastPass,
 	}
 }
 
-// save persists the current index to disk using gob encoding.
-// It writes to a temporary file first and renames on success so a crash
-// mid-write cannot corrupt an existing cache.
-func (idx *Indexer) save() error {
-	idx.mu.RLock()
-	data := persistData{
-		Version: persistVersion,
-		Entries: idx.entries,
-		Dirs:    idx.dirStamp,
+// TotalEntries returns the total number of indexed entries.
+func (idx *Indexer) TotalEntries() int {
+	c := idx.compact.Load()
+	if c == nil {
+		return 0
 	}
-	idx.mu.RUnlock()
+	return c.TotalEntries()
+}
 
-	tmp := idx.persistPath + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return err
+// AllEntries materializes and returns all entries as a map of virtual path -> Entry.
+func (idx *Indexer) AllEntries() map[string]Entry {
+	c := idx.compact.Load()
+	if c == nil {
+		return nil
 	}
-	if err := gob.NewEncoder(f).Encode(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
+	return c.AllEntries()
+}
+
+// save persists the current index to disk using binary FLIX format (Raw uncompressed mode by default).
+func (idx *Indexer) save() error {
+	c := idx.compact.Load()
+	if c == nil {
+		return nil
 	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, idx.persistPath); err != nil {
-		os.Remove(tmp)
+	if err := c.Save(idx.persistPath, idx.cfg.Roots, false); err != nil {
 		return err
 	}
 	idx.mu.Lock()
@@ -693,39 +417,14 @@ func (idx *Indexer) save() error {
 
 // load restores a previously persisted index from disk.
 func (idx *Indexer) load() error {
-	f, err := os.Open(idx.persistPath)
+	loaded, err := LoadCompactIndex(idx.persistPath, idx.cfg.Roots)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	var data persistData
-	if err := gob.NewDecoder(f).Decode(&data); err != nil {
-		return fmt.Errorf("decode %s: %w", idx.persistPath, err)
-	}
-	if data.Version != persistVersion {
-		return fmt.Errorf("%s: index format v%d, expected v%d (will rebuild)",
-			idx.persistPath, data.Version, persistVersion)
-	}
-
-	// rebuild the search helper fields dropped during encoding
-	entries := make(map[string]Entry, len(data.Entries))
-	for p, e := range data.Entries {
-		e.gen = 0
-		e.lname = strings.ToLower(e.Name)
-		e.lpath = strings.ToLower(e.Path)
-		entries[p] = e
-	}
-	if data.Dirs == nil {
-		data.Dirs = make(map[string]stamp)
-	}
-
+	idx.compact.Store(loaded)
 	idx.mu.Lock()
-	idx.entries = entries
-	idx.dirStamp = data.Dirs
 	idx.indexSaved = true
 	idx.mu.Unlock()
-
-	logger.Info("indexer: loaded %d entries from persisted index", len(entries))
+	logger.Info("indexer: loaded %d entries from persisted database", loaded.TotalEntries())
 	return nil
 }
