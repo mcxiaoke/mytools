@@ -490,3 +490,57 @@ func TestHandleZip(t *testing.T) {
 		t.Errorf("missing sub/f2.txt in zip, got %v", names)
 	}
 }
+
+func TestHandleList_BrowseShowsDevDirs(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "node_modules"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "node_modules", "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# Hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		Roots: []RootMapping{
+			{URL: "/data", Path: tmp},
+		},
+	}
+	cfg.Index.ExcludeDirs = append([]string(nil), BuiltinExcludeDirs...)
+	cfg.Browse.ExcludeFiles = append([]string(nil), DefaultBrowseExcludeFiles...)
+	idx := NewIndexer(cfg)
+	idx.BuildIndex(false)
+	srv := NewServer(cfg, idx)
+
+	// 1. Index should NOT contain node_modules/package.json (memory optimization)
+	results := idx.Search("package.json", 10)
+	if len(results) != 0 {
+		t.Errorf("expected index to exclude node_modules, got %v", results)
+	}
+
+	// 2. Browse list MUST contain node_modules so users can view and navigate it
+	req := httptest.NewRequest(http.MethodGet, "/api/list?path=/data", nil)
+	rec := httptest.NewRecorder()
+	srv.handleList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for list, got %d", rec.Code)
+	}
+
+	var list []Entry
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list response: %v", err)
+	}
+
+	foundNodeModules := false
+	for _, e := range list {
+		if e.Name == "node_modules" && e.IsDir {
+			foundNodeModules = true
+		}
+	}
+	if !foundNodeModules {
+		t.Errorf("expected node_modules to be visible in directory browsing, got: %+v", list)
+	}
+}

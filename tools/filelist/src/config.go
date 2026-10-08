@@ -32,11 +32,15 @@ type Config struct {
 		MaxDepth        int      `yaml:"maxDepth"`        // max walk depth (0 = unlimited)
 		RescanDepth     int      `yaml:"rescanDepth"`     // levels always walked each pass (<=0 -> defaultRescanDepth); deeper dirs skip by stamp
 		FullInterval    string   `yaml:"fullInterval"`    // force a full rebuild after this duration (default "24h"; "0" disables)
-		ExcludeDirs     []string `yaml:"excludeDirs"`     // directory names to skip
-		ExcludeFiles    []string `yaml:"excludeFiles"`    // file name patterns to skip (glob)
+		ExcludeDirs     []string `yaml:"excludeDirs"`     // directory names to skip from index (memory savings)
+		ExcludeFiles    []string `yaml:"excludeFiles"`    // file name patterns to skip from index (glob)
 		Incremental     *bool    `yaml:"incremental"`     // true (default): diff by mtime; false: always full rebuild
 		BuiltinExcludes *bool    `yaml:"builtinExcludes"` // true (default): merge built-in dev environment exclusions into excludeDirs
 	} `yaml:"index"`
+	Browse struct {
+		ExcludeDirs  []string `yaml:"excludeDirs"`  // directory names to hide in web browsing (default empty: all directories visible)
+		ExcludeFiles []string `yaml:"excludeFiles"` // file name patterns to hide in web browsing (default: .DS_Store, Thumbs.db, desktop.ini)
+	} `yaml:"browse"`
 	Security struct {
 		AllowOutsideSymlinks bool  `yaml:"allowOutsideSymlinks"` // allow /raw to serve symlink targets outside the root
 		BlockInlineHTML      *bool `yaml:"blockInlineHTML"`      // true (default): force html/svg download instead of inline render
@@ -125,17 +129,48 @@ var BuiltinExcludeDirs = []string{
 // defaultExcludeDirs points to BuiltinExcludeDirs for backward compatibility.
 var defaultExcludeDirs = BuiltinExcludeDirs
 
-var defaultExcludeFiles = []string{
+// DefaultSensitiveFiles contains sensitive credential and secret patterns
+// blocked from upload, online editing, and zip packaging.
+var DefaultSensitiveFiles = []string{
 	".env", ".env.*", ".htpasswd", ".htaccess",
 	"id_rsa", "id_rsa.*", "id_ed25519", "id_ed25519.*",
 	"*.pem", "*.key", "*.pfx", "*.p12",
-	".DS_Store", "Thumbs.db",
 }
+
+// DefaultBrowseExcludeFiles contains sensitive files and OS junk hidden by default in directory browsing.
+// Note: Directory exclusions are NOT enabled by default (browse.excludeDirs is empty) so all dev folders remain visible.
+var DefaultBrowseExcludeFiles = append(append([]string(nil), DefaultSensitiveFiles...),
+	".DS_Store", "Thumbs.db", "desktop.ini",
+)
+
+// defaultExcludeFiles is used for index exclusion when index.excludeFiles is not specified.
+var defaultExcludeFiles = DefaultBrowseExcludeFiles
 
 // BuiltinExcludesEnabled reports whether built-in development environment exclusions
 // are enabled (default true).
 func (c *Config) BuiltinExcludesEnabled() bool {
 	return c.Index.BuiltinExcludes == nil || *c.Index.BuiltinExcludes
+}
+
+// BrowseExcludeDirs returns directory names hidden from web browsing.
+func (c *Config) BrowseExcludeDirs() []string {
+	if c.Browse.ExcludeDirs == nil {
+		return []string{}
+	}
+	return c.Browse.ExcludeDirs
+}
+
+// BrowseExcludeFiles returns file patterns hidden from web browsing.
+func (c *Config) BrowseExcludeFiles() []string {
+	if c.Browse.ExcludeFiles == nil {
+		return DefaultBrowseExcludeFiles
+	}
+	return c.Browse.ExcludeFiles
+}
+
+// SensitiveFiles returns sensitive file patterns blocked from upload and online editing.
+func (c *Config) SensitiveFiles() []string {
+	return DefaultSensitiveFiles
 }
 
 // IndexIncremental reports whether incremental indexing is enabled (default true).
@@ -416,6 +451,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Index.ExcludeFiles == nil {
 		cfg.Index.ExcludeFiles = defaultExcludeFiles
+	}
+	if cfg.Browse.ExcludeDirs == nil {
+		cfg.Browse.ExcludeDirs = []string{}
+	}
+	if cfg.Browse.ExcludeFiles == nil {
+		cfg.Browse.ExcludeFiles = append([]string(nil), DefaultBrowseExcludeFiles...)
 	}
 
 	// resolve relative paths to absolute (relative to config file directory)

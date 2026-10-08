@@ -171,7 +171,7 @@ func matchName(pattern, name string) bool {
 	return p == n
 }
 
-// Excluded reports whether a directory or file name is excluded by config.
+// Excluded reports whether a directory or file name is excluded from the index by config.
 func (idx *Indexer) Excluded(name string, isDir bool) bool {
 	if isDir {
 		for _, d := range idx.cfg.Index.ExcludeDirs {
@@ -182,6 +182,36 @@ func (idx *Indexer) Excluded(name string, isDir bool) bool {
 		return false
 	}
 	for _, f := range idx.cfg.Index.ExcludeFiles {
+		if matchName(f, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// BrowseExcluded reports whether a directory or file name is hidden during live directory browsing.
+// By default, browse.excludeDirs is empty so developers can browse build outputs, dependency folders, and toolchains.
+func (idx *Indexer) BrowseExcluded(name string, isDir bool) bool {
+	if isDir {
+		for _, d := range idx.cfg.BrowseExcludeDirs() {
+			if matchName(d, name) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, f := range idx.cfg.BrowseExcludeFiles() {
+		if matchName(f, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// SensitiveExcluded reports whether a filename matches sensitive secrets or credentials
+// that must be blocked from upload or online editing.
+func (idx *Indexer) SensitiveExcluded(name string) bool {
+	for _, f := range DefaultSensitiveFiles {
 		if matchName(f, name) {
 			return true
 		}
@@ -270,8 +300,9 @@ func (idx *Indexer) Search(query string, limit int) []Entry {
 }
 
 // ListDir returns the immediate contents of a directory at the given virtual path.
-// This reads from the filesystem in real-time (not the index), applying the
-// same exclusion rules as the index so listing and search stay consistent.
+// This reads from the filesystem in real-time (not the index), applying browse
+// exclusion rules (default empty for dirs, system junk for files) so users can
+// freely explore development directories, build outputs, and toolchains.
 func (idx *Indexer) ListDir(vpath string) ([]Entry, error) {
 	vpath = path.Clean("/" + strings.TrimPrefix(vpath, "/"))
 	realPath, ok := idx.MapVirtualToReal(vpath)
@@ -286,7 +317,7 @@ func (idx *Indexer) ListDir(vpath string) ([]Entry, error) {
 
 	var entries []Entry
 	for _, de := range dirEntries {
-		if idx.Excluded(de.Name(), de.IsDir()) {
+		if idx.BrowseExcluded(de.Name(), de.IsDir()) {
 			continue
 		}
 		fi, err := de.Info()

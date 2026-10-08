@@ -174,6 +174,8 @@ func testIndexer(t *testing.T, rootPath string, mutate func(cfg *Config)) *Index
 	cfg := &Config{Roots: []RootMapping{{URL: "/v", Path: rootPath}}}
 	cfg.Index.ExcludeDirs = defaultExcludeDirs
 	cfg.Index.ExcludeFiles = defaultExcludeFiles
+	cfg.Browse.ExcludeDirs = []string{}
+	cfg.Browse.ExcludeFiles = append([]string(nil), DefaultBrowseExcludeFiles...)
 	if mutate != nil {
 		mutate(cfg)
 	}
@@ -306,17 +308,29 @@ func TestBuildIndex_ExcludeFiles(t *testing.T) {
 		}
 	}
 
-	// the same rules apply to live directory listing
+	// live directory listing hides sensitive files (.env, *.key) and OS junk (.DS_Store) by default
 	list, err := idx.ListDir("/v")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list) != 1 || list[0].Name != "ok.txt" {
-		t.Errorf("ListDir should apply exclusions, got %+v", list)
+		t.Errorf("ListDir should hide sensitive and junk files by default, got %+v", list)
+	}
+
+	// when browse.excludeFiles is explicitly emptied, all files are listed
+	idxShowAll := testIndexer(t, dir, func(c *Config) {
+		c.Browse.ExcludeFiles = []string{}
+	})
+	listAll, err := idxShowAll.ListDir("/v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listAll) != 4 {
+		t.Errorf("ListDir with empty browse excludes should show all 4 files, got %+v", listAll)
 	}
 }
 
-func TestBuildIndex_ExcludeDirsConsistentWithList(t *testing.T) {
+func TestBuildIndex_ExcludeDirsDecoupledFromList(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "node_modules"), 0755); err != nil {
 		t.Fatal(err)
@@ -325,15 +339,30 @@ func TestBuildIndex_ExcludeDirsConsistentWithList(t *testing.T) {
 
 	idx := testIndexer(t, dir, nil)
 	idx.BuildIndex(false)
+	// Index must exclude node_modules to save memory
 	if idx.TotalEntries() != 0 {
 		t.Errorf("excluded dir leaked into index: %+v", idx.AllEntries())
 	}
+
+	// Live directory listing MUST remain visible so users can browse and download files
 	list, err := idx.ListDir("/v")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 0 {
-		t.Errorf("ListDir should hide excluded dirs, got %+v", list)
+	if len(list) != 1 || list[0].Name != "node_modules" {
+		t.Errorf("ListDir should show node_modules by default, got %+v", list)
+	}
+
+	// If explicit browse exclusion is configured, ListDir then hides it
+	idxHidden := testIndexer(t, dir, func(c *Config) {
+		c.Browse.ExcludeDirs = []string{"node_modules"}
+	})
+	listHidden, err := idxHidden.ListDir("/v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listHidden) != 0 {
+		t.Errorf("ListDir should hide node_modules when configured in browse.excludeDirs, got %+v", listHidden)
 	}
 }
 

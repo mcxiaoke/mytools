@@ -345,3 +345,44 @@ roots:
 		t.Errorf("expected empty excludeDirs, got: %v", c.Index.ExcludeDirs)
 	}
 }
+
+func TestLoadConfig_BrowseDefaultsAndCustom(t *testing.T) {
+	// Test defaults when browse is not configured
+	cfgDefault := `
+roots:
+  - url: /data
+    path: /tmp
+`
+	c1, err := LoadConfig(writeConfig(t, cfgDefault))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c1.BrowseExcludeDirs()) != 0 {
+		t.Errorf("expected empty default browse exclude dirs, got: %v", c1.BrowseExcludeDirs())
+	}
+	if len(c1.BrowseExcludeFiles()) == 0 {
+		t.Errorf("expected default browse exclude files to have OS junk, got empty")
+	}
+
+	// Test custom browse configuration
+	cfgCustom := `
+browse:
+  excludeDirs:
+    - secret_folder
+  excludeFiles:
+    - "*.private"
+roots:
+  - url: /data
+    path: /tmp
+`
+	c2, err := LoadConfig(writeConfig(t, cfgCustom))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c2.BrowseExcludeDirs()) != 1 || c2.BrowseExcludeDirs()[0] != "secret_folder" {
+		t.Errorf("expected custom browse exclude dirs, got: %v", c2.BrowseExcludeDirs())
+	}
+	if len(c2.BrowseExcludeFiles()) != 1 || c2.BrowseExcludeFiles()[0] != "*.private" {
+		t.Errorf("expected custom browse exclude files, got: %v", c2.BrowseExcludeFiles())
+	}
+}

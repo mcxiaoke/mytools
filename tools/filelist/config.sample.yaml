@@ -57,8 +57,9 @@ index:
   # builtinExcludes: true # true (default): automatically exclude common development
                          #   environments & caches (.git, node_modules, venv, .gradle,
                          #   msys64, cygwin, Scoop, flutter, android-sdk, target, .idea, etc.)
-                         #   set false to opt out of built-in exclusions.
-  excludeDirs:           # directory names to skip during indexing and listing
+                         #   from the search index to keep memory low (<150MB).
+                         #   NOTE: Excluded directories remain fully browseable in the web UI!
+  excludeDirs:           # directory names to skip from the search index (not indexed, but visible in browsing)
                          #   (case-insensitive; * and ? wildcards supported;
                          #    automatically merged with built-in exclusions when enabled)
     - .git
@@ -66,9 +67,8 @@ index:
     - __pycache__
     - $RECYCLE.BIN
     - System Volume Information
-  excludeFiles:          # file name patterns to skip during indexing/listing
+  excludeFiles:          # file name patterns to skip from the search index
                          #   (case-insensitive glob; empty list disables)
-                         #   Defaults (used when the key is absent):
     - .env
     - .env.*
     - .htpasswd
@@ -83,6 +83,15 @@ index:
     - '*.p12'
     - .DS_Store
     - Thumbs.db
+
+# Live directory browsing display rules (independent from indexing).
+# By default, all directories (including dev environments) are fully visible in the web UI.
+browse:
+  # excludeDirs: []      # directory names to hide from the web browsing view (default: empty)
+  excludeFiles:          # file name patterns to hide from the web browsing view (default: OS junk)
+    - .DS_Store
+    - Thumbs.db
+    - desktop.ini
 
 # Security knobs. Sensible defaults are shown; for a home LAN you can leave
 # this whole section out.

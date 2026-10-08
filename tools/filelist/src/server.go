@@ -605,9 +605,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Exclude sensitive or configured files
-		if s.indexer.Excluded(cleanName, false) {
-			logger.Warn("server: upload blocked excluded file: %s", cleanName)
+		// Exclude sensitive credential or secret files
+		if s.indexer.SensitiveExcluded(cleanName) {
+			logger.Warn("server: upload blocked sensitive file: %s", cleanName)
 			part.Close()
 			continue
 		}
@@ -714,9 +714,9 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		}
 
 		baseName := filepath.Base(vpath)
-		if s.indexer.Excluded(baseName, false) {
-			logger.Warn("server: edit blocked on excluded file: %s", baseName)
-			http.Error(w, "editing excluded or sensitive file is blocked", http.StatusForbidden)
+		if s.indexer.SensitiveExcluded(baseName) {
+			logger.Warn("server: edit blocked on sensitive file: %s", baseName)
+			http.Error(w, "editing sensitive file is blocked", http.StatusForbidden)
 			return
 		}
 
@@ -1109,7 +1109,7 @@ func (s *Server) handleZip(w http.ResponseWriter, r *http.Request) {
 
 		name := curInfo.Name()
 		if curInfo.IsDir() {
-			if s.indexer.Excluded(name, true) {
+			if s.indexer.BrowseExcluded(name, true) {
 				return filepath.SkipDir
 			}
 			header, err := zip.FileInfoHeader(curInfo)
@@ -1121,7 +1121,7 @@ func (s *Server) handleZip(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		if s.indexer.Excluded(name, false) {
+		if s.indexer.BrowseExcluded(name, false) || s.indexer.SensitiveExcluded(name) {
 			return nil
 		}
 
