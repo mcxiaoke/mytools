@@ -276,3 +276,72 @@ roots:
 		t.Errorf("explicit empty excludeFiles should disable file exclusion, got %v", c.Index.ExcludeFiles)
 	}
 }
+
+func TestLoadConfig_BuiltinExcludesMerged(t *testing.T) {
+	cfg := `
+index:
+  excludeDirs:
+    - .git
+    - my_custom_dir
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasDir := func(name string) bool {
+		for _, d := range c.Index.ExcludeDirs {
+			if strings.EqualFold(d, name) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasDir("my_custom_dir") {
+		t.Errorf("custom exclude dir not found: %v", c.Index.ExcludeDirs)
+	}
+	if !hasDir("msys64") || !hasDir("node_modules") || !hasDir("venv") || !hasDir("target") {
+		t.Errorf("builtin exclude dirs should be merged: %v", c.Index.ExcludeDirs)
+	}
+}
+
+func TestLoadConfig_BuiltinExcludesDisabled(t *testing.T) {
+	cfg := `
+index:
+  builtinExcludes: false
+  excludeDirs:
+    - my_custom_dir
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c.Index.ExcludeDirs) != 1 || c.Index.ExcludeDirs[0] != "my_custom_dir" {
+		t.Errorf("expected only custom exclude dir, got: %v", c.Index.ExcludeDirs)
+	}
+}
+
+func TestLoadConfig_BuiltinExcludesDisabledEmpty(t *testing.T) {
+	cfg := `
+index:
+  builtinExcludes: false
+  excludeDirs: []
+roots:
+  - url: /data
+    path: /tmp
+`
+	c, err := LoadConfig(writeConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c.Index.ExcludeDirs) != 0 {
+		t.Errorf("expected empty excludeDirs, got: %v", c.Index.ExcludeDirs)
+	}
+}

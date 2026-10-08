@@ -57,8 +57,13 @@ index:
                          #   Note: content edits that do not change a file's
                          #   mtime/size are only picked up when its parent
                          #   directory changes; set false for strict freshness.
+  # builtinExcludes: true # true (default): automatically exclude common development
+                         #   environments & caches (.git, node_modules, venv, .gradle,
+                         #   msys64, cygwin, Scoop, flutter, android-sdk, target, .idea, etc.)
+                         #   set false to opt out of built-in exclusions.
   excludeDirs:           # directory names to skip during indexing and listing
-                         #   (case-insensitive; * and ? wildcards supported)
+                         #   (case-insensitive; * and ? wildcards supported;
+                         #    automatically merged with built-in exclusions when enabled)
     - .git
     - node_modules
     - __pycache__

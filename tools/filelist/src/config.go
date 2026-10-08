@@ -28,14 +28,15 @@ type Config struct {
 		Token    string `yaml:"token"`    // optional access token; empty disables auth
 	} `yaml:"server"`
 	Index struct {
-		Interval     string   `yaml:"interval"`     // re-index interval, e.g. "5m"
-		Persist      string   `yaml:"persist"`      // index persistence file path
-		MaxDepth     int      `yaml:"maxDepth"`     // max walk depth (0 = unlimited)
-		RescanDepth  int      `yaml:"rescanDepth"`  // levels always walked each pass (<=0 -> defaultRescanDepth); deeper dirs skip by stamp
-		FullInterval string   `yaml:"fullInterval"` // force a full rebuild after this duration (default "24h"; "0" disables)
-		ExcludeDirs  []string `yaml:"excludeDirs"`  // directory names to skip
-		ExcludeFiles []string `yaml:"excludeFiles"` // file name patterns to skip (glob)
-		Incremental  *bool    `yaml:"incremental"`  // true (default): diff by mtime; false: always full rebuild
+		Interval        string   `yaml:"interval"`        // re-index interval, e.g. "5m"
+		Persist         string   `yaml:"persist"`         // index persistence file path
+		MaxDepth        int      `yaml:"maxDepth"`        // max walk depth (0 = unlimited)
+		RescanDepth     int      `yaml:"rescanDepth"`     // levels always walked each pass (<=0 -> defaultRescanDepth); deeper dirs skip by stamp
+		FullInterval    string   `yaml:"fullInterval"`    // force a full rebuild after this duration (default "24h"; "0" disables)
+		ExcludeDirs     []string `yaml:"excludeDirs"`     // directory names to skip
+		ExcludeFiles    []string `yaml:"excludeFiles"`    // file name patterns to skip (glob)
+		Incremental     *bool    `yaml:"incremental"`     // true (default): diff by mtime; false: always full rebuild
+		BuiltinExcludes *bool    `yaml:"builtinExcludes"` // true (default): merge built-in dev environment exclusions into excludeDirs
 	} `yaml:"index"`
 	Security struct {
 		AllowOutsideSymlinks bool  `yaml:"allowOutsideSymlinks"` // allow /raw to serve symlink targets outside the root
@@ -91,19 +92,52 @@ const defaultRescanDepth = 3
 // index.fullInterval is not set.
 const defaultFullInterval = "24h"
 
-// Default exclude patterns, used when index.excludeDirs / index.excludeFiles
-// are not set in the config file.
-var (
-	defaultExcludeDirs = []string{
-		".git", "node_modules", "__pycache__", "$RECYCLE.BIN", "System Volume Information",
-	}
-	defaultExcludeFiles = []string{
-		".env", ".env.*", ".htpasswd", ".htaccess",
-		"id_rsa", "id_rsa.*", "id_ed25519", "id_ed25519.*",
-		"*.pem", "*.key", "*.pfx", "*.p12",
-		".DS_Store", "Thumbs.db",
-	}
-)
+// BuiltinExcludeDirs contains directories commonly excluded across development
+// environments, package managers, build outputs, and system directories.
+var BuiltinExcludeDirs = []string{
+	// Version control
+	".git", ".svn", ".hg",
+
+	// Node.js & Web
+	"node_modules", ".pnpm-store", ".yarn", ".npm", ".next", ".nuxt",
+
+	// Python
+	"venv", ".venv", "env", "__pycache__", ".pytest_cache", ".mypy_cache", ".tox", ".conda",
+
+	// Java / Kotlin / Build tools
+	".gradle", ".m2",
+
+	// Rust / Go
+	"target", "vendor",
+
+	// Mobile & cross-platform SDKs
+	"flutter", "android-sdk", ".dart_tool", "Pods", ".carthage", "DerivedData",
+
+	// Windows toolchains & package managers (often 100k+ tiny files)
+	"msys64", "msys32", "cygwin", "cygwin64", "w64devkit", "Scoop", "ScoopApps",
+
+	// Build outputs & IDE caches
+	"bin", "obj", ".vs", ".idea", ".vscode", ".fleet", ".cache",
+
+	// System & Volume
+	"$RECYCLE.BIN", "System Volume Information",
+}
+
+// defaultExcludeDirs points to BuiltinExcludeDirs for backward compatibility.
+var defaultExcludeDirs = BuiltinExcludeDirs
+
+var defaultExcludeFiles = []string{
+	".env", ".env.*", ".htpasswd", ".htaccess",
+	"id_rsa", "id_rsa.*", "id_ed25519", "id_ed25519.*",
+	"*.pem", "*.key", "*.pfx", "*.p12",
+	".DS_Store", "Thumbs.db",
+}
+
+// BuiltinExcludesEnabled reports whether built-in development environment exclusions
+// are enabled (default true).
+func (c *Config) BuiltinExcludesEnabled() bool {
+	return c.Index.BuiltinExcludes == nil || *c.Index.BuiltinExcludes
+}
 
 // IndexIncremental reports whether incremental indexing is enabled (default true).
 func (c *Config) IndexIncremental() bool {
@@ -264,6 +298,36 @@ func resolvePath(p, baseDir string) string {
 	return filepath.Clean(filepath.Join(baseDir, p))
 }
 
+// mergeUniqueDirs combines base and extra directory exclusion patterns into a deduplicated slice,
+// preserving order (base first, then novel entries in extra) using case-insensitive comparison.
+func mergeUniqueDirs(base []string, extra []string) []string {
+	seen := make(map[string]bool, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, d := range base {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		low := strings.ToLower(d)
+		if !seen[low] {
+			seen[low] = true
+			out = append(out, d)
+		}
+	}
+	for _, d := range extra {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		low := strings.ToLower(d)
+		if !seen[low] {
+			seen[low] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // normalizeBasePath validates and normalizes a base path for sub-directory
 // deployment. Accepted forms: "" (root), "/files", "/files/", "files".
 // Returns "" when the result equals "/".
@@ -336,8 +400,10 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.Index.FullInterval == "" {
 		cfg.Index.FullInterval = defaultFullInterval
 	}
-	if cfg.Index.ExcludeDirs == nil {
-		cfg.Index.ExcludeDirs = defaultExcludeDirs
+	if cfg.BuiltinExcludesEnabled() {
+		cfg.Index.ExcludeDirs = mergeUniqueDirs(BuiltinExcludeDirs, cfg.Index.ExcludeDirs)
+	} else if cfg.Index.ExcludeDirs == nil {
+		cfg.Index.ExcludeDirs = []string{}
 	}
 	if cfg.Index.ExcludeFiles == nil {
 		cfg.Index.ExcludeFiles = defaultExcludeFiles

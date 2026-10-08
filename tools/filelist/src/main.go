@@ -259,7 +259,8 @@ index:
   maxDepth: 0                # max walk depth (0 = unlimited)
   rescanDepth: 3             # top levels always re-walked each pass (deep changes detection)
   fullInterval: 24h          # force a full rebuild after this duration (0s = off)
-  excludeDirs:               # directory names to skip during indexing
+  builtinExcludes: true      # auto-exclude common dev environments (.git, node_modules, venv, msys64, etc.)
+  excludeDirs:               # directory names to skip during indexing (merged with builtin excludes)
     - .git
     - node_modules
     - __pycache__
