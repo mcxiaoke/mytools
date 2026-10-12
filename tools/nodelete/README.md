@@ -96,7 +96,26 @@ nodelete.exe status "D:\MyFolder"
 nodelete.exe create "D:\MyFolder\readme.txt"   # 保护 D:\MyFolder
 ```
 
-### 3. 接入「发送到」菜单
+### 3. 资源管理器菜单接入
+
+#### A. 右键层叠菜单（推荐）
+
+通过注册表为当前用户安装原生右键层叠菜单 **`FolderGuard`**，集成 `NoDelete` 与 NTFS 权限锁，避免干扰「发送到」菜单：
+
+```powershell
+pwsh -File install-context-menu.ps1
+```
+
+菜单包含 7 个标准英文子项：
+- `Protect Folder` / `Unprotect Folder` / `Toggle Protection`（NoDelete 标记法，秒级免提权）
+- `NTFS Lock` / `NTFS Lock (Recursive)` / `NTFS Unlock` / `NTFS Reset Permissions`（NTFS ACL 权限锁，自动提权并弹窗提示）
+
+卸载恢复：
+```powershell
+pwsh -File install-context-menu.ps1 -Uninstall
+```
+
+#### B. 接入「发送到」菜单（传统备选）
 
 运行安装脚本，它会在「发送到」菜单里创建三个快捷方式：
 
