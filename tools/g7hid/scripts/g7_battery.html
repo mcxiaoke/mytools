@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>机械师 G7 2.4G 电量查看工具</title>
+<style>
+  :root { --border:#d9dce3; --bg:#f6f7f9; --card:#ffffff; --text:#1f2329; --muted:#6b7280; --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --err:#dc2626; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 14px; cursor: pointer; margin-right: 8px; }
+  button.plain { background: #eef1f6; color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+  th { background: #f1f3f7; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f6; margin-right: 4px; }
+  .tag.hit { background: #dcfce7; color: var(--ok); font-weight: 600; }
+  .battery { font-size: 44px; font-weight: 700; }
+  .battery small { font-size: 18px; font-weight: 400; color: var(--muted); }
+  #log { white-space: pre-wrap; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px; height: 260px; overflow-y: auto; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+  code { background: #eef1f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>机械师 G7 2.4G 电量查看工具</h1>
+<div class="sub">本地运行 · 不联网 · 协议来自官方网页驱动的逆向分析（VID 0x320F / PID 0x226F）</div>
+
+<div class="card">
+  <h2>1. 选择设备</h2>
+  <button id="btnGrant">授权并连接设备</button>
+  <button id="btnRefresh" class="plain">刷新已授权设备</button>
+  <div class="hint">如果浏览器曾经给 machenike.com 授权过，这里点「刷新已授权设备」就能直接看到（同源不同，需重新授权一次）。接收器可能有多个 HID 接口，下表会全部列出，带 <span class="tag hit">驱动接口</span> 标记的才是网页驱动使用的那个（usagePage 0xFF1C / usage 0x92）。</div>
+  <div style="overflow-x:auto;margin-top:10px"><table id="devTable"><thead><tr>
+    <th>接口</th><th>productName</th><th>VID/PID</th><th>Collections（usage）</th><th>报告ID</th><th>操作</th>
+  </tr></thead><tbody></tbody></table></div>
+</div>
+
+<div class="card">
+  <h2>2. 读取电量</h2>
+  <div class="battery" id="battery">--<small>%</small></div>
+  <div style="margin-top:10px">
+    <button id="btnBattery" disabled>读取电量（命令 0x19 → 0x1A）</button>
+    <button id="btnRaw" class="plain" disabled>原始探测（发命令并抓取所有输入报告）</button>
+  </div>
+  <div class="hint">电量读取流程与官方驱动完全一致：<code>sendReport(4, [00 00 19 18 …02])</code> 等待响应，再 <code>sendReport(4, [00 00 1A 06 …02])</code>，取响应数据第 8 字节（index 7）。</div>
+</div>
+
+<div class="card">
+  <h2>日志</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+const VID = 0x320F, PID = 0x226F;
+const logEl = document.getElementById('log');
+let selected = null;   // 当前选中的 HIDDevice
+let inputListener = null;
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+const hex = (n) => n.toString(16).toUpperCase().padStart(2, '0');
+const dump = (data) => Array.from(new Uint8Array(data.buffer ?? data), b => hex(b)).join(' ');
+
+// ---------- 设备列表 ----------
+function collectionTag(c) {
+  const up = hex(c.usagePage).padStart(4, '0'), u = hex(c.usage).padStart(4, '0');
+  const isDriver = (c.usagePage === 0xff1c && c.usage === 0x92);
+  return `<span class="tag${isDriver ? ' hit' : ''}">${up}:${u}${isDriver ? ' 驱动接口' : ''}</span>`;
+}
+function reportIds(list) { return list.map(r => '0x' + hex(r.reportId)).join(', ') || '-'; }
+
+async function addDeviceRow(device) {
+  const tb = document.querySelector('#devTable tbody');
+  const tr = document.createElement('tr');
+  const isDriver = device.collections.some(c => c.usagePage === 0xff1c && c.usage === 0x92);
+  tr.innerHTML = `<td>${device.productName}</td><td>${hex(device.vendorId)}:${hex(device.productId)}</td>
+    <td>${device.collections.map(collectionTag).join(' ') || '<i>无</i>'}</td>
+    <td>IN:${reportIds(device.collections.flatMap(c => c.inputReports))}<br>
+        OUT:${reportIds(device.collections.flatMap(c => c.outputReports))}<br>
+        FEAT:${reportIds(device.collections.flatMap(c => c.featureReports))}</td>
+    <td><button class="plain" data-select>选中</button></td>`;
+  tr.querySelector('[data-select]').onclick = async () => {
+    selected = device;
+    document.querySelectorAll('#devTable tbody tr').forEach(r => r.style.background = '');
+    tr.style.background = '#e8f0fe';
+    document.getElementById('btnBattery').disabled = false;
+    document.getElementById('btnRaw').disabled = false;
+    log(`已选中接口: ${device.productName} (${hex(device.vendorId)}:${hex(device.productId)}) collections=${device.collections.map(c => hex(c.usagePage) + ':' + hex(c.usage)).join(' | ')}`);
+  };
+  tb.appendChild(tr);
+  log(`发现设备: ${device.productName} VID=${hex(device.vendorId)} PID=${hex(device.productId)} collections=${device.collections.map(c => hex(c.usagePage) + ':' + hex(c.usage)).join(' | ')}`);
+  // 自动选中驱动接口（FF1C:0092），用户无需手动挑选
+  if (isDriver && (!selected || !selected.collections.some(c => c.usagePage === 0xff1c && c.usage === 0x92))) {
+    tr.querySelector('[data-select]').click();
+  }
+}
+
+async function refreshDevices() {
+  document.querySelector('#devTable tbody').innerHTML = '';
+  const all = await navigator.hid.getDevices();
+  log(`getDevices() 返回 ${all.length} 个已授权设备`);
+  for (const d of all) await addDeviceRow(d);
+}
+
+document.getElementById('btnGrant').onclick = async () => {
+  try {
+    const devs = await navigator.hid.requestDevice({ filters: [{ vendorId: VID, productId: PID }] });
+    log(`requestDevice 选中 ${devs.length} 个`);
+    for (const d of devs) await addDeviceRow(d);
+  } catch (e) { log('requestDevice 失败: ' + e.message); }
+};
+document.getElementById('btnRefresh').onclick = refreshDevices;
+
+// ---------- 协议核心 ----------
+// 构造 63 字节命令: [00 00 CMD SUB 00*27 NESTED]
+function buildCmd(cmd, sub, nested) {
+  const buf = new Uint8Array(63);
+  buf[0] = 0; buf[1] = 0; buf[2] = cmd; buf[3] = sub; buf[31] = nested;
+  return buf;
+}
+// 发送并等待输入报告（与驱动一致：reportId===4；同时记录所有报告）
+function sendAndWait(device, cmdBuf, timeoutMs = 2000) {
+  return new Promise(async (resolve, reject) => {
+    const reports = [];
+    const onReport = (e) => {
+      reports.push({ reportId: e.reportId, data: e.data });
+      log(`  ← inputreport id=0x${hex(e.reportId)} len=${e.data.byteLength} data=${dump(e.data)}`);
+    };
+    device.addEventListener('inputreport', onReport);
+    const timer = setTimeout(() => {
+      device.removeEventListener('inputreport', onReport);
+      reject(new Error('超时 ' + timeoutMs + 'ms'));
+    }, timeoutMs);
+    try {
+      await device.sendReport(0x04, cmdBuf);
+      log(`  → sendReport(0x04) ${dump(cmdBuf)}`);
+    } catch (e) {
+      clearTimeout(timer); device.removeEventListener('inputreport', onReport);
+      return reject(new Error('sendReport 失败: ' + e.message));
+    }
+    // 轮询等待 reportId===4 的报告
+    const iv = setInterval(() => {
+      const hit = reports.find(r => r.reportId === 0x04);
+      if (hit) {
+        clearInterval(iv); clearTimeout(timer);
+        device.removeEventListener('inputreport', onReport);
+        resolve({ report: hit, all: reports });
+      }
+    }, 30);
+  });
+}
+
+async function readBattery() {
+  if (!selected) return;
+  try {
+    if (!selected.opened) await selected.open();
+    log('开始读取电量…');
+    // 与驱动相同序列: 0x19 (sub 0x18) 然后 0x1A (sub 0x06), nested=2 (2.4G)
+    await sendAndWait(selected, buildCmd(0x19, 0x18, 2));
+    const { report } = await sendAndWait(selected, buildCmd(0x1a, 0x06, 2));
+    const val = report.data.getUint8(7);
+    log(`电量原始字节 index7 = 0x${hex(val)} (${val})`);
+    document.getElementById('battery').innerHTML = `${val}<small>%</small>`;
+  } catch (e) {
+    log('读取失败: ' + e.message + ' —— 可试试「原始探测」查看设备实际返回什么');
+  }
+}
+document.getElementById('btnBattery').onclick = readBattery;
+
+// ---------- 原始探测 ----------
+document.getElementById('btnRaw').onclick = async () => {
+  if (!selected) return;
+  try {
+    if (!selected.opened) await selected.open();
+    log('=== 原始探测: 依次发送 0x19 / 0x1A，抓取 1.5 秒内所有输入报告 ===');
+    for (const [cmd, sub] of [[0x19, 0x18], [0x1a, 0x06]]) {
+      const reports = [];
+      const onReport = (e) => {
+        reports.push({ id: e.reportId, data: e.data });
+        log(`  ← inputreport id=0x${hex(e.reportId)} len=${e.data.byteLength} data=${dump(e.data)}`);
+      };
+      selected.addEventListener('inputreport', onReport);
+      try { await selected.sendReport(0x04, buildCmd(cmd, sub, 2)); } catch (e) { log('  sendReport 失败: ' + e.message); }
+      await new Promise(r => setTimeout(r, 1500));
+      selected.removeEventListener('inputreport', onReport);
+      if (!reports.length) log('  （1.5 秒内无任何输入报告）');
+    }
+    log('=== 探测结束 ===');
+  } catch (e) { log('探测失败: ' + e.message); }
+};
+
+// ---------- 初始化 ----------
+if (!('hid' in navigator)) {
+  log('错误: 当前浏览器不支持 WebHID，请使用 Chrome / Edge');
+} else {
+  log('WebHID 可用。点击「刷新已授权设备」或「授权并连接设备」开始。');
+  refreshDevices();
+}
+</script>
+</body>
+</html>
