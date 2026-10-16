@@ -6,6 +6,10 @@ if ($PSVersionTable.PSEdition -eq "Core") {
     exit $LASTEXITCODE
 }
 
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+} catch { }
+
 function Write-ErrorLog {
     param([string]$Message)
 
@@ -46,9 +50,9 @@ try {
         throw "电量值超出范围：$battery"
     }
 
-    # g7hid.exe 约定：读取失败时返回 0。
-    if ($battery -eq 0) {
-        throw "读取鼠标电量失败，g7hid.exe 返回 0。"
+    # g7hid.exe 约定：读取失败或鼠标休眠未就绪时返回 0，此时忽略退出即可。
+    if ($battery -le 0) {
+        exit 0
     }
 
     if ($battery -gt 20) {
