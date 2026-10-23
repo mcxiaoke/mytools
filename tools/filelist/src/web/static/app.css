@@ -1357,8 +1357,8 @@ td.actions {
   }
   th.size-col, td.size,
   th.time-col, td.time { display: none; }
-  th.name-col { width: auto; }
-  th.actions-col, td.actions { width: auto; text-align: right; white-space: nowrap; }
+  th.name-col { width: 100%; }
+  th.actions-col, td.actions { width: 1%; text-align: right; white-space: nowrap; }
   td { padding: 9px 8px !important; }
   th { padding: 8px 8px !important; font-size: 12px !important; }
   td.actions a, td.actions .act-btn { width: 26px !important; height: 26px !important; font-size: 13px !important; margin: 0 1px !important; }

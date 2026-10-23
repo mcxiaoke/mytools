@@ -190,13 +190,13 @@
           <tr>
             <td class="name">
               <template x-if="item.isDir">
-                <a :href="dirHref(item.path)" @click.prevent="navigate(item.path)">
+                <a :href="dirHref(item.path)" @click.prevent="navigate(item.path)" :title="item.name">
                   <span class="icon" x-text="getIcon(item)"></span>
                   <span class="name-text" x-html="highlight(item.name)"></span>
                 </a>
               </template>
               <template x-if="!item.isDir">
-                <a :href="fileHref(item.path, false)" target="_blank" @click="onFileClick($event, item)">
+                <a :href="fileHref(item.path, false)" target="_blank" @click="onFileClick($event, item)" :title="item.name">
                   <span class="icon" x-text="getIcon(item)"></span>
                   <span class="name-text" x-html="highlight(item.name)"></span>
                 </a>

@@ -186,6 +186,27 @@ test.describe('Navigation & Directory Browsing', () => {
     // Reset zoom
     await page.locator('#fontReset').click();
     await expect(page.locator('#fontReset')).toHaveText('100%');
+
+    // Verify table list layout in mobile viewport (400x840):
+    // Name column must occupy primary width, actions column must be compact, title attribute present
+    const firstRowNameLink = page.locator('table tbody tr td.name a').first();
+    await expect(firstRowNameLink).toHaveAttribute('title');
+
+    const tableMetrics = await page.evaluate(() => {
+      const tdName = document.querySelector('table tbody tr td.name');
+      const tdActions = document.querySelector('table tbody tr td.actions');
+      const nameText = document.querySelector('table tbody tr td.name .name-text');
+      return {
+        tdNameWidth: tdName.offsetWidth,
+        tdActionsWidth: tdActions.offsetWidth,
+        nameTextWidth: nameText.offsetWidth
+      };
+    });
+
+    // In 400px mobile viewport, td.name should occupy primary space (> 250px)
+    // and actions should stay compact (< 120px) without hogging empty space
+    expect(tableMetrics.tdNameWidth).toBeGreaterThan(250);
+    expect(tableMetrics.tdActionsWidth).toBeLessThan(120);
   });
 
   test('should display server version, git commit hash, and build time in footer', async ({ appPage }) => {
