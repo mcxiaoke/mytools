@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FaceRecognition.Core\FaceRecognition.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 平台原生运行库依赖配置 -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="OpenCvSharp5.Windows" Version="5.0.0.20261018" />
+  </ItemGroup>
+
+  <!-- 排除非必要的 FFmpeg 视频编解码库 (仅 USB 摄像头和图片不需要它，立减 30MB) -->
+  <Target Name="ExcludeFFmpeg" BeforeTargets="GenerateSingleFileBundle">
+    <ItemGroup>
+      <FilesToBundle Remove="@(FilesToBundle)" Condition="'%(Filename)' == 'opencv_videoio_ffmpeg500_64'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

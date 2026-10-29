@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FaceRecognition.Core/FaceRecognition.Core.csproj" />
+    <Project Path="src/FaceRecognition.Demo/FaceRecognition.Demo.csproj" />
+  </Folder>
+</Solution>

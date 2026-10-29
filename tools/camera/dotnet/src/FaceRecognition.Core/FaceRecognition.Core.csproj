@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <Description>Cross-platform .NET 8 Face Recognition Core library using OpenCvSharp5 (YuNet + SFace ONNX).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- OpenCvSharp5 跨平台托管包 -->
+    <PackageReference Include="OpenCvSharp5" Version="5.0.0.20261018" />
+  </ItemGroup>
+
+</Project>
