@@ -153,4 +153,51 @@ test.describe('File Upload & Duplicate Collision', () => {
       .evaluateAll((nodes) => nodes.map((n) => n.textContent.replace(/^[^\w\u4e00-\u9fa5\.-]+/, '').trim()));
     expect(names).toContain(dragFileName);
   });
+
+  test('should not duplicate files when dropping multiple files onto tableWrap element', async ({ appPage }) => {
+    const { page } = appPage;
+
+    const fileNames = ['multi-p1.rar', 'multi-p2.rar', 'multi-p3.rar'];
+
+    // Emulate drop event directly on the tableWrap element (bubbling up to window)
+    await page.evaluate(
+      (names) => {
+        const dt = new DataTransfer();
+        names.forEach((name) => {
+          const file = new File(['dummy binary content for ' + name], name, { type: 'application/octet-stream' });
+          dt.items.add(file);
+        });
+
+        const dropEvent = new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt
+        });
+
+        const target = document.getElementById('tableWrap');
+        target.dispatchEvent(dropEvent);
+      },
+      fileNames
+    );
+
+    // Check upload status reports success
+    const statusEl = page.locator('#uploadStatus');
+    await expect(statusEl).toHaveClass(/success/, { timeout: 8000 });
+    await expect(statusEl).toContainText('成功上传 3 个文件');
+
+    // Verify all 3 files are present in the table
+    const names = await page
+      .locator('table tbody tr td.name a')
+      .evaluateAll((nodes) => nodes.map((n) => n.textContent.replace(/^[^\w\u4e00-\u9fa5\.-]+/, '').trim()));
+
+    fileNames.forEach((name) => {
+      expect(names).toContain(name);
+      // Ensure NO duplicate (1) suffix files were created
+      const baseName = name.replace(/\.rar$/, '');
+      expect(names).not.toContain(`${baseName} (1).rar`);
+      // Ensure each filename appears exactly once
+      const count = names.filter((n) => n === name).length;
+      expect(count).toBe(1);
+    });
+  });
 });

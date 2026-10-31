@@ -145,10 +145,7 @@
   <!-- Table Container / Drag-Drop Zone -->
   <div class="table-wrap"
        id="tableWrap"
-       :class="{ 'drop-active': isDragOver }"
-       @dragover.prevent="isDragOver = true"
-       @dragleave.prevent="isDragOver = false"
-       @drop.prevent="handleDrop($event)">
+       :class="{ 'drop-active': isDragOver }">
 
     <!-- Loading State -->
     <div class="loading" x-show="loading" x-cloak>

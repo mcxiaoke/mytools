@@ -133,6 +133,9 @@ document.addEventListener('alpine:init', () => {
           this.isDragOver = false;
         }
       });
+      window.addEventListener('dragend', () => {
+        this.isDragOver = false;
+      });
       window.addEventListener('drop', (e) => {
         e.preventDefault();
         this.isDragOver = false;
@@ -475,9 +478,13 @@ document.addEventListener('alpine:init', () => {
     },
 
     handleDrop(e) {
+      if (e) {
+        if (e.preventDefault) e.preventDefault();
+        if (e.stopPropagation) e.stopPropagation();
+      }
       this.isDragOver = false;
       if (!this.uploadEnabled || !this.path || this.searchMode) return;
-      var files = e.dataTransfer ? e.dataTransfer.files : null;
+      var files = e && e.dataTransfer ? e.dataTransfer.files : null;
       if (files && files.length > 0) {
         this.uploadFiles(files);
       }
@@ -485,6 +492,11 @@ document.addEventListener('alpine:init', () => {
 
     uploadFiles(files) {
       if (!files || files.length === 0) return;
+      if (this.uploading) {
+        this.uploadStatus = '已有文件正在上传中，请稍候...';
+        this.uploadStatusClass = 'error';
+        return;
+      }
       if (!this.path) {
         this.uploadStatus = '不能直接上传到根挂载点';
         this.uploadStatusClass = 'error';
