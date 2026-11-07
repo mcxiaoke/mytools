@@ -1277,6 +1277,170 @@ td.actions {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   animation: toastPop 0.2s ease-out;
 }
+
+/* Action Bar Desktop & Mobile Toggles */
+.act-desktop {
+  display: inline-flex;
+  align-items: center;
+}
+.act-mobile {
+  display: none !important;
+}
+
+/* Action Sheet Component */
+.action-sheet-overlay {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1050;
+  padding: 0 !important;
+}
+.action-sheet-dialog {
+  background: var(--fl-card);
+  border: 1px solid var(--fl-border);
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.35);
+  animation: sheetSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 8px 0 0;
+  box-sizing: border-box;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+}
+@keyframes sheetSlideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.action-sheet-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--fl-muted);
+  opacity: 0.35;
+  border-radius: 2px;
+  margin: 2px auto 8px;
+}
+.action-sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 12px;
+  border-bottom: 1px solid var(--fl-border);
+}
+.action-sheet-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.action-sheet-meta {
+  flex: 1;
+  min-width: 0;
+}
+.action-sheet-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fl-text);
+  line-height: 1.35;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.action-sheet-sub {
+  font-size: 12px;
+  color: var(--fl-muted);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.action-sheet-sep {
+  opacity: 0.6;
+}
+.action-sheet-close-btn {
+  background: transparent !important;
+  border: none !important;
+  color: var(--fl-muted) !important;
+  font-size: 16px !important;
+  padding: 4px 8px !important;
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+.action-sheet-close-btn:hover {
+  color: var(--fl-text) !important;
+  background: var(--fl-primary-bg) !important;
+}
+.action-sheet-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 10px;
+}
+.action-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 46px;
+  padding: 0 12px;
+  border: none !important;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--fl-text) !important;
+  font-size: 15px !important;
+  text-decoration: none !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  margin: 0 !important;
+  text-align: left;
+  transition: background 0.12s ease;
+  box-sizing: border-box;
+}
+.action-sheet-item:hover,
+.action-sheet-item:active {
+  background: var(--fl-primary-bg) !important;
+  color: var(--fl-primary) !important;
+}
+.action-sheet-item .as-icon {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.action-sheet-item .as-label {
+  flex: 1;
+  font-weight: 500;
+}
+.action-sheet-item.danger-item {
+  color: #ef4444 !important;
+}
+.action-sheet-item.danger-item:hover,
+.action-sheet-item.danger-item:active {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #dc2626 !important;
+}
+.action-sheet-footer {
+  padding: 8px 14px 4px;
+  border-top: 1px solid var(--fl-border);
+}
+.action-sheet-cancel-btn {
+  width: 100%;
+  height: 42px;
+  border-radius: 8px !important;
+  border: 1px solid var(--fl-border) !important;
+  background: var(--fl-primary-bg) !important;
+  color: var(--fl-text) !important;
+  font-size: 14.5px !important;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: background 0.15s;
+}
+.action-sheet-cancel-btn:hover,
+.action-sheet-cancel-btn:active {
+  background: var(--fl-primary-hover) !important;
+  color: #ffffff !important;
+}
+
 @keyframes toastPop {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1355,13 +1519,74 @@ td.actions {
     font-size: 18px !important;
     margin: 0 2px !important;
   }
+  .act-desktop {
+    display: none !important;
+  }
+  .act-mobile {
+    display: inline-flex !important;
+    width: 30px !important;
+    height: 30px !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+    font-weight: bold;
+    justify-content: center;
+    align-items: center;
+    border-radius: 6px !important;
+    color: var(--fl-muted) !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .act-mobile:hover,
+  .act-mobile:active {
+    background: var(--fl-primary-bg) !important;
+    color: var(--fl-primary) !important;
+    border-color: var(--fl-border) !important;
+  }
   th.size-col, td.size,
-  th.time-col, td.time { display: none; }
-  th.name-col { width: 100%; }
-  th.actions-col, td.actions { width: 1%; text-align: right; white-space: nowrap; }
+  th.time-col, td.time { display: none !important; }
+  th.name-col { width: auto !important; }
+  th.actions-col, td.actions {
+    width: 40px !important;
+    max-width: 40px !important;
+    min-width: 40px !important;
+    text-align: center !important;
+    padding: 8px 4px !important;
+    white-space: nowrap !important;
+  }
+  td.name {
+    width: auto !important;
+    max-width: none !important;
+    padding: 8px 6px 8px 8px !important;
+  }
+  td.name a {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+  td.name .icon {
+    font-size: 18px !important;
+    flex-shrink: 0 !important;
+    line-height: 1.35 !important;
+    margin-top: 1px !important;
+  }
+  td.name a .name-text {
+    white-space: normal !important;
+    word-break: break-all !important;
+    overflow-wrap: anywhere !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    line-height: 1.35 !important;
+    max-height: 2.7em !important;
+    font-size: 13.5px !important;
+  }
   td { padding: 9px 8px !important; }
   th { padding: 8px 8px !important; font-size: 12px !important; }
-  td.actions a, td.actions .act-btn { width: 26px !important; height: 26px !important; font-size: 13px !important; margin: 0 1px !important; }
   .tb-btn,
   .upload-btn {
     height: 28px !important;

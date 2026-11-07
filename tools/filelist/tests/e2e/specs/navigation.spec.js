@@ -209,6 +209,63 @@ test.describe('Navigation & Directory Browsing', () => {
     expect(tableMetrics.tdActionsWidth).toBeLessThan(120);
   });
 
+  test('should collapse action icons to more button on mobile and open action sheet modal', async ({ appPage }) => {
+    const { page } = appPage;
+
+    // Navigate to /data to see file items
+    await page.locator('table tbody tr td.name a:has-text("data")').click();
+    await expect(page.locator('#breadcrumb')).toContainText('data');
+    await expect(page.locator('table tbody tr:has-text("hello.txt")')).toBeVisible();
+
+    // Set mobile viewport 375x812 (standard mobile phone)
+    await page.setViewportSize({ width: 375, height: 812 });
+
+    // Desktop actions should be hidden on mobile
+    const desktopActions = page.locator('table tbody tr:has-text("hello.txt") td.actions .act-desktop');
+    await expect(desktopActions).toBeHidden();
+
+    // Mobile more action button should be visible
+    const mobileBtn = page.locator('table tbody tr:has-text("hello.txt") td.actions .act-mobile');
+    await expect(mobileBtn).toBeVisible();
+
+    // Action cell width should be compact (<= 45px) and name cell should have plenty of space (>= 250px)
+    const metrics = await page.evaluate(() => {
+      const row = document.querySelector('table tbody tr:has(td.name a[title="hello.txt"])') || document.querySelector('table tbody tr');
+      const tdName = row.querySelector('td.name');
+      const tdActions = row.querySelector('td.actions');
+      const nameText = row.querySelector('td.name .name-text');
+      const nameStyle = window.getComputedStyle(nameText);
+      return {
+        nameWidth: tdName.offsetWidth,
+        actionsWidth: tdActions.offsetWidth,
+        whiteSpace: nameStyle.whiteSpace,
+        lineClamp: nameStyle.webkitLineClamp
+      };
+    });
+
+    expect(metrics.actionsWidth).toBeLessThanOrEqual(45);
+    expect(metrics.nameWidth).toBeGreaterThanOrEqual(250);
+    expect(metrics.whiteSpace).toBe('normal');
+    expect(metrics.lineClamp).toBe('2');
+
+    // Click the mobile more button to open the bottom Action Sheet
+    await mobileBtn.click();
+
+    // Action sheet modal should be visible
+    const actionSheet = page.locator('#actionSheetModal');
+    await expect(actionSheet).toBeVisible();
+
+    // Check item title and action items inside action sheet
+    await expect(actionSheet.locator('.action-sheet-title')).toHaveText('hello.txt');
+    await expect(actionSheet.locator('.action-sheet-item.as-dl')).toBeVisible();
+    await expect(actionSheet.locator('.action-sheet-item.as-copy')).toBeVisible();
+    await expect(actionSheet.locator('.action-sheet-item.as-qr')).toBeVisible();
+
+    // Close action sheet using cancel button
+    await actionSheet.locator('.action-sheet-cancel-btn').click();
+    await expect(actionSheet).toBeHidden();
+  });
+
   test('should display server version, git commit hash, and build time in footer', async ({ appPage }) => {
     const { page } = appPage;
     const footer = page.locator('.site-footer');

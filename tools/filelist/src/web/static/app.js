@@ -83,6 +83,10 @@ document.addEventListener('alpine:init', () => {
       url: '',
       svg: ''
     },
+    actionSheet: {
+      show: false,
+      item: null
+    },
 
     // Lifecycle
     init() {
@@ -246,6 +250,7 @@ document.addEventListener('alpine:init', () => {
       this.renameModal.show = false;
       this.deleteModal.show = false;
       this.qrModal.show = false;
+      this.closeActionSheet();
 
       if (!skipState) {
         var url = this.base + (path || '/');
@@ -1067,6 +1072,41 @@ document.addEventListener('alpine:init', () => {
       this.toastTimer = setTimeout(() => {
         this.toastMsg = '';
       }, 2500);
+    },
+
+    hasItemActions(item) {
+      if (!item) return false;
+      if (!item.isDir) return true;
+      return this.path !== '';
+    },
+
+    openActionSheet(item) {
+      this.actionSheet.item = item;
+      this.actionSheet.show = true;
+    },
+
+    closeActionSheet() {
+      this.actionSheet.show = false;
+      this.actionSheet.item = null;
+    },
+
+    triggerAction(type) {
+      var item = this.actionSheet.item;
+      this.closeActionSheet();
+      if (!item) return;
+      if (type === 'media') {
+        this.openMedia(item);
+      } else if (type === 'text') {
+        this.openText(item);
+      } else if (type === 'copy') {
+        this.copyLink(item);
+      } else if (type === 'qr') {
+        this.showQR(item);
+      } else if (type === 'rename') {
+        this.openRename(item);
+      } else if (type === 'delete') {
+        this.openDelete(item);
+      }
     }
   }));
 });
