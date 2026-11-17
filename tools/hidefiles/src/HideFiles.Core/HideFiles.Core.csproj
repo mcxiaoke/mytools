@@ -13,4 +13,8 @@
     <InternalsVisibleTo Include="HideFiles.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="AppIcon.ico" />
+  </ItemGroup>
+
 </Project>

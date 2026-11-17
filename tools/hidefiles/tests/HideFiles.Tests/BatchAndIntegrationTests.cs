@@ -34,6 +34,7 @@ public class BatchAndIntegrationTests : IDisposable
     public void BatchProcessor_MultiFolderBatch_ObfuscateAndRestore100Percent()
     {
         var config = HideFilesConfig.CreateDefault();
+        config.IncludeSubdirectories = true;
         var processor = new BatchProcessor();
 
         // 构造深层嵌套文件结构

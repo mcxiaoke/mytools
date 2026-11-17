@@ -12,6 +12,7 @@
 
             <converters:StatusToColorConverter x:Key="StatusToColorConverter" />
             <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <converters:ListToStringConverter x:Key="ListToStringConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

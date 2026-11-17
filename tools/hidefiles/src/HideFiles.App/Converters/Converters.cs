@@ -1,5 +1,8 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -34,9 +37,25 @@ public class BoolToVisibilityConverter : IValueConverter
     {
         if (value is bool b)
         {
-            return b ? Visibility.Visible : Visibility.Collapsed;
+            bool isInvert = string.Equals(parameter as string, "invert", StringComparison.OrdinalIgnoreCase);
+            bool visible = isInvert ? !b : b;
+            return visible ? Visibility.Visible : Visibility.Collapsed;
         }
         return Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+}
+
+public class ListToStringConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is IEnumerable<string> list)
+        {
+            return string.Join(", ", list);
+        }
+        return string.Empty;
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();

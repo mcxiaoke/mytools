@@ -131,6 +131,47 @@ public class CoreTests : IDisposable
     }
 
     [Fact]
+    public void Config_PinProtection_VerificationWorks()
+    {
+        var config = HideFilesConfig.CreateDefault();
+        Assert.False(config.HasPin);
+        Assert.True(config.VerifyPin(null)); // 未设置时无门控
+
+        // 设置 PIN
+        config.SetPin("123456");
+        Assert.True(config.HasPin);
+        Assert.True(config.VerifyPin("123456"));
+        Assert.False(config.VerifyPin("wrong_pin"));
+        Assert.False(config.VerifyPin(""));
+
+        // 清除 PIN
+        config.SetPin(null);
+        Assert.False(config.HasPin);
+        Assert.True(config.VerifyPin(null));
+    }
+
+    [Fact]
+    public void Config_SaveAndLoad_PreservesPinAcrossRestart()
+    {
+        // 回归测试：Save() 通过 JsonStringEnumConverter 把枚举写成字符串（如 "HashStem"），
+        // Load() 必须使用同样的 Converter，否则反序列化会抛异常并被 catch 吞掉，
+        // 静默返回默认配置，导致已保存的 PIN 丢失、界面显示"未设置 PIN"。
+        var config = HideFilesConfig.CreateDefault();
+        config.SetPin("123456");
+        string path = Path.Combine(_testDir, "config.json");
+        config.Save(path);
+
+        string raw = File.ReadAllText(path);
+        Assert.Contains("\"HashStem\"", raw); // 确认枚举确实以字符串写出
+
+        var loaded = HideFilesConfig.Load(path);
+        Assert.True(loaded.HasPin, "PinHash 应在 Save/Load 往返后保留");
+        Assert.True(loaded.VerifyPin("123456"));
+        Assert.False(loaded.VerifyPin("wrong_pin"));
+        Assert.Equal(NameMode.HashStem, loaded.NameObfuscationMode);
+    }
+
+    [Fact]
     public void Config_RuleMatching_WorksCorrectly()
     {
         var config = HideFilesConfig.CreateDefault();

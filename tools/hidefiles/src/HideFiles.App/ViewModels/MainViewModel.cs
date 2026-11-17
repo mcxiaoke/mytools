@@ -35,6 +35,15 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isContextMenuInstalled;
 
+    [ObservableProperty]
+    private string _newPinInput = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ConfiguredPinDisplay))]
+    private bool _hasPinConfigured;
+
+    public string ConfiguredPinDisplay => HasPinConfigured ? "已启用保护 (●●●●●●)" : "未设置 (无需密码直接还原)";
+
     public ObservableCollection<FileItemModel> Files { get; } = new();
 
     public int TotalCount => Files.Count;
@@ -44,6 +53,7 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel()
     {
         _config = HideFilesConfig.Load();
+        HasPinConfigured = _config.HasPin;
         RefreshContextMenuStatus();
     }
 
@@ -152,6 +162,50 @@ public partial class MainViewModel : ObservableObject
         StatusMessage = "就绪。拖拽文件或文件夹到窗口开始处理。";
     }
 
+    public bool EnsurePinVerified()
+    {
+        if (!Config.HasPin) return true;
+
+        var dlg = new Views.PinVerifyDialog(Config)
+        {
+            Owner = Application.Current?.MainWindow
+        };
+        bool? result = dlg.ShowDialog();
+        return result == true && dlg.IsVerified;
+    }
+
+    [RelayCommand]
+    private void SavePin()
+    {
+        if (string.IsNullOrWhiteSpace(NewPinInput))
+        {
+            StatusMessage = "请输入有效的 PIN 码。";
+            return;
+        }
+
+        Config.SetPin(NewPinInput);
+        Config.Save();
+        HasPinConfigured = Config.HasPin;
+        NewPinInput = string.Empty;
+        StatusMessage = "安全 PIN 码已成功设置！还原时将进行验证。";
+    }
+
+    [RelayCommand]
+    private void ClearPin()
+    {
+        if (!EnsurePinVerified())
+        {
+            StatusMessage = "需要验证当前 PIN 码后方可清除。";
+            return;
+        }
+
+        Config.SetPin(null);
+        Config.Save();
+        HasPinConfigured = false;
+        NewPinInput = string.Empty;
+        StatusMessage = "PIN 码保护已清除，还原无需验证。";
+    }
+
     [RelayCommand]
     private async Task ObfuscateSelectedAsync()
     {
@@ -175,7 +229,26 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (!EnsurePinVerified())
+        {
+            StatusMessage = "PIN 码验证未通过或已取消，还原操作已中止。";
+            return;
+        }
+
         await ProcessAsync(targets, isObfuscate: false);
+    }
+
+    public async Task AutoProcessPathsAsync(IEnumerable<string> paths, bool isObfuscate)
+    {
+        AddPaths(paths);
+        if (isObfuscate)
+        {
+            await ObfuscateSelectedAsync();
+        }
+        else
+        {
+            await RestoreSelectedAsync();
+        }
     }
 
     private async Task ProcessAsync(List<FileItemModel> targetItems, bool isObfuscate)
@@ -222,11 +295,6 @@ public partial class MainViewModel : ObservableObject
         IsProcessing = false;
         UpdateCounts();
         StatusMessage = $"处理完成！成功: {successCount}/{total}。";
-
-        if (OperatingSystem.IsWindows())
-        {
-            ShellContextMenu.RefreshShell();
-        }
     }
 
     [RelayCommand]
@@ -234,8 +302,15 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            if (!string.IsNullOrWhiteSpace(NewPinInput))
+            {
+                Config.SetPin(NewPinInput);
+                HasPinConfigured = Config.HasPin;
+                NewPinInput = string.Empty;
+            }
+
             Config.Save();
-            StatusMessage = "配置已保存。";
+            StatusMessage = "所有配置变更已成功保存！";
         }
         catch (Exception ex)
         {
@@ -248,6 +323,7 @@ public partial class MainViewModel : ObservableObject
     {
         Config = HideFilesConfig.CreateDefault();
         Config.Save();
+        HasPinConfigured = Config.HasPin;
         StatusMessage = "已恢复为默认配置。";
     }
 

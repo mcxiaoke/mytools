@@ -4,11 +4,12 @@
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:vm="clr-namespace:HideFiles.App.ViewModels"
                  Title="{Binding Title}"
-                 Height="700" Width="960"
-                 MinHeight="550" MinWidth="750"
+                 Height="720" Width="980"
+                 MinHeight="580" MinWidth="780"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
-                 ExtendsContentIntoTitleBar="True">
+                 ExtendsContentIntoTitleBar="True"
+                 Icon="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png">
 
     <ui:FluentWindow.DataContext>
         <vm:MainViewModel />
@@ -21,11 +22,19 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 标题栏 -->
-        <ui:TitleBar Grid.Row="0" Title="{Binding Title}" />
+        <!-- 标题栏：带图标与标题 -->
+        <ui:TitleBar Grid.Row="0" Title="{Binding Title}">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon>
+                    <ui:ImageIcon.Source>
+                        <BitmapImage UriSource="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" />
+                    </ui:ImageIcon.Source>
+                </ui:ImageIcon>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
 
         <!-- 主内容多标签页 -->
-        <TabControl Grid.Row="1" Margin="16,4,16,12">
+        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12">
             <!-- TAB 1: 工作台 -->
             <TabItem Header="文件处理工作台">
                 <Grid Margin="0,12,0,0">
@@ -71,7 +80,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <TextBlock Text="💡 提示：可直接拖拽多个文件或整个文件夹到下方列表中" 
+                        <TextBlock Text="💡 提示：可直接拖拽多个文件或文件夹到下方列表中" 
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" 
                                    VerticalAlignment="Center" />
 
@@ -101,7 +110,7 @@
                                   BorderThickness="0">
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected}" Width="40" />
-                                <DataGridTemplateColumn Header="状态" Width="90">
+                                <DataGridTemplateColumn Header="状态" Width="80">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border CornerRadius="4" Padding="6,2"
@@ -112,10 +121,10 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="220" FontWeight="SemiBold" />
-                                <DataGridTextColumn Header="原始文件名 (还原目标)" Binding="{Binding OriginalFileName}" Width="200" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="90" />
-                                <DataGridTextColumn Header="路径" Binding="{Binding FilePath}" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
+                                <DataGridTextColumn Header="原始文件名 (还原目标)" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
+                                <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="320" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
@@ -126,10 +135,88 @@
             <TabItem Header="规则与系统设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
                     <StackPanel>
-                        <!-- 右键菜单集成卡片 -->
+                        <!-- 卡片 1: 安全 PIN 还原门控 -->
                         <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20">
+                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="🔒 安全 PIN 还原门控" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                                <TextBlock Text="设置 PIN 码后，执行任何文件还原操作都必须输入验证 PIN 码；未设置时可直接还原。" 
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" />
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                    <TextBlock Text="当前状态: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <Border Background="#1A10B981" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
+                                            Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <TextBlock Text="🔒 已启用 PIN 保护 (●●●●●● 安全加密存储)" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </Border>
+                                    <Border Background="#1A6B7280" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
+                                            Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                        <TextBlock Text="⚪ 未设置 PIN (还原时无需密码)" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                    </Border>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="设置/修改 PIN: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,8,0" />
+                                    <ui:TextBox Text="{Binding NewPinInput, UpdateSourceTrigger=PropertyChanged}" 
+                                                PlaceholderText="输入新 PIN 码 (留空保持不变)"
+                                                Width="240" Height="34" VerticalContentAlignment="Center" Margin="0,0,10,0" />
+                                    <ui:Button Content="保存 PIN" Command="{Binding SavePinCommand}" Appearance="Primary" Margin="0,0,8,0" />
+                                    <ui:Button Content="清除 PIN 保护" Command="{Binding ClearPinCommand}" Appearance="Danger"
+                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </StackPanel>
+
+                                <TextBlock Text="💡 提示：PIN 码采用 SHA-256 加盐哈希不可逆保护，软件退出重启后不会以明文回显原密码；当前状态显示已启用即表示已成功持久化。"
+                                           FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 卡片 2: 混淆策略设置 -->
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="混淆强度与文件名策略" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="混淆头部数据量:" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="1" SelectedValuePath="Tag" SelectedValue="{Binding Config.HeadObfuscateSize}" Width="260" HorizontalAlignment="Left">
+                                        <ComboBoxItem Content="4 KB (超极速，微秒级)" Tag="4096" />
+                                        <ComboBoxItem Content="64 KB (默认推荐，彻底破坏特征)" Tag="65536" IsSelected="True" />
+                                        <ComboBoxItem Content="256 KB (高强度容器破坏)" Tag="262144" />
+                                        <ComboBoxItem Content="1 MB (深度特征抹除)" Tag="1048576" />
+                                    </ComboBox>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="文件名混淆策略:" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Column="1" Content="启用文件名混淆 (将主文件名伪装为短哈希，默认开启)" 
+                                              IsChecked="{Binding Config.ObfuscateFileName}" />
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="目录扫描策略:" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Column="1" Content="包含子目录递归扫描 (默认关闭)" 
+                                              IsChecked="{Binding Config.IncludeSubdirectories}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 卡片 3: Windows 资源管理器右键级联菜单 -->
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -138,7 +225,7 @@
 
                                 <StackPanel>
                                     <TextBlock Text="Windows 资源管理器右键级联菜单 (折叠主入口)" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                    <TextBlock Text="在文件、文件夹或空白处添加 'HideFiles' 折叠菜单，支持一键混淆与还原，无需管理员权限。" 
+                                    <TextBlock Text="在文件、文件夹或空白处添加无黑框的 'HideFiles' 折叠菜单，点击直接在 GUI 界面中快速处理，无需管理员权限。" 
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <TextBlock Text="当前状态: 已安装" Foreground="#10B981" FontWeight="SemiBold" Margin="0,8,0,0"
                                                Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}}" />
@@ -148,6 +235,7 @@
 
                                 <ui:Button Grid.Column="1" 
                                            Command="{Binding ToggleContextMenuCommand}"
+                                           Width="150" Height="36" Margin="16,0,0,0"
                                            VerticalAlignment="Center">
                                     <ui:Button.Style>
                                         <Style TargetType="ui:Button">
@@ -165,38 +253,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- 混淆策略设置 -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20">
-                            <StackPanel>
-                                <TextBlock Text="混淆强度与性能选项" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="混淆头部数据量:" VerticalAlignment="Center" />
-                                    <ComboBox Grid.Column="1" SelectedValuePath="Tag" SelectedValue="{Binding Config.HeadObfuscateSize}" Width="240" HorizontalAlignment="Left">
-                                        <ComboBoxItem Content="4 KB (超极速，微秒级)" Tag="4096" />
-                                        <ComboBoxItem Content="64 KB (默认推荐，彻底破坏特征)" Tag="65536" IsSelected="True" />
-                                        <ComboBoxItem Content="256 KB (高强度容器破坏)" Tag="262144" />
-                                        <ComboBoxItem Content="1 MB (深度特征抹除)" Tag="1048576" />
-                                    </ComboBox>
-                                </Grid>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="目录混淆策略:" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Column="1" Content="包含子目录递归扫描" IsChecked="{Binding Config.IncludeSubdirectories}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- 扩展名映射规则列表 -->
+                        <!-- 卡片 4: 扩展名伪装映射规则列表 -->
                         <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20">
@@ -219,9 +276,10 @@
                                                         <TextBox Text="{Binding FakeExtension, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="4,0,0,0" />
                                                     </StackPanel>
                                                     <TextBlock Grid.Column="2" 
-                                                               Text="{Binding Extensions, Converter={x:Null}}" 
+                                                               Text="{Binding Extensions, Converter={StaticResource ListToStringConverter}}" 
                                                                VerticalAlignment="Center" 
                                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                                               Margin="12,0,0,0"
                                                                TextTrimming="CharacterEllipsis" />
                                                 </Grid>
                                             </Border>
@@ -244,15 +302,21 @@
                 <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                         BorderThickness="1" CornerRadius="8" Padding="24" Margin="0,12,0,0">
-                    <StackPanel MaxWidth="600" HorizontalAlignment="Left">
-                        <TextBlock Text="HideFiles v1.0.0" FontSize="18" FontWeight="Bold" Margin="0,0,0,6" />
-                        <TextBlock Text="极速自包含文件特征混淆与还原小工具 (Windows .NET 8)" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" />
+                    <StackPanel MaxWidth="640" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Image Source="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="HideFiles v1.0.0" FontSize="18" FontWeight="Bold" />
+                                <TextBlock Text="极速自包含文件特征混淆与还原小工具 (Windows .NET 8)" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="核心技术原理：" FontWeight="Bold" Margin="0,0,0,8" />
                         <TextBlock Text="1. 自包含元数据 (In-File Stash)：原始头部特征、原始文件名与扩展名加密追加至文件尾部，单文件独立便携，移动或改名皆可无损还原。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="2. 极速就地掩码 (In-Place Obfuscation)：仅针对前 64KB 头部进行特征覆盖，单文件处理耗时低于 2ms，支持上万文件秒级批处理。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="3. 防二次混淆与防呆设计：尾部专属魔数识别，杜绝重复混淆损坏真实数据。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="4. 级联折叠右键菜单：原生注册表集成，保持桌面与资源管理器整洁。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="4. 安全 PIN 还原门控：可设置 PIN 密码，仅验证通过后才允许执行还原，防止误操作或被他人一键反解。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="5. 级联折叠右键菜单：原生注册表集成，调用 GUI 窗口执行，杜绝控制台黑框，保持桌面与资源管理器整洁。" TextWrapping="Wrap" Margin="0,0,0,6" />
                     </StackPanel>
                 </Border>
             </TabItem>

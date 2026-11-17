@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -34,14 +36,48 @@ public sealed class ExtensionRuleGroup
 
 public sealed class HideFilesConfig
 {
+    private const string PinSalt = "#HF_PIN_SALT_2026#";
+
     public int Version { get; set; } = 1;
     public int HeadObfuscateSize { get; set; } = CoreConstants.DefaultHeadSize;
     public string DefaultFakeExtension { get; set; } = ".dat";
-    public NameMode NameObfuscationMode { get; set; } = NameMode.KeepStemChangeExt;
-    public bool IncludeSubdirectories { get; set; } = true;
+    public NameMode NameObfuscationMode { get; set; } = NameMode.HashStem;
+    public bool ObfuscateFileName { get; set; } = true;
+    public bool IncludeSubdirectories { get; set; } = false;
     public bool ObfuscateDirectoryNames { get; set; } = false;
 
+    /// <summary>
+    /// PIN 码加盐哈希（仅用于还原门控）
+    /// </summary>
+    public string? PinHash { get; set; }
+
+    [JsonIgnore]
+    public bool HasPin => !string.IsNullOrEmpty(PinHash);
+
     public List<ExtensionRuleGroup> Groups { get; set; } = new();
+
+    public void SetPin(string? pin)
+    {
+        if (string.IsNullOrWhiteSpace(pin))
+        {
+            PinHash = null;
+        }
+        else
+        {
+            byte[] salted = Encoding.UTF8.GetBytes(pin.Trim() + PinSalt);
+            PinHash = Convert.ToHexString(SHA256.HashData(salted)).ToLowerInvariant();
+        }
+    }
+
+    public bool VerifyPin(string? pin)
+    {
+        if (!HasPin) return true;
+        if (string.IsNullOrWhiteSpace(pin)) return false;
+
+        byte[] salted = Encoding.UTF8.GetBytes(pin.Trim() + PinSalt);
+        string hash = Convert.ToHexString(SHA256.HashData(salted)).ToLowerInvariant();
+        return string.Equals(PinHash, hash, StringComparison.OrdinalIgnoreCase);
+    }
 
     public static HideFilesConfig CreateDefault()
     {
@@ -50,9 +86,11 @@ public sealed class HideFilesConfig
             Version = 1,
             HeadObfuscateSize = CoreConstants.DefaultHeadSize,
             DefaultFakeExtension = ".dat",
-            NameObfuscationMode = NameMode.KeepStemChangeExt,
-            IncludeSubdirectories = true,
+            NameObfuscationMode = NameMode.HashStem,
+            ObfuscateFileName = true,
+            IncludeSubdirectories = false,
             ObfuscateDirectoryNames = false,
+            PinHash = null,
             Groups = new List<ExtensionRuleGroup>
             {
                 new ExtensionRuleGroup("Videos", ".dat", new[] { ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".ts", ".m4v" }),
@@ -90,7 +128,12 @@ public sealed class HideFilesConfig
         try
         {
             string json = File.ReadAllText(filePath);
-            var opt = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, WriteIndented = true };
+            var opt = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                WriteIndented = true,
+                Converters = { new JsonStringEnumConverter() }
+            };
             var loaded = JsonSerializer.Deserialize<HideFilesConfig>(json, opt);
             return loaded ?? CreateDefault();
         }

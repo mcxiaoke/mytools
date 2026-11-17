@@ -7,7 +7,16 @@
     <RootNamespace>HideFiles.App</RootNamespace>
     <AssemblyName>HideFilesApp</AssemblyName>
     <Description>HideFiles 桌面应用 — 极速自包含文件混淆与还原工具</Description>
+    <ApplicationIcon>Assets\Icon\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Icon\*.png" />
+    <Resource Include="Assets\Icon\*.ico" />
+    <None Update="Assets\Icon\AppIcon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\HideFiles.Core\HideFiles.Core.csproj" />

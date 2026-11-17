@@ -199,10 +199,10 @@ public sealed class FileObfuscator
             // 2. 根据规则改名与改扩展名
             config.MatchExtension(originalExt, out string fakeExt);
             string newFileName;
-            if (config.NameObfuscationMode == NameMode.HashStem)
+            if (config.ObfuscateFileName)
             {
                 string stem = Path.GetFileNameWithoutExtension(originalFileName);
-                string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stem))).Substring(0, 8).ToLowerInvariant();
+                string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stem + origLen))).Substring(0, 8).ToLowerInvariant();
                 newFileName = $"hf_{hash}{fakeExt}";
             }
             else

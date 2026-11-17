@@ -49,8 +49,10 @@ dotnet publish (Join-Path $repoRoot "src\HideFiles.App\HideFiles.App.csproj") `
     -c Release -r win-x64 --self-contained false `
     -p:PublishSingleFile=true -o $appPubDir --nologo
 
-# 复制 CLI 到 App 目录中，便于右键菜单协同工作
+# 复制 CLI 到 App 目录，便于右键菜单协同工作（CLI 本身也是独立分发产物）
 Copy-Item (Join-Path $cliPubDir "hidefiles.exe") (Join-Path $appPubDir "hidefiles.exe") -Force
+# 图标资源无需向根目录重复复制：App 的 Assets/Icon/AppIcon.ico 已由 csproj 的
+# CopyToOutputDirectory 带入发布目录，避免安装包内出现两份内容相同的 ico。
 
 # 5. 打包 Zip 与生成 SHA256SUMS
 Write-Host "[5/5] 打包 Zip 与计算校验和..." -ForegroundColor Yellow

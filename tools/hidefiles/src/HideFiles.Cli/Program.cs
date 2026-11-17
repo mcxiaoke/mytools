@@ -144,11 +144,6 @@ public static class Program
         sw.Stop();
         Console.WriteLine($"\nCompleted in {sw.ElapsedMilliseconds:F1} ms. Succeeded: {success}, Failed: {failed}.");
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            ShellContextMenu.RefreshShell();
-        }
-
         return failed == 0 ? 0 : 2;
     }
 
@@ -221,11 +216,6 @@ public static class Program
 
         sw.Stop();
         Console.WriteLine($"\nCompleted in {sw.ElapsedMilliseconds:F1} ms. Succeeded: {success}, Failed: {failed}.");
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            ShellContextMenu.RefreshShell();
-        }
 
         return failed == 0 ? 0 : 2;
     }
