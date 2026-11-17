@@ -131,7 +131,7 @@ public static class ShellContextMenu
         // 子菜单 1: 混淆文件（结构锁，原地加密关键结构，极速）
         using (var hideKey = subShell.CreateSubKey("1_Hide"))
         {
-            hideKey.SetValue("MUIVerb", "混淆文件 (结构锁·极速)");
+            hideKey.SetValue("MUIVerb", "混淆文件（结构锁）");
             hideKey.SetValue("Icon", iconPath);
             using var cmdKey = hideKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --hide {targetParam}");
@@ -140,7 +140,7 @@ public static class ShellContextMenu
         // 子菜单 2: 还原文件（结构锁还原）
         using (var unhideKey = subShell.CreateSubKey("2_Unhide"))
         {
-            unhideKey.SetValue("MUIVerb", "还原文件 (结构锁)");
+            unhideKey.SetValue("MUIVerb", "还原文件（结构锁）");
             unhideKey.SetValue("Icon", iconPath);
             using var cmdKey = unhideKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --unhide {targetParam}");
@@ -149,7 +149,7 @@ public static class ShellContextMenu
         // 子菜单 3: 加密文件（整体加密，最强保护）
         using (var encKey = subShell.CreateSubKey("3_Encrypt"))
         {
-            encKey.SetValue("MUIVerb", "加密文件 (整体·最强)");
+            encKey.SetValue("MUIVerb", "加密文件（整体加密）");
             encKey.SetValue("Icon", iconPath);
             using var cmdKey = encKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --encrypt {targetParam}");
@@ -158,7 +158,7 @@ public static class ShellContextMenu
         // 子菜单 4: 解密文件（整体加密还原）
         using (var decKey = subShell.CreateSubKey("4_Decrypt"))
         {
-            decKey.SetValue("MUIVerb", "解密文件 (整体)");
+            decKey.SetValue("MUIVerb", "解密文件（整体加密）");
             decKey.SetValue("Icon", iconPath);
             using var cmdKey = decKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --decrypt {targetParam}");

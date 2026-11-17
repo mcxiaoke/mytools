@@ -133,7 +133,7 @@ public static class Program
         if (!result.Success)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[Error] {result.ErrorMessage}");
+            Console.WriteLine($"[错误] {result.ErrorMessage}");
             Console.ResetColor();
             if (config.HasKeyMaterial && string.IsNullOrEmpty(currentPin))
                 Console.WriteLine("        改 PIN 需加 --current <当前PIN>；主密钥与恢复码都不变。");
