@@ -15,8 +15,15 @@ public static class CoreConstants
     /// </summary>
     public static readonly byte[] V2TailMagic = new byte[] { 0x8A, 0x48, 0x46, 0x0D, 0x0A, 0x1A, 0x0A, 0x9F };
 
-    /// <summary>结构锁原地加密时，头部签名区长度（覆盖 ftyp/EBML/JPEG SOI/PNG signature）</summary>
-    public const int HeadSignatureSize = 64;
+    /// <summary>
+    /// 结构锁头部混淆区长度：默认整段前 64KB 参与原地 CTR 加密。
+    /// 该区间覆盖 ftyp / EBML / JPEG SOI / PNG signature，以及绝大多数容器的
+    /// moov、EBML 元数据区与首屏数据，比仅加密 64 字节的签名区更难被绕过。
+    /// 可在配置中按 MinHeadSize~MaxHeadSize 调整。
+    /// </summary>
+    public const int DefaultHeadSize = 64 * 1024;
+    public const int MinHeadSize = 4 * 1024;
+    public const int MaxHeadSize = 1024 * 1024;
 
     public const byte V2Version = 2;
 
@@ -44,9 +51,6 @@ public static class CoreConstants
 
     /// <summary>可逆混淆目录名前缀</summary>
     public const string ObfuscatedDirectoryPrefix = "_hf_";
-
-    /// <summary>保留常量（部分旧配置字段仍引用，避免配置反序列化问题）</summary>
-    public const int DefaultHeadSize = 64 * 1024;
 }
 
 /// <summary>保护模式</summary>

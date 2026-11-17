@@ -213,16 +213,22 @@ public static class StructureLocator
         for (int p = 8; p + 8 <= scan.Length; )
         {
             int clen = BinaryPrimitives.ReadInt32BigEndian(scan.AsSpan(p, 4));
-            if (clen < 0 || p + 12 + clen > scan.Length) break;
+            if (clen < 0) break;
             string type = Encoding.ASCII.GetString(scan, p + 4, 4);
             if (type == "IDAT")
             {
-                // 锁定 IDAT 数据头部（压缩流的 zlib 头 + 前若干字节）
-                int len = Math.Min(clen, 4096);
-                regions.Add(new LockRegion(p + 8, len, "IDAT"));
+                // 只锁定 IDAT 数据头部（zlib 头 + 前若干字节）。
+                // 注意不要用整个 chunk 长度判断扫描窗口——大图的单个 IDAT 常见几百 KB 到数 MB，
+                // 那样会直接放弃定位，使结构锁退化成"只加密文件头"。
+                int available = Math.Min(clen, 4096);
+                available = Math.Min(available, scan.Length - (p + 8));
+                if (available > 0)
+                    regions.Add(new LockRegion(p + 8, available, "IDAT"));
                 break;
             }
-            p += 12 + clen;
+            long next = (long)p + 12 + clen;
+            if (next > scan.Length) break;   // 该 chunk 跨越扫描窗口，无法继续安全遍历
+            p = (int)next;
         }
         return regions;
     }

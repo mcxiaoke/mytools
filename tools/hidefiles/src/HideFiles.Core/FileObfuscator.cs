@@ -147,7 +147,8 @@ public sealed class FileObfuscator
                         "请在设置中改用“整体加密”模式后重试，文件未被修改。");
 
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
-                V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt);
+                V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt,
+                    config.HeadObfuscateSize);
                 if (renameRequired)
                     targetPath = UniquePath.Move(filePath, dir, targetName);
             }

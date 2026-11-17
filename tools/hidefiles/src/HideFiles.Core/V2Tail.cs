@@ -49,23 +49,23 @@ public static class V2Tail
     /// 任一步骤失败都会写回原样并截掉半截 footer，重试安全。
     /// </summary>
     public static void ProtectInPlace(string filePath, V2Metadata meta, string pin,
-        byte[] masterKey, byte[] configSalt)
+        byte[] masterKey, byte[] configSalt, int headSize = CoreConstants.DefaultHeadSize)
     {
         long origLen = new FileInfo(filePath).Length;
         meta.OriginalLength = origLen;
         meta.Mode = ProtectionMode.StructureLock;
 
-        // 头部签名区 + 格式关键结构区，全部作为原地加密区
+        // 头部区 + 格式关键结构区，全部作为原地加密区
         var regions = new List<LockRegion>();
-        int headLen = (int)Math.Min(CoreConstants.HeadSignatureSize, origLen);
-        if (headLen > 0) regions.Add(new LockRegion(0, headLen, "HEADER-SIG"));
+        int headLen = (int)Math.Min(Math.Clamp(headSize, CoreConstants.MinHeadSize, CoreConstants.MaxHeadSize), origLen);
+        if (headLen > 0) regions.Add(new LockRegion(0, headLen, "HEADER"));
         foreach (var r in meta.LockRegions.OrderBy(r => r.Offset))
         {
-            // 合并与头部区重叠的区域，避免二次加密
+            // 与头部区重叠的区域合并进头部区，只取最大覆盖范围（不能因后一个更短的区而回缩）
             if (r.Offset < headLen)
             {
-                int end = (int)Math.Max(headLen, r.Offset + r.Length);
-                regions[0].Length = Math.Min(end, (int)origLen);
+                long end = Math.Max(regions[0].Length, r.Offset + r.Length);
+                regions[0].Length = (int)Math.Min(end, origLen);
                 continue;
             }
             regions.Add(new LockRegion(r.Offset, r.Length, r.Kind));
