@@ -71,7 +71,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="💡 结构锁：原地加密关键结构，极速，防大部分人（可拖拽文件到列表）"
+                        <TextBlock Text="结构锁 · 原地加密前 64KB 与关键结构，秒级完成（支持拖拽）"
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <ui:Button Content="混淆文件" Command="{Binding ObfuscateSelectedCommand}"
@@ -146,7 +146,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="🔒 整体加密：全文件 AES-256-GCM，最强保护（五类格式均支持）"
+                        <TextBlock Text="整体加密 · 全文件分块 AES-256-GCM，最强保护，支持任意文件"
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <ui:Button Content="加密文件" Command="{Binding EncryptSelectedCommand}"
@@ -194,19 +194,19 @@
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="🔒 安全 PIN 与加密模式 (v2)" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                <TextBlock Text="文件被装入统一加密容器，不泄露原始格式。默认结构锁极速、防大部分人；可选整体加密防专业提取。还原需 PIN 或恢复码。" 
+                                <TextBlock Text="PIN 与密钥" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                                <TextBlock Text="保护后的文件是统一格式的自包含容器，不暴露原始类型。还原需要 PIN 或恢复码。" 
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
 
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                     <TextBlock Text="当前状态: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <Border Background="#1A10B981" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
                                             Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <TextBlock Text="🔒 已启用 PIN 加密保护" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <TextBlock Text="已启用 PIN 保护" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </Border>
                                     <Border Background="#1A6B7280" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
                                             Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
-                                        <TextBlock Text="⚪ 未设置 PIN (无法混淆：v2 必须先设 PIN)" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="未设置 PIN（混淆/加密前必须先设置）" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                     </Border>
                                 </StackPanel>
 
@@ -220,10 +220,10 @@
                                                Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
 
-                                <TextBlock Text="修改已有 PIN 时会先校验当前 PIN，只重新封装同一主密钥——恢复码保持不变，此前保护的文件仍可用新 PIN 还原。"
+                                <TextBlock Text="修改 PIN 时需先验证当前 PIN；只重新封装同一主密钥，恢复码与历史文件都不受影响。"
                                            FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
-                                <TextBlock Text="保护模式已按工作台独立：结构锁工作台=混淆/还原（极速原地）；整体加密工作台=加密/解密（全文件最强保护）。右键菜单同样提供四个独立动作。"
+                                <TextBlock Text="两种模式按工作台独立：结构锁=混淆/还原；整体加密=加密/解密。右键菜单同样分四个动作。"
                                            FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
                                 <StackPanel Margin="0,0,0,8"
@@ -243,18 +243,18 @@
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="混淆强度与文件名策略" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
+                                <TextBlock Text="头部加密与文件名" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
                                 <Grid Margin="0,0,0,12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="200" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="混淆头部数据量:" VerticalAlignment="Center" />
+                                    <TextBlock Text="头部加密长度:" VerticalAlignment="Center" />
                                     <ComboBox Grid.Column="1" SelectedValuePath="Tag" SelectedValue="{Binding Config.HeadObfuscateSize}" Width="260" HorizontalAlignment="Left">
-                                        <ComboBoxItem Content="4 KB (超极速，微秒级)" Tag="4096" />
-                                        <ComboBoxItem Content="64 KB (默认推荐，彻底破坏特征)" Tag="65536" IsSelected="True" />
-                                        <ComboBoxItem Content="256 KB (高强度容器破坏)" Tag="262144" />
-                                        <ComboBoxItem Content="1 MB (深度特征抹除)" Tag="1048576" />
+                                        <ComboBoxItem Content="4 KB（更快）" Tag="4096" />
+                                        <ComboBoxItem Content="64 KB（默认）" Tag="65536" IsSelected="True" />
+                                        <ComboBoxItem Content="256 KB" Tag="262144" />
+                                        <ComboBoxItem Content="1 MB（最强）" Tag="1048576" />
                                     </ComboBox>
                                 </Grid>
 
@@ -263,8 +263,8 @@
                                         <ColumnDefinition Width="200" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="文件名混淆策略:" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Column="1" Content="启用文件名混淆 (将主文件名伪装为短哈希，默认开启)" 
+                                    <TextBlock Text="文件名:" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Column="1" Content="混淆文件名（改为 hf_ 短哈希；关闭则保留原名）" 
                                               IsChecked="{Binding Config.ObfuscateFileName}" />
                                 </Grid>
 
@@ -273,8 +273,8 @@
                                         <ColumnDefinition Width="200" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="目录扫描策略:" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Column="1" Content="包含子目录递归扫描 (默认关闭)" 
+                                    <TextBlock Text="扫描范围:" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Column="1" Content="包含子目录" 
                                               IsChecked="{Binding Config.IncludeSubdirectories}" />
                                 </Grid>
                             </StackPanel>
@@ -308,8 +308,8 @@
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel>
-                                    <TextBlock Text="Windows 资源管理器右键级联菜单 (折叠主入口)" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                    <TextBlock Text="在文件、文件夹或空白处添加无黑框的 'HideFiles' 折叠菜单，点击直接在 GUI 界面中快速处理，无需管理员权限。" 
+                                    <TextBlock Text="资源管理器右键菜单" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                                    <TextBlock Text="在文件、文件夹或空白处添加 HideFiles 折叠菜单，点击后在 GUI 内处理，无需管理员权限。" 
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <TextBlock Text="当前状态: 已安装" Foreground="#10B981" FontWeight="SemiBold" Margin="0,8,0,0"
                                                Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}}" />
@@ -342,7 +342,7 @@
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20">
                             <StackPanel>
-                                <TextBlock Text="扩展名伪装映射规则 (内置媒体规则)" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
+                                <TextBlock Text="扩展名伪装规则" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
                                 <ItemsControl ItemsSource="{Binding Config.Groups}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
@@ -391,16 +391,16 @@
                             <Image Source="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="HideFiles v1.0.0" FontSize="18" FontWeight="Bold" />
-                                <TextBlock Text="极速自包含文件特征混淆与还原小工具 (Windows .NET 8)" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="Windows 文件保护小工具 · .NET 8" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </StackPanel>
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="核心技术原理：" FontWeight="Bold" Margin="0,0,0,8" />
-                        <TextBlock Text="1. 两种保护模式：结构锁原地加密前 64KB 头部与格式关键结构（秒级、不重写整个文件）；整体加密按 64KB 分块做 AES-256-GCM（最强，全文件变乱码）。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="2. 自包含容器：统一魔数 + 文件内嵌密钥材料与加密元数据，可改名、可搬运，脱离本工具配置也能用 PIN 或恢复码还原。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="3. 密钥体系：PIN 经 PBKDF2（60 万次）派生 KEK 包裹主密钥；恢复码是主密钥的 Base32，忘记 PIN 时唯一凭据。修改 PIN 只重封装主密钥，历史文件不受影响。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="4. 失败安全：结构锁只回滚被改写的锁定区（≤1MB，不复制整个文件），footer 校验通过才算提交；还原为两阶段，失败不会留下半解密文件或明文临时文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="5. 四动作级联右键菜单：混淆/还原/加密/解密各自独立，调用 GUI 执行，无控制台黑框；目标文件重名时自动改名，绝不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="1. 两种模式：结构锁原地加密前 64KB 与格式关键结构（秒级、不重写整个文件）；整体加密按 64KB 分块做 AES-256-GCM。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="2. 自包含容器：密钥材料与元数据都在文件内，可改名、可搬运，脱离本机配置也能用 PIN 或恢复码还原。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="3. 密钥体系：PIN 经 PBKDF2（60 万次）派生 KEK 包裹主密钥；恢复码即主密钥的 Base32。改 PIN 只重封装主密钥，历史文件不受影响。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="4. 失败安全：结构锁只回滚被改写的锁定区，footer 校验通过才算提交；还原两阶段校验，失败不留半解密文件或明文临时文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="5. 目标重名自动加 (1)，绝不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                     </StackPanel>
                 </Border>
             </TabItem>

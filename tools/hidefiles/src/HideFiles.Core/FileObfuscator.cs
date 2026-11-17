@@ -39,14 +39,18 @@ public sealed class ProcessFileResult
 
 /// <summary>
 /// v2 文件混淆/还原引擎。
-/// 混淆：把整个原始文件装入自包含 v2 容器（统一魔数，不泄露源格式）。
-///   - 默认结构锁模式：仅加密格式关键结构（mp4/mkv/jpg/png 定位），媒体主体明文，极速。
-///   - 可选整体加密模式：全文件分块 AES-256-GCM，最强保护。
-/// 还原：PIN 或恢复码解密容器，校验原 SHA-256，逐字节无损还原。
+/// 混淆：把文件装入自包含 v2 容器（统一魔数，不暴露原始格式）。
+///   - 结构锁（默认）：原地加密前 64KB 头部 + 格式关键结构，媒体主体明文，极速。
+///   - 整体加密：全文件分块 AES-256-GCM，最强保护。
+/// 还原：用 PIN / 恢复码 / 本机主密钥解开容器，结构锁校验各锁定区 CRC，整体加密校验 SHA-256。
 /// </summary>
 public sealed class FileObfuscator
 {
-    public FileInspection Inspect(string filePath)
+    /// <summary>
+    /// 检查文件状态。传入 masterKey（本机已解锁的主密钥）时会顺带解出原始文件名，
+    /// 便于在列表/扫描结果里辨认被改名的容器；没有密钥时只判断容器类型。
+    /// </summary>
+    public FileInspection Inspect(string filePath, byte[]? masterKey = null)
     {
         var info = new FileInspection { FilePath = filePath };
         if (!File.Exists(filePath))
@@ -69,18 +73,17 @@ public sealed class FileObfuscator
             if (isTail)
             {
                 info.ProtectionMode = ProtectionMode.StructureLock;
-                info.OriginalExtension = "结构锁(尾容器)";
             }
             else
             {
-                // 只读取头部元数据的模式标记用于展示（不解密）
+                // 只读头部字节判断模式标记（不解密）
                 using var fs = File.OpenRead(filePath);
                 byte[] head = new byte[CoreConstants.V2HeaderSize];
                 fs.ReadExactly(head, 0, head.Length);
                 info.ProtectionMode = (ProtectionMode)head[9];
-                info.OriginalExtension = info.ProtectionMode == ProtectionMode.StructureLock
-                    ? "结构锁" : "整体加密";
             }
+
+            TryFillMetadata(info, filePath, isTail, masterKey);
             return info;
         }
         catch (IOException ex) when (IsFileLocked(ex))
@@ -94,6 +97,24 @@ public sealed class FileObfuscator
             info.Status = FileStatus.Corrupted;
             info.ErrorMessage = ex.Message;
             return info;
+        }
+    }
+
+    /// <summary>有主密钥时解出元数据里的原始文件名；解不出就保持空，不影响状态判定</summary>
+    private static void TryFillMetadata(FileInspection info, string path, bool isTail, byte[]? masterKey)
+    {
+        if (masterKey == null || masterKey.Length != CoreConstants.MasterKeySize) return;
+        try
+        {
+            V2Metadata meta = isTail
+                ? V2Tail.ReadFooter(path, null, null, masterKey).Metadata
+                : V2Container.Read(path, null, null, masterKey).Metadata;
+            info.OriginalFileName = meta.OriginalFileName;
+            info.OriginalExtension = meta.OriginalExtension;
+        }
+        catch
+        {
+            // 不属于这批密钥的文件：保持字段为空
         }
     }
 

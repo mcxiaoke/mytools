@@ -97,7 +97,7 @@ public static class Program
 
             case "scan":
             case "status":
-                return ExecuteScan(targetArgs, config);
+                return ExecuteScan(targetArgs, config, pin);
 
             case "dir-hide":
                 return ExecuteDirectoryNames(targetArgs, obfuscate: true);
@@ -113,7 +113,7 @@ public static class Program
                 }
 
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[Error] Unknown command '{command}'. Use --help to view available commands.");
+                Console.WriteLine($"[错误] 未知命令 \"{command}\"，用 --help 查看用法。");
                 Console.ResetColor();
                 return 1;
         }
@@ -124,7 +124,7 @@ public static class Program
         if (args.Count == 0)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[Error] Usage: hidefiles setpin <new-pin> [--current <old-pin>]");
+            Console.WriteLine("[错误] 用法：hidefiles setpin <新PIN> [--current <当前PIN>]");
             Console.ResetColor();
             return 1;
         }
@@ -136,7 +136,7 @@ public static class Program
             Console.WriteLine($"[Error] {result.ErrorMessage}");
             Console.ResetColor();
             if (config.HasKeyMaterial && string.IsNullOrEmpty(currentPin))
-                Console.WriteLine("        修改已有 PIN 时请追加 --current <当前PIN>；主密钥不变，恢复码保持有效。");
+                Console.WriteLine("        改 PIN 需加 --current <当前PIN>；主密钥与恢复码都不变。");
             return 1;
         }
 
@@ -144,16 +144,15 @@ public static class Program
         Console.ForegroundColor = ConsoleColor.Green;
         if (result.MasterKeyRecreated)
         {
-            Console.WriteLine("[Success] PIN 已设置。请妥善保存下面的恢复码（忘记 PIN 时可用它还原文件）：");
+            Console.WriteLine("[完成] PIN 已设置。请离线保存恢复码（忘记 PIN 时唯一的凭据）：");
             Console.ResetColor();
-            Console.WriteLine($"  Recovery Code: {result.RecoveryCode}");
+            Console.WriteLine($"  恢复码：{result.RecoveryCode}");
         }
         else
         {
-            Console.WriteLine("[Success] PIN 已更新：主密钥未变，恢复码保持有效，此前保护的文件仍可用新 PIN 还原。");
+            Console.WriteLine("[完成] PIN 已更新：主密钥与恢复码不变，历史文件仍可用新 PIN 还原。");
             Console.ResetColor();
         }
-        Console.WriteLine($"  Protection Mode: {config.ProtectionMode}");
         return 0;
     }
 
@@ -161,7 +160,7 @@ public static class Program
     {
         if (paths.Count == 0)
         {
-            Console.WriteLine("[Warning] No file or directory path specified to hide.");
+            Console.WriteLine("[提示] 请指定要处理的文件或目录。");
             return 1;
         }
 
@@ -173,19 +172,19 @@ public static class Program
         if (files.Count == 0)
         {
             Console.WriteLine(filterByRules
-                ? "[Info] No matching files found to obfuscate according to rules."
-                : "[Info] No files found to encrypt.");
+                ? "[提示] 没有符合扩展名规则的文件（结构锁仅支持 mp4/mkv/jpg/png 等）。"
+                : "[提示] 没有找到可处理的文件。");
             return 0;
         }
 
-        Console.WriteLine($"--> Found {files.Count} candidate file(s) for obfuscation.");
+        Console.WriteLine($"找到 {files.Count} 个文件。");
         if (dryRun)
         {
-            Console.WriteLine("[Dry Run Mode] The following files would be obfuscated:");
+            Console.WriteLine("[预演] 将会处理：");
             foreach (var f in files)
             {
                 config.MatchExtension(Path.GetExtension(f), out string fakeExt);
-                Console.WriteLine($"  * {f}  --> [*{fakeExt}]");
+                Console.WriteLine($"  * {f}  →  {fakeExt}");
             }
             return 0;
         }
@@ -204,7 +203,7 @@ public static class Program
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.Write("  [OK] ");
                 Console.ResetColor();
-                Console.WriteLine($"{Path.GetFileName(f)} -> {Path.GetFileName(res.FinalPath)} ({res.ElapsedMilliseconds:F1}ms)");
+                Console.WriteLine($"{Path.GetFileName(f)} → {Path.GetFileName(res.FinalPath)}（{res.ElapsedMilliseconds:F1}ms）");
             }
             else
             {
@@ -217,7 +216,7 @@ public static class Program
         }
 
         sw.Stop();
-        Console.WriteLine($"\nCompleted in {sw.ElapsedMilliseconds:F1} ms. Succeeded: {success}, Failed: {failed}.");
+        Console.WriteLine($"\n完成：成功 {success}，失败 {failed}，用时 {sw.ElapsedMilliseconds:F1} ms。");
 
         return failed == 0 ? 0 : 2;
     }
@@ -226,13 +225,13 @@ public static class Program
     {
         if (paths.Count == 0)
         {
-            Console.WriteLine("[Warning] No file or directory path specified to restore.");
+            Console.WriteLine("[提示] 请指定要还原的文件或目录。");
             return 1;
         }
         if (string.IsNullOrEmpty(pin) && string.IsNullOrEmpty(recovery))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[Error] 还原需要 --pin <PIN> 或 --recovery <恢复码>。");
+            Console.WriteLine("[错误] 还原需要 --pin <PIN> 或 --recovery <恢复码>。");
             Console.ResetColor();
             return 1;
         }
@@ -248,7 +247,7 @@ public static class Program
 
         foreach (var f in allCandidates)
         {
-            var insp = obfuscator.Inspect(f);
+            var insp = obfuscator.Inspect(f, fallbackMasterKey);   // 有 PIN 时顺带显示原始文件名
             if (insp.Status == FileStatus.Obfuscated)
             {
                 obfuscatedFiles.Add(f);
@@ -257,18 +256,18 @@ public static class Program
 
         if (obfuscatedFiles.Count == 0)
         {
-            Console.WriteLine("[Info] No obfuscated files found in the specified paths.");
+            Console.WriteLine("[提示] 指定路径下没有已保护的文件。");
             return 0;
         }
 
-        Console.WriteLine($"--> Found {obfuscatedFiles.Count} obfuscated file(s) to restore.");
+        Console.WriteLine($"找到 {obfuscatedFiles.Count} 个已保护文件。");
         if (dryRun)
         {
-            Console.WriteLine("[Dry Run Mode] The following files would be restored:");
+            Console.WriteLine("[预演] 将会还原：");
             foreach (var f in obfuscatedFiles)
             {
                 var insp = obfuscator.Inspect(f);
-                Console.WriteLine($"  * {f}  --> [{insp.OriginalFileName}]");
+                Console.WriteLine($"  * {f}  →  {insp.OriginalFileName ?? "-"}");
             }
             return 0;
         }
@@ -286,7 +285,7 @@ public static class Program
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.Write("  [OK] ");
                 Console.ResetColor();
-                Console.WriteLine($"{Path.GetFileName(f)} -> {Path.GetFileName(res.FinalPath)} ({res.ElapsedMilliseconds:F1}ms)");
+                Console.WriteLine($"{Path.GetFileName(f)} → {Path.GetFileName(res.FinalPath)}（{res.ElapsedMilliseconds:F1}ms）");
             }
             else
             {
@@ -299,12 +298,12 @@ public static class Program
         }
 
         sw.Stop();
-        Console.WriteLine($"\nCompleted in {sw.ElapsedMilliseconds:F1} ms. Succeeded: {success}, Failed: {failed}.");
+        Console.WriteLine($"\n完成：成功 {success}，失败 {failed}，用时 {sw.ElapsedMilliseconds:F1} ms。");
 
         return failed == 0 ? 0 : 2;
     }
 
-    private static int ExecuteScan(List<string> paths, HideFilesConfig config)
+    private static int ExecuteScan(List<string> paths, HideFilesConfig config, string? pin)
     {
         if (paths.Count == 0)
         {
@@ -314,18 +313,19 @@ public static class Program
         var processor = new BatchProcessor();
         var files = processor.CollectFiles(paths, config, forObfuscate: false);
         var obfuscator = new FileObfuscator();
+        byte[]? masterKey = TryGetLocalMasterKey(pin);   // 有 PIN 时顺带显示原始文件名
 
         int normal = 0;
         int obfuscated = 0;
         int corrupted = 0;
 
-        Console.WriteLine($"Scanning {files.Count} files...\n");
-        Console.WriteLine($"{"Status",-12} | {"Size",-10} | {"Current Name",-35} | {"Original Info",-25}");
+        Console.WriteLine($"扫描 {files.Count} 个文件...\n");
+        Console.WriteLine($"{"状态",-12} | {"大小",-10} | {"当前文件名",-38} | 原始文件名");
         Console.WriteLine(new string('-', 88));
 
         foreach (var f in files)
         {
-            var insp = obfuscator.Inspect(f);
+            var insp = obfuscator.Inspect(f, masterKey);
             string statusStr;
             ConsoleColor col;
 
@@ -355,7 +355,7 @@ public static class Program
         }
 
         Console.WriteLine(new string('-', 88));
-        Console.WriteLine($"Scan Summary: Total={files.Count}, Normal={normal}, Obfuscated={obfuscated}, Other={corrupted}.");
+        Console.WriteLine($"汇总：共 {files.Count}，普通 {normal}，已保护 {obfuscated}，异常 {corrupted}。");
         return 0;
     }
 
@@ -381,7 +381,7 @@ public static class Program
     {
         if (paths.Count == 0)
         {
-            Console.WriteLine($"[Error] 请指定目录：hidefiles {(obfuscate ? "dir-hide" : "dir-unhide")} <目录...>");
+            Console.WriteLine($"[错误] 请指定目录：hidefiles {(obfuscate ? "dir-hide" : "dir-unhide")} <目录...>");
             return 1;
         }
 

@@ -9,13 +9,21 @@
 #>
 
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = $PSScriptRoot
 $distDir = Join-Path $repoRoot "dist"
 $pubTemp = Join-Path $repoRoot "temp" "pub"
+
+# 版本号默认取 Directory.Build.props，避免脚本与工程两处维护
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $buildProps = [xml](Get-Content (Join-Path $repoRoot "Directory.Build.props") -Raw)
+    $pg = $buildProps.Project.PropertyGroup | Where-Object { $_.Major } | Select-Object -First 1
+    $Version = "$($pg.Major).$($pg.Minor).$($pg.Patch)"
+}
+Write-Host "版本：$Version" -ForegroundColor Gray
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  HideFiles 发布脚本" -ForegroundColor Cyan
@@ -42,12 +50,14 @@ Write-Host "[3/5] 构建发布 CLI (hidefiles)..." -ForegroundColor Yellow
 dotnet publish (Join-Path $repoRoot "src\HideFiles.Cli\HideFiles.Cli.csproj") `
     -c Release -r win-x64 --self-contained false `
     -p:PublishSingleFile=true -o $cliPubDir --nologo
+if ($LASTEXITCODE -ne 0) { throw "CLI publish failed (exit $LASTEXITCODE)" }
 
 # 4. 发布 App
 Write-Host "[4/5] 构建发布 App (HideFilesApp)..." -ForegroundColor Yellow
 dotnet publish (Join-Path $repoRoot "src\HideFiles.App\HideFiles.App.csproj") `
     -c Release -r win-x64 --self-contained false `
     -p:PublishSingleFile=true -o $appPubDir --nologo
+if ($LASTEXITCODE -ne 0) { throw "App publish failed (exit $LASTEXITCODE)" }
 
 # 复制 CLI 到 App 目录，便于右键菜单协同工作（CLI 本身也是独立分发产物）
 Copy-Item (Join-Path $cliPubDir "hidefiles.exe") (Join-Path $appPubDir "hidefiles.exe") -Force

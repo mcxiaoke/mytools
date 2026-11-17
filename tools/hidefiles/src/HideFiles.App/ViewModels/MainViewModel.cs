@@ -125,7 +125,7 @@ public partial class MainViewModel : ObservableObject
         string full = Path.GetFullPath(file);
         if (existing.Contains(full)) return;
 
-        var insp = _obfuscator.Inspect(full);
+        var insp = _obfuscator.Inspect(full, _sessionMasterKey);
         var item = new FileItemModel
         {
             FilePath = full,
@@ -364,7 +364,7 @@ public partial class MainViewModel : ObservableObject
                     if (res.Success)
                     {
                         successCount++;
-                        var insp = _obfuscator.Inspect(res.FinalPath);
+                        var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey);
                         Application.Current.Dispatcher.Invoke(() =>
                         {
                             item.FilePath = res.FinalPath;

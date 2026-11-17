@@ -103,15 +103,79 @@ public static class StructureLocator
     {
         var regions = new List<LockRegion>();
         using var fs = File.OpenRead(path);
-        // 关键结构都在文件前部元数据区，读前 8MB 足够
-        int readLen = (int)Math.Min(fs.Length, 8 * 1024 * 1024);
-        byte[] buf = new byte[readLen];
-        fs.ReadExactly(buf, 0, readLen);
-        WalkEbml(buf, 0, readLen, regions, depth: 0);
+
+        // 关键结构大多在文件前部，但 Cues/SeekHead 常被写在文件尾部
+        const int Window = 8 * 1024 * 1024;
+        var windows = new List<(long BaseOffset, byte[] Buffer)>();
+
+        int headLen = (int)Math.Min(fs.Length, Window);
+        byte[] head = new byte[headLen];
+        fs.ReadExactly(head, 0, headLen);
+        windows.Add((0, head));
+
+        if (fs.Length > headLen)
+        {
+            int tailLen = (int)Math.Min(fs.Length - headLen, Window);
+            byte[] tail = new byte[tailLen];
+            fs.Seek(fs.Length - tailLen, SeekOrigin.Begin);
+            fs.ReadExactly(tail, 0, tailLen);
+            windows.Add((fs.Length - tailLen, tail));
+        }
+
+        foreach (var (baseOffset, buffer) in windows)
+            WalkEbml(buffer, baseOffset, 0, buffer.Length, regions, depth: 0);
+
+        // 尾部窗口再按元素签名扫一次：Cues/SeekHead 常写在文件末尾，那里未必正好是元素边界
+        if (windows.Count > 1)
+        {
+            var (tailBase, tailBuf) = windows[1];
+            ScanElementById(tailBuf, tailBase, CuesId, "Cues", regions);
+            ScanElementById(tailBuf, tailBase, SeekHeadId, "SeekHead", regions);
+        }
+
         return regions;
     }
 
-    private static void WalkEbml(byte[] buf, long start, long end, List<LockRegion> regions, int depth)
+    private static readonly byte[] CuesId = { 0x1C, 0x53, 0xBB, 0x6B };
+    private static readonly byte[] SeekHeadId = { 0x11, 0x4D, 0x9B, 0x74 };
+
+    /// <summary>
+    /// 在缓冲区里按元素签名定位（用于文件尾部窗口：那里通常不是从元素边界开始解析的）。
+    /// </summary>
+    private static void ScanElementById(byte[] buf, long baseOffset, byte[] id, string name, List<LockRegion> regions)
+    {
+        if (regions.Any(r => r.Kind == name)) return;   // 前面的窗口已定位到
+
+        for (int i = 0; i + id.Length + 1 < buf.Length; i++)
+        {
+            if (buf[i] != id[0]) continue;
+
+            bool matched = true;
+            for (int k = 1; k < id.Length; k++)
+            {
+                if (buf[i + k] != id[k]) { matched = false; break; }
+            }
+            if (!matched) continue;
+
+            int sizePos = i + id.Length;
+            int sizeLen = VintSizeLen(buf[sizePos]);
+            if (sizeLen < 1 || sizePos + sizeLen > buf.Length) continue;
+
+            ulong size = ReadVintSize(buf, sizePos, sizeLen, out bool unknown);
+            if (unknown || size == 0) continue;
+
+            int dataStart = sizePos + sizeLen;
+            if (dataStart >= buf.Length) continue;
+
+            int len = (int)Math.Min((ulong)(buf.Length - dataStart), Math.Min(size, 256 * 1024));
+            if (len <= 0) continue;
+
+            regions.Add(new LockRegion(baseOffset + dataStart, len, name));
+            return;
+        }
+    }
+
+    private static void WalkEbml(byte[] buf, long baseOffset, long start, long end, List<LockRegion> regions, int depth)
     {
         if (depth > 8) return;
         long p = start;
@@ -131,8 +195,8 @@ public static class StructureLocator
             if (MkvTargets.Contains(name) && dataEnd > dataStart && sizeRaw <= 4 * 1024 * 1024)
             {
                 int len = (int)Math.Min(dataEnd - dataStart, 256 * 1024);
-                if (dataStart + len <= buf.Length)
-                    regions.Add(new LockRegion(dataStart, len, name));
+                if (dataStart + len <= buf.Length && !regions.Any(r => r.Kind == name))
+                    regions.Add(new LockRegion(baseOffset + dataStart, len, name));
             }
 
             // Segment 等 master 可能声明超大/未知长度，用已读缓冲区末尾作为边界继续深入
@@ -140,7 +204,7 @@ public static class StructureLocator
             {
                 long childEnd = Math.Min(dataEnd, buf.Length);
                 if (childEnd > dataStart)
-                    WalkEbml(buf, dataStart, childEnd, regions, depth + 1);
+                    WalkEbml(buf, baseOffset, dataStart, childEnd, regions, depth + 1);
             }
             if (unknown || dataEnd <= p) break;
             p = dataEnd;
@@ -177,15 +241,31 @@ public static class StructureLocator
     {
         var regions = new List<LockRegion>();
         using var fs = File.OpenRead(path);
-        int readLen = (int)Math.Min(fs.Length, 1024 * 1024);
+        int readLen = (int)Math.Min(fs.Length, 2 * 1024 * 1024);
         byte[] buf = new byte[readLen];
         fs.ReadExactly(buf, 0, readLen);
-        // 从 SOI(0xFFD8) 之后开始，锁定到 SOS(0xFFDA) 之前的所有参数段
+
+        // 按段长正规遍历 SOI(FFD8) 之后的各段，直到 SOS(FFDA)。
+        // 不能逐字节搜 FFDA：EXIF 缩略图内部就含有该字节对，会把锁定区提前截断。
         int sos = -1;
-        for (int i = 2; i < buf.Length - 1; i++)
+        int p = 2;
+        while (p + 4 <= buf.Length)
         {
-            if (buf[i] == 0xFF && buf[i + 1] == 0xDA) { sos = i; break; }
+            if (buf[p] != 0xFF) { p++; continue; }   // 容错：跳过段间填充字节
+            byte marker = buf[p + 1];
+
+            if (marker == 0xDA) { sos = p; break; }                                     // SOS
+            if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7))  // 无长度字段的标记
+            {
+                p += 2;
+                continue;
+            }
+
+            int segLen = (buf[p + 2] << 8) | buf[p + 3];
+            if (segLen < 2) break;
+            p += 2 + segLen;
         }
+
         if (sos > 2)
         {
             int len = Math.Min(sos - 2, 64 * 1024);

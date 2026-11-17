@@ -4,7 +4,6 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>HideFiles.Core</RootNamespace>
     <AssemblyName>HideFiles.Core</AssemblyName>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
