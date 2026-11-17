@@ -51,10 +51,10 @@ public static class V2Container
     }
 
     /// <summary>
-    /// 写入 v2 文件。bodyTransform 对流执行模式相关的主体处理（原地结构锁 或 分块加密）。
-    /// 采用暂存临时文件 + 原子替换，避免写入中途失败损坏原文件。
+    /// 写入 v2 容器到 dstPath。先写同目录临时文件，再同卷 rename 覆盖目标，
+    /// 中途失败不会留下半个目标文件；不额外产生一次全量拷贝。
     /// </summary>
-    public static void Write(string srcPath, string dstPath, V2Metadata meta, V2WriteOptions opt,
+    public static void Write(string dstPath, V2Metadata meta, V2WriteOptions opt,
         Action<Stream, byte[], byte[]> writeBody)
     {
         if (opt.MasterKey.Length != CoreConstants.MasterKeySize) throw new ArgumentException("Invalid master key.");
@@ -92,7 +92,6 @@ public static class V2Container
                 fs.Write(emkBlob);
                 fs.Write(BitConverter.GetBytes(metaCipher.Length));
 
-                long bodyOffset = fs.Position + metaCipher.Length;
                 fs.Write(metaCipher);
 
                 // 主体由调用方写入；传入 fileKey 与 fileNonce 供模式加密使用
@@ -100,17 +99,8 @@ public static class V2Container
                 fs.Flush(true);
             }
 
-            if (!string.Equals(srcPath, dstPath, StringComparison.OrdinalIgnoreCase))
-            {
-                File.Copy(tmp, dstPath, overwrite: true);
-                File.Delete(tmp);
-            }
-            else
-            {
-                // 同路径：先复制到目标再删临时（Windows 不允许直接覆盖已打开/自身）
-                File.Copy(tmp, dstPath, overwrite: true);
-                File.Delete(tmp);
-            }
+            // 同卷 rename：原子替换目标，避免 File.Copy 造成的第二遍全量写盘
+            File.Move(tmp, dstPath, overwrite: true);
         }
         catch
         {

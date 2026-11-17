@@ -130,16 +130,12 @@ public sealed class FileObfuscator
                 Mode = config.ProtectionMode
             };
 
-            string baseName = Path.GetFileNameWithoutExtension(originalFileName);
-            string fakeExt = config.ObfuscateFileName
-                ? GetFakeExtension(config, originalExt)
-                : originalExt;
-            string newName = config.ObfuscateFileName
-                ? $"hf_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(baseName + origLen))).Substring(0, 8).ToLowerInvariant()}{fakeExt}"
-                : $"{baseName}{fakeExt}";
-            string targetPath = Path.Combine(dir, newName);
-            if (string.Equals(filePath, targetPath, StringComparison.OrdinalIgnoreCase))
-                targetPath = Path.Combine(dir, $"hf_{Guid.NewGuid():N}{fakeExt}");
+            string targetName = config.ObfuscateFileName
+                ? $"hf_{BuildNameHash(originalFileName, origLen)}{GetFakeExtension(config, originalExt)}"
+                : originalFileName;
+            string targetPath = Path.Combine(dir, targetName);
+            // 关闭文件名混淆（或哈希名恰好等于原名）时为原地处理，不需要改名
+            bool renameRequired = !string.Equals(filePath, targetPath, StringComparison.OrdinalIgnoreCase);
 
             if (config.ProtectionMode == ProtectionMode.StructureLock)
             {
@@ -152,8 +148,8 @@ public sealed class FileObfuscator
 
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
                 V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt);
-                if (!string.Equals(filePath, targetPath, StringComparison.OrdinalIgnoreCase))
-                    File.Move(filePath, targetPath, overwrite: true);
+                if (renameRequired)
+                    targetPath = UniquePath.Move(filePath, dir, targetName);
             }
             else
             {
@@ -163,7 +159,7 @@ public sealed class FileObfuscator
                     sha = SHA256.HashData(inFs);
                 meta.OriginalSha256 = sha;
 
-                string tmpOut = targetPath + ".hfv2tmp";
+                string tmpOut = Path.Combine(dir, $"hf_enc_{Guid.NewGuid():N}.tmp");
                 var opt = new V2WriteOptions
                 {
                     Mode = ProtectionMode.FullEncrypt,
@@ -177,9 +173,20 @@ public sealed class FileObfuscator
                     using var inFs = File.OpenRead(filePath);
                     WriteFullEncryptBody(inFs, outFs, fileKey, fileNonce);
                 }
-                V2Container.Write(filePath, tmpOut, meta, opt, WriteBody);
-                File.Move(tmpOut, targetPath, overwrite: true);
-                File.Delete(filePath);
+                V2Container.Write(tmpOut, meta, opt, WriteBody);
+
+                if (renameRequired)
+                {
+                    // 先落地新名字，再删除原文；目标同名时自动改为 "原名 (1).ext"，绝不覆盖
+                    targetPath = UniquePath.Move(tmpOut, dir, targetName);
+                    File.Delete(filePath);
+                }
+                else
+                {
+                    // 关闭文件名混淆：用容器原地替换原文件
+                    File.Move(tmpOut, filePath, overwrite: true);
+                    targetPath = filePath;
+                }
             }
 
             sw.Stop();
@@ -218,13 +225,17 @@ public sealed class FileObfuscator
                 // 结构锁尾部容器：原地解密各区 + 校验 CRC + 截断 footer，不重写整体
                 var read = V2Tail.ReadFooter(filePath, pin, recoveryCode);
                 V2Tail.RestoreInPlace(filePath, read);
-                string targetPath = Path.Combine(dir, read.Metadata.OriginalFileName);
-                if (!string.Equals(filePath, targetPath, StringComparison.OrdinalIgnoreCase))
-                    File.Move(filePath, targetPath, overwrite: true);
+
+                string tailName = RequireOriginalName(read.Metadata);
+                string tailTarget = Path.Combine(dir, tailName);
+                if (string.Equals(filePath, tailTarget, StringComparison.OrdinalIgnoreCase))
+                    tailTarget = filePath;                                  // 未改名的原地容器
+                else
+                    tailTarget = UniquePath.Move(filePath, dir, tailName);   // 同名已存在 → 原名 (1).ext
 
                 sw.Stop();
                 res.Success = true;
-                res.FinalPath = targetPath;
+                res.FinalPath = tailTarget;
                 res.ElapsedMilliseconds = sw.Elapsed.TotalMilliseconds;
                 return res;
             }
@@ -232,8 +243,8 @@ public sealed class FileObfuscator
             // 前置容器（整体加密）：读出主体 + 校验
             var front = V2Container.Read(filePath, pin, recoveryCode);
             var meta = front.Metadata;
-            string frontTarget = Path.Combine(dir, meta.OriginalFileName);
-            string tmpOut = frontTarget + ".hfrstmp";
+            string frontName = RequireOriginalName(meta);
+            string tmpOut = Path.Combine(dir, $"hf_rst_{Guid.NewGuid():N}.tmp");
 
             using (var inFs = File.OpenRead(filePath))
             using (var outFs = new FileStream(tmpOut, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -250,8 +261,18 @@ public sealed class FileObfuscator
                 !CryptographicOperations.FixedTimeEquals(restoredSha, meta.OriginalSha256))
                 throw new InvalidDataException("还原后 SHA-256 校验失败，文件可能已损坏或被篡改。");
 
-            File.Move(tmpOut, frontTarget, overwrite: true);
-            File.Delete(filePath);
+            string frontTarget;
+            if (string.Equals(filePath, Path.Combine(dir, frontName), StringComparison.OrdinalIgnoreCase))
+            {
+                // 原始名与容器名相同（关闭文件名混淆）：用还原结果原地替换容器自身
+                File.Move(tmpOut, filePath, overwrite: true);
+                frontTarget = filePath;
+            }
+            else
+            {
+                frontTarget = UniquePath.Move(tmpOut, dir, frontName);
+                File.Delete(filePath);
+            }
 
             sw.Stop();
             res.Success = true;
@@ -426,6 +447,26 @@ public sealed class FileObfuscator
     {
         if (config.MatchExtension(originalExt, out string fakeExt)) return fakeExt;
         return config.DefaultFakeExtension;
+    }
+
+    /// <summary>文件名混淆：主文件名 + 长度的 SHA-256 前 8 位十六进制</summary>
+    private static string BuildNameHash(string fileName, long length)
+    {
+        string stem = Path.GetFileNameWithoutExtension(fileName);
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(stem + length));
+        return Convert.ToHexString(hash, 0, 4).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 取出元数据里的原始文件名。仅取文件名部分，剥离任何目录成分，
+    /// 避免被篡改的元数据把文件写到目标目录之外。
+    /// </summary>
+    private static string RequireOriginalName(V2Metadata meta)
+    {
+        string name = Path.GetFileName(meta.OriginalFileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidDataException("元数据缺少原始文件名，无法确定还原后的文件名。");
+        return name;
     }
 
     private static bool IsFileLocked(IOException exception)
