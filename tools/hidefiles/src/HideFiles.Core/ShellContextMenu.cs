@@ -25,22 +25,24 @@ public static class ShellContextMenu
         return key != null;
     }
 
-    public static void Install(string appExePath, string? cliExePath = null)
+    /// <summary>
+    /// 安装右键菜单。appExePath 必须是 GUI 程序（HideFilesApp.exe）——菜单项传的是
+    /// --hide/--unhide/--encrypt/--decrypt 这些 GUI 参数，指向 CLI 会导致点击无效并弹控制台。
+    /// </summary>
+    public static void Install(string appExePath)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
 
-        // 统一优先调用 GUI 应用程序（appExePath），杜绝控制台黑框
-        string targetExe = appExePath;
         string iconPath = GetOrCreateIconPath(appExePath);
 
         // 1. 文件右键 (*)
-        RegisterCascadingMenu(@"Software\Classes\*\shell", targetExe, iconPath, isBackground: false);
+        RegisterCascadingMenu(@"Software\Classes\*\shell", appExePath, iconPath, isBackground: false);
 
         // 2. 文件夹右键 (Directory)
-        RegisterCascadingMenu(@"Software\Classes\Directory\shell", targetExe, iconPath, isBackground: false);
+        RegisterCascadingMenu(@"Software\Classes\Directory\shell", appExePath, iconPath, isBackground: false);
 
         // 3. 文件夹背景空白处 (Directory\Background)
-        RegisterCascadingMenu(@"Software\Classes\Directory\Background\shell", targetExe, iconPath, isBackground: true);
+        RegisterCascadingMenu(@"Software\Classes\Directory\Background\shell", appExePath, iconPath, isBackground: true);
 
         // 刷新 Shell 关联（仅在安装/卸载菜单时执行一次）
         RefreshShell();

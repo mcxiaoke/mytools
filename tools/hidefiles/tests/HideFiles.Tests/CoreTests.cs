@@ -247,7 +247,7 @@ public class CoreTests : IDisposable
         config.Save(path);
 
         string raw = File.ReadAllText(path);
-        Assert.Contains("\"HashStem\"", raw);
+        Assert.Contains("\"StructureLock\"", raw);
 
         var loaded = HideFilesConfig.Load(path);
         Assert.True(loaded.HasPin);
@@ -255,7 +255,7 @@ public class CoreTests : IDisposable
         Assert.False(loaded.VerifyPin("wrong_pin"));
         Assert.NotNull(loaded.WrappedMasterKey);
         Assert.NotNull(loaded.ConfigSalt);
-        Assert.Equal(NameMode.HashStem, loaded.NameObfuscationMode);
+        Assert.Equal(CoreConstants.DefaultHeadSize, loaded.HeadObfuscateSize);
     }
 
     [Fact]

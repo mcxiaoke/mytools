@@ -8,12 +8,6 @@ using System.Text.Json.Serialization;
 
 namespace HideFiles.Core;
 
-public enum NameMode
-{
-    KeepStemChangeExt = 0,
-    HashStem = 1
-}
-
 public sealed class ExtensionRuleGroup
 {
     public string Name { get; set; } = string.Empty;
@@ -52,9 +46,9 @@ public sealed class HideFilesConfig
     public int Version { get; set; } = 1;
     public int HeadObfuscateSize { get; set; } = CoreConstants.DefaultHeadSize;
     public string DefaultFakeExtension { get; set; } = ".dat";
-    public NameMode NameObfuscationMode { get; set; } = NameMode.HashStem;
     public bool ObfuscateFileName { get; set; } = true;
     public bool IncludeSubdirectories { get; set; } = false;
+    /// <summary>预留：目录名混淆尚未接入任何界面/命令，改动前请勿依赖</summary>
     public bool ObfuscateDirectoryNames { get; set; } = false;
 
     /// <summary>
@@ -209,7 +203,6 @@ public sealed class HideFilesConfig
             Version = 1,
             HeadObfuscateSize = CoreConstants.DefaultHeadSize,
             DefaultFakeExtension = ".dat",
-            NameObfuscationMode = NameMode.HashStem,
             ObfuscateFileName = true,
             IncludeSubdirectories = false,
             ObfuscateDirectoryNames = false,

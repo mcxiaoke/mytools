@@ -30,7 +30,6 @@ public static class Program
         string command = args[0].ToLowerInvariant();
         var targetArgs = new List<string>();
         bool dryRun = false;
-        bool hashName = false;
         string? pin = null;
         string? recovery = null;
         string? currentPin = null;
@@ -42,10 +41,6 @@ public static class Program
             if (a.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
             {
                 dryRun = true;
-            }
-            else if (a.Equals("--hash-name", StringComparison.OrdinalIgnoreCase))
-            {
-                hashName = true;
             }
             else if (a.Equals("--pin", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
@@ -72,10 +67,6 @@ public static class Program
         }
 
         var config = HideFilesConfig.Load();
-        if (hashName)
-        {
-            config.NameObfuscationMode = NameMode.HashStem;
-        }
         if (modeOverride.HasValue)
         {
             config.ProtectionMode = modeOverride.Value;
@@ -403,9 +394,21 @@ public static class Program
 
         if (action is "install" or "add")
         {
-            ShellContextMenu.Install(currentExe, currentExe);
+            // 菜单项传的是 GUI 参数，必须注册 GUI 程序，否则点击后会落到 CLI 的未知命令分支
+            string? guiExe = FindGuiExe(currentExe);
+            if (guiExe == null)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[Error] 未找到 HideFilesApp.exe，无法安装右键菜单。");
+                Console.WriteLine("        右键菜单需要 GUI 程序：请在 GUI 的『规则与系统设置』页安装，");
+                Console.WriteLine("        或把 hidefiles.exe 与 HideFilesApp.exe 放在同一目录后重试。");
+                Console.ResetColor();
+                return 1;
+            }
+
+            ShellContextMenu.Install(guiExe);
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[Success] Cascading context menu 'HideFiles' installed successfully for Current User.");
+            Console.WriteLine($"[Success] Cascading context menu 'HideFiles' installed successfully for Current User. (target: {Path.GetFileName(guiExe)})");
             Console.ResetColor();
             return 0;
         }
@@ -446,6 +449,18 @@ public static class Program
         Console.WriteLine("  hidefiles --help");
         Console.WriteLine("      Show this help information.");
         Console.WriteLine();
+    }
+
+    /// <summary>在与 CLI 同目录下定位 GUI 程序（右键菜单必须指向它）</summary>
+    private static string? FindGuiExe(string cliExe)
+    {
+        string dir = Path.GetDirectoryName(cliExe) ?? string.Empty;
+        foreach (string name in new[] { "HideFilesApp.exe", "hidefiles-app.exe" })
+        {
+            string candidate = Path.Combine(dir, name);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     /// <summary>

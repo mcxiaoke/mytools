@@ -379,11 +379,11 @@
                         </StackPanel>
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="核心技术原理：" FontWeight="Bold" Margin="0,0,0,8" />
-                        <TextBlock Text="1. 自包含元数据 (In-File Stash)：原始头部特征、原始文件名与扩展名加密追加至文件尾部，单文件独立便携，移动或改名皆可无损还原。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="2. 极速就地掩码 (In-Place Obfuscation)：仅针对前 64KB 头部进行特征覆盖，单文件处理耗时低于 2ms，支持上万文件秒级批处理。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="3. 防二次混淆与防呆设计：尾部专属魔数识别，杜绝重复混淆损坏真实数据。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="4. 安全 PIN 还原门控：可设置 PIN 密码，仅验证通过后才允许执行还原，防止误操作或被他人一键反解。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="5. 级联折叠右键菜单：原生注册表集成，调用 GUI 窗口执行，杜绝控制台黑框，保持桌面与资源管理器整洁。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="1. 两种保护模式：结构锁原地加密前 64KB 头部与格式关键结构（秒级、不重写整个文件）；整体加密按 64KB 分块做 AES-256-GCM（最强，全文件变乱码）。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="2. 自包含容器：统一魔数 + 文件内嵌密钥材料与加密元数据，可改名、可搬运，脱离本工具配置也能用 PIN 或恢复码还原。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="3. 密钥体系：PIN 经 PBKDF2（60 万次）派生 KEK 包裹主密钥；恢复码是主密钥的 Base32，忘记 PIN 时唯一凭据。修改 PIN 只重封装主密钥，历史文件不受影响。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="4. 失败安全：结构锁只回滚被改写的锁定区（≤1MB，不复制整个文件），footer 校验通过才算提交；还原为两阶段，失败不会留下半解密文件或明文临时文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="5. 四动作级联右键菜单：混淆/还原/加密/解密各自独立，调用 GUI 执行，无控制台黑框；目标文件重名时自动改名，绝不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                     </StackPanel>
                 </Border>
             </TabItem>

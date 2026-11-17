@@ -319,10 +319,7 @@ public partial class MainViewModel : ObservableObject
         }
         if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "混淆")) return;
 
-        var prevMode = Config.ProtectionMode;
-        Config.ProtectionMode = mode;
-        await ProcessAsync(targets, isObfuscate);
-        Config.ProtectionMode = prevMode;
+        await ProcessAsync(targets, isObfuscate, mode);
     }
 
     /// <summary>供右键菜单/启动参数调用：自动处理路径（按模式选集合与操作）</summary>
@@ -340,46 +337,68 @@ public partial class MainViewModel : ObservableObject
     private async Task ProcessAsync(List<FileItemModel> targetItems, bool isObfuscate,
         ProtectionMode? modeOverride = null)
     {
+        // 防重入：批量任务串行执行，避免两次点击同时改写 Config.ProtectionMode 与同一批文件
+        if (IsProcessing) { StatusMessage = "已有任务正在处理，请等待完成。"; return; }
+
+        var prevMode = Config.ProtectionMode;
         if (modeOverride.HasValue) Config.ProtectionMode = modeOverride.Value;
         IsProcessing = true;
         ProgressValue = 0;
         int total = targetItems.Count;
         int successCount = 0;
+        var failures = new List<string>();
+        bool isFullEncrypt = Config.ProtectionMode == ProtectionMode.FullEncrypt;
 
-        await Task.Run(() =>
+        try
         {
-            for (int i = 0; i < total; i++)
+            await Task.Run(() =>
             {
-                var item = targetItems[i];
-                StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}";
-                ProcessFileResult res = isObfuscate
-                    ? _obfuscator.ObfuscateFile(item.FilePath, Config)
-                    : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey);
-
-                if (res.Success)
+                for (int i = 0; i < total; i++)
                 {
-                    successCount++;
-                    var insp = _obfuscator.Inspect(res.FinalPath);
-                    Application.Current.Dispatcher.Invoke(() =>
-                    {
-                        item.FilePath = res.FinalPath;
-                        item.FileName = Path.GetFileName(res.FinalPath);
-                        item.Status = insp.Status;
-                        item.OriginalFileName = insp.OriginalFileName;
-                        item.StatusText = isObfuscate
-                            ? (Config.ProtectionMode == ProtectionMode.FullEncrypt ? "已加密" : "已混淆")
-                            : "普通";
-                    });
-                }
-                double pct = (double)(i + 1) / total * 100.0;
-                Application.Current.Dispatcher.Invoke(() => ProgressValue = pct);
-            }
-        });
+                    var item = targetItems[i];
+                    StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}";
+                    ProcessFileResult res = isObfuscate
+                        ? _obfuscator.ObfuscateFile(item.FilePath, Config)
+                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey);
 
-        IsProcessing = false;
+                    if (res.Success)
+                    {
+                        successCount++;
+                        var insp = _obfuscator.Inspect(res.FinalPath);
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            item.FilePath = res.FinalPath;
+                            item.FileName = Path.GetFileName(res.FinalPath);
+                            item.Status = insp.Status;
+                            item.OriginalFileName = insp.OriginalFileName;
+                            item.StatusText = isObfuscate
+                                ? (isFullEncrypt ? "已加密" : "已混淆")
+                                : "普通";
+                        });
+                    }
+                    else
+                    {
+                        failures.Add($"{item.FileName}: {res.ErrorMessage}");
+                    }
+
+                    double pct = (double)(i + 1) / total * 100.0;
+                    Application.Current.Dispatcher.Invoke(() => ProgressValue = pct);
+                }
+            });
+        }
+        finally
+        {
+            Config.ProtectionMode = prevMode;
+            IsProcessing = false;
+        }
+
         UpdateCounts();
-        StatusMessage = $"处理完成！成功: {successCount}/{total}。";
+        StatusMessage = failures.Count == 0
+            ? $"处理完成！成功: {successCount}/{total}。"
+            : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count} —— "
+              + string.Join("；", failures.Take(3)) + (failures.Count > 3 ? " …" : string.Empty);
     }
+
 
     [RelayCommand]
     private void SaveConfig()
@@ -436,9 +455,6 @@ public partial class MainViewModel : ObservableObject
         try
         {
             string appExe = Environment.ProcessPath ?? "HideFilesApp.exe";
-            string dir = Path.GetDirectoryName(appExe)!;
-            string cliExe = Path.Combine(dir, "hidefiles.exe");
-            if (!File.Exists(cliExe)) cliExe = appExe;
             if (IsContextMenuInstalled)
             {
                 ShellContextMenu.Uninstall();
@@ -446,7 +462,7 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                ShellContextMenu.Install(appExe, cliExe);
+                ShellContextMenu.Install(appExe);
                 StatusMessage = "已成功安装 Windows 四动作右键菜单！";
             }
             RefreshContextMenuStatus();

@@ -26,7 +26,7 @@ hidefiles unhide <路径...> --pin <PIN>          # 还原（自动识别容器�
 hidefiles encrypt <路径...> --pin <PIN>         # 加密（整体 AES-256-GCM）
 hidefiles decrypt <路径...> --recovery <恢复码> # 解密（也可用 --pin）
 hidefiles scan [路径...]                        # 扫描文件状态
-hidefiles menu install | uninstall              # 安装/卸载四动作右键菜单
+hidefiles menu install | uninstall              # 安装/卸载四动作右键菜单（CLI 需与 HideFilesApp.exe 同目录）
 hidefiles --help
 ```
 
