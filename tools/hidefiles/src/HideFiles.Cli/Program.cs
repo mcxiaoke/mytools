@@ -99,8 +99,11 @@ public static class Program
             case "status":
                 return ExecuteScan(targetArgs, config);
 
-            case "menu":
-                return ExecuteMenu(targetArgs);
+            case "dir-hide":
+                return ExecuteDirectoryNames(targetArgs, obfuscate: true);
+
+            case "dir-unhide":
+                return ExecuteDirectoryNames(targetArgs, obfuscate: false);
 
             default:
                 if (File.Exists(args[0]) || Directory.Exists(args[0]))
@@ -374,93 +377,57 @@ public static class Program
         return anyObfuscated ? ExecuteUnhide(paths, false, pin, recovery) : ExecuteHide(paths, config, false);
     }
 
-    private static int ExecuteMenu(List<string> args)
+    private static int ExecuteDirectoryNames(List<string> paths, bool obfuscate)
     {
-        if (!OperatingSystem.IsWindows())
+        if (paths.Count == 0)
         {
-            Console.WriteLine("[Error] Windows context menu is only supported on Windows.");
+            Console.WriteLine($"[Error] 请指定目录：hidefiles {(obfuscate ? "dir-hide" : "dir-unhide")} <目录...>");
             return 1;
         }
 
-        if (args.Count == 0)
+        int failed = 0;
+        foreach (string path in paths)
         {
-            Console.WriteLine($"Windows context menu is currently: {(ShellContextMenu.IsInstalled() ? "INSTALLED" : "NOT INSTALLED")}");
-            Console.WriteLine("Use 'hidefiles menu install' or 'hidefiles menu uninstall'");
-            return 0;
-        }
+            var result = obfuscate
+                ? DirectoryObfuscator.ObfuscateDirectory(path)
+                : DirectoryObfuscator.RestoreDirectory(path);
 
-        string action = args[0].ToLowerInvariant();
-        string currentExe = Process.GetCurrentProcess().MainModule?.FileName ?? "hidefiles.exe";
-
-        if (action is "install" or "add")
-        {
-            // 菜单项传的是 GUI 参数，必须注册 GUI 程序，否则点击后会落到 CLI 的未知命令分支
-            string? guiExe = FindGuiExe(currentExe);
-            if (guiExe == null)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[Error] 未找到 HideFilesApp.exe，无法安装右键菜单。");
-                Console.WriteLine("        右键菜单需要 GUI 程序：请在 GUI 的『规则与系统设置』页安装，");
-                Console.WriteLine("        或把 hidefiles.exe 与 HideFilesApp.exe 放在同一目录后重试。");
-                Console.ResetColor();
-                return 1;
-            }
-
-            ShellContextMenu.Install(guiExe);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[Success] Cascading context menu 'HideFiles' installed successfully for Current User. (target: {Path.GetFileName(guiExe)})");
+            Console.ForegroundColor = result.Success ? ConsoleColor.Green : ConsoleColor.Yellow;
+            Console.Write($"  [{(result.Success ? "OK" : "WARN")}] ");
             Console.ResetColor();
-            return 0;
-        }
-        else if (action is "uninstall" or "remove")
-        {
-            ShellContextMenu.Uninstall();
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[Success] Context menu 'HideFiles' removed successfully.");
-            Console.ResetColor();
-            return 0;
+            Console.WriteLine($"{path}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count}");
+
+            foreach (string failure in result.Failures)
+                Console.WriteLine($"         {failure}");
+
+            if (!result.Success) failed++;
         }
 
-        Console.WriteLine($"[Error] Unknown menu action '{action}'. Choose 'install' or 'uninstall'.");
-        return 1;
+        return failed == 0 ? 0 : 2;
     }
 
     private static void PrintHelp()
     {
-        Console.WriteLine("==================================================================");
-        Console.WriteLine(" HideFiles v2 - Self-Contained Encrypted Container Tool (.NET 8)");
-        Console.WriteLine("==================================================================");
-        Console.WriteLine("Setup:");
-        Console.WriteLine("  hidefiles setpin <PIN> [--current <old-pin>]");
-        Console.WriteLine("      Set or change the PIN. Changing keeps the same master key, so the");
-        Console.WriteLine("      recovery code stays valid; a recovery code is printed only when the");
-        Console.WriteLine("      master key is created for the first time.");
-        Console.WriteLine("Usage:");
-        Console.WriteLine("  hidefiles hide <paths...> [--pin <PIN>] [--dry-run]");
-        Console.WriteLine("      Obfuscate via structure-lock (fast, in-place). Safe for most cases.");
-        Console.WriteLine("  hidefiles encrypt <paths...> [--pin <PIN>] [--dry-run]");
-        Console.WriteLine("      Full-file AES-256-GCM encryption (strongest protection).");
-        Console.WriteLine("  hidefiles unhide|restore|decrypt <paths...> (--pin <PIN> | --recovery <CODE>) [--dry-run]");
-        Console.WriteLine("      Restore obfuscated/encrypted files. Container mode is auto-detected.");
-        Console.WriteLine("  hidefiles scan [paths...]");
-        Console.WriteLine("      Inspect file status (Normal / Obfuscated-struct / Obfuscated-full).");
-        Console.WriteLine("  hidefiles menu install | uninstall");
-        Console.WriteLine("      Register or remove Windows cascading context menu for Current User.");
+        Console.WriteLine("HideFiles v2 - 自包含加密容器工具");
+        Console.WriteLine(new string('=', 60));
+        Console.WriteLine("用法：");
+        Console.WriteLine("  hidefiles setpin <PIN> [--current <旧PIN>]");
+        Console.WriteLine("      首次设置 PIN 并输出恢复码；修改 PIN 需提供当前 PIN（主密钥与恢复码不变）。");
+        Console.WriteLine("  hidefiles hide <路径...> --pin <PIN> [--dry-run]");
+        Console.WriteLine("      混淆（结构锁）：原地加密前 64KB 与格式关键结构，秒级完成。");
+        Console.WriteLine("  hidefiles encrypt <路径...> --pin <PIN> [--dry-run]");
+        Console.WriteLine("      加密（整体）：全文件分块 AES-256-GCM，支持任意文件类型。");
+        Console.WriteLine("  hidefiles unhide <路径...> (--pin <PIN> | --recovery <恢复码>) [--dry-run]");
+        Console.WriteLine("      还原/解密：按容器类型自动识别（unhide / restore / decrypt 等价）。");
+        Console.WriteLine("  hidefiles scan [路径...]");
+        Console.WriteLine("      查看文件状态（普通 / 已混淆 / 已加密）。");
+        Console.WriteLine("  hidefiles dir-hide <目录...>");
+        Console.WriteLine("      混淆目录内部的子目录名（可逆、幂等，仅降低可读性）。");
+        Console.WriteLine("  hidefiles dir-unhide <目录...>");
+        Console.WriteLine("      还原目录内部的子目录名。");
         Console.WriteLine("  hidefiles --help");
-        Console.WriteLine("      Show this help information.");
+        Console.WriteLine("      显示本帮助。");
         Console.WriteLine();
-    }
-
-    /// <summary>在与 CLI 同目录下定位 GUI 程序（右键菜单必须指向它）</summary>
-    private static string? FindGuiExe(string cliExe)
-    {
-        string dir = Path.GetDirectoryName(cliExe) ?? string.Empty;
-        foreach (string name in new[] { "HideFilesApp.exe", "hidefiles-app.exe" })
-        {
-            string candidate = Path.Combine(dir, name);
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
     }
 
     /// <summary>

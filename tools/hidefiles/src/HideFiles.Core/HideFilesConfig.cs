@@ -48,8 +48,6 @@ public sealed class HideFilesConfig
     public string DefaultFakeExtension { get; set; } = ".dat";
     public bool ObfuscateFileName { get; set; } = true;
     public bool IncludeSubdirectories { get; set; } = false;
-    /// <summary>预留：目录名混淆尚未接入任何界面/命令，改动前请勿依赖</summary>
-    public bool ObfuscateDirectoryNames { get; set; } = false;
 
     /// <summary>
     /// PIN 码加盐哈希（仅用于快速验证输入是否正确，不参与数据加解密）
@@ -205,7 +203,6 @@ public sealed class HideFilesConfig
             DefaultFakeExtension = ".dat",
             ObfuscateFileName = true,
             IncludeSubdirectories = false,
-            ObfuscateDirectoryNames = false,
             PinHash = null,
             ConfigSalt = null,
             WrappedMasterKey = null,

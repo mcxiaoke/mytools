@@ -26,7 +26,8 @@ hidefiles unhide <路径...> --pin <PIN>          # 还原（自动识别容器�
 hidefiles encrypt <路径...> --pin <PIN>         # 加密（整体 AES-256-GCM）
 hidefiles decrypt <路径...> --recovery <恢复码> # 解密（也可用 --pin）
 hidefiles scan [路径...]                        # 扫描文件状态
-hidefiles menu install | uninstall              # 安装/卸载四动作右键菜单（CLI 需与 HideFilesApp.exe 同目录）
+hidefiles dir-hide <目录...>                    # 混淆目录内部的子目录名（可逆、幂等）
+hidefiles dir-unhide <目录...>                  # 还原目录内部的子目录名
 hidefiles --help
 ```
 
@@ -41,7 +42,16 @@ hidefiles --help
 | 加密文件 (整体·最强) | `--encrypt` |
 | 解密文件 (整体) | `--decrypt` |
 
-外加"在 HideFiles 中管理..."，用 GUI 打开并加入对应工作台。
+外加"在 HideFiles 中管理..."，用 GUI 打开并加入对应工作台。菜单只能从 GUI 的设置页安装/卸载（CLI 不提供菜单命令）。
+
+## 目录名混淆（独立操作）
+
+把文件夹内的子目录名改成 `_hf_…` 形式，可原样还原：
+
+- GUI：「规则与系统设置」→「目录名混淆」→ 混淆/还原目录名（选择文件夹）
+- CLI：`hidefiles dir-hide <目录>` / `hidefiles dir-unhide <目录>`
+
+已混淆的目录会被自动跳过，重复执行不会二次混淆；只改所选目录**内部**的子目录，不动所选目录自身。它只降低可读性，不提供加密保护——本工具自身即可还原。
 
 ## 支持格式
 

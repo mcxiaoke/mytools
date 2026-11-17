@@ -280,7 +280,24 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- 卡片 3: Windows 资源管理器右键级联菜单 -->
+                        <!-- 卡片 3: 目录名混淆（独立操作，不影响文件混淆） -->
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="目录名混淆" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                                <TextBlock Text="把所选文件夹内的子目录名改为 _hf_ 开头，可原样还原。已混淆的目录会自动跳过，重复执行不会二次混淆；只降低可读性，不提供加密保护。"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:Button Content="混淆目录名" Command="{Binding ObfuscateDirNamesCommand}"
+                                               Appearance="Primary" Margin="0,0,8,0" AutomationProperties.AutomationId="DirObfuscate" />
+                                    <ui:Button Content="还原目录名" Command="{Binding RestoreDirNamesCommand}"
+                                               Appearance="Secondary" AutomationProperties.AutomationId="DirRestore" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 卡片 4: Windows 资源管理器右键级联菜单 -->
                         <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
@@ -320,7 +337,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- 卡片 4: 扩展名伪装映射规则列表 -->
+                        <!-- 卡片 5: 扩展名伪装映射规则列表 -->
                         <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20">

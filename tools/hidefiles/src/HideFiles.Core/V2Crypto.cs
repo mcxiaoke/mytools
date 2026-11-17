@@ -194,16 +194,26 @@ public static class Base32
         return sb.ToString();
     }
 
+    /// <summary>解码恢复码：结果必须正好是 32 字节主密钥</summary>
     public static byte[] Decode(string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) throw new FormatException("Recovery code is empty.");
+        byte[] result = DecodeVariableLength(text);
+        if (result.Length != CoreConstants.MasterKeySize)
+            throw new FormatException("Invalid recovery code length.");
+        return result;
+    }
+
+    /// <summary>解码任意长度的 Base32 文本（供目录名混淆等场景使用）</summary>
+    public static byte[] DecodeVariableLength(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) throw new FormatException("Base32 input is empty.");
         string s = text.Trim().ToUpperInvariant().Replace("-", "").Replace(" ", "");
         using var ms = new MemoryStream();
         int bits = 0, value = 0;
         foreach (char c in s)
         {
             int idx = Alphabet.IndexOf(c);
-            if (idx < 0) throw new FormatException($"Invalid recovery code character '{c}'.");
+            if (idx < 0) throw new FormatException($"Invalid Base32 character '{c}'.");
             value = (value << 5) | idx;
             bits += 5;
             if (bits >= 8)
@@ -212,9 +222,6 @@ public static class Base32
                 bits -= 8;
             }
         }
-        byte[] result = ms.ToArray();
-        if (result.Length != CoreConstants.MasterKeySize)
-            throw new FormatException("Invalid recovery code length.");
-        return result;
+        return ms.ToArray();
     }
 }

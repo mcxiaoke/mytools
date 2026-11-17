@@ -448,6 +448,29 @@ public partial class MainViewModel : ObservableObject
         StatusMessage = "已恢复默认规则（PIN 与密钥材料保持不变）。";
     }
 
+    // ---------- 目录名混淆（独立操作） ----------
+    [RelayCommand]
+    private void ObfuscateDirNames() => ApplyDirectoryNames(obfuscate: true);
+
+    [RelayCommand]
+    private void RestoreDirNames() => ApplyDirectoryNames(obfuscate: false);
+
+    private void ApplyDirectoryNames(bool obfuscate)
+    {
+        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要混淆子目录名的文件夹" : "选择要还原子目录名的文件夹" };
+        if (dlg.ShowDialog() != true || string.IsNullOrEmpty(dlg.FolderName)) return;
+
+        var result = obfuscate
+            ? DirectoryObfuscator.ObfuscateDirectory(dlg.FolderName)
+            : DirectoryObfuscator.RestoreDirectory(dlg.FolderName);
+
+        string verb = obfuscate ? "混淆" : "还原";
+        StatusMessage = result.Success
+            ? $"目录名{verb}完成：改名 {result.Renamed}，跳过 {result.Skipped}。"
+            : $"目录名{verb}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count} —— "
+              + string.Join("；", result.Failures.Take(3));
+    }
+
     [RelayCommand]
     private void ToggleContextMenu()
     {
