@@ -1,0 +1,2 @@
+# 本子树统一 LF 行尾：脚本化改写（python/sed 等）若引入 CRLF 会造成整文件 diff
+* text=auto eol=lf
