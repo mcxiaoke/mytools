@@ -19,6 +19,16 @@ public static class V2Tail
     private const int FixedTailSize = 8 + 1 + 1 + CoreConstants.EmkBlobSize + CoreConstants.NonceSize
                                       + CoreConstants.SaltSize + CoreConstants.SaltSize + 4; // = 118
 
+    // footer 内部偏移（相对 footer 起始），BuildFooter 与 ReadFooter 共用，避免手写魔数错位
+    private const int MetaLenOffset = 0;
+    private const int ConfigSaltOffset = MetaLenOffset + 4;                          // 4
+    private const int FileSaltOffset = ConfigSaltOffset + CoreConstants.SaltSize;    // 20
+    private const int FileNonceOffset = FileSaltOffset + CoreConstants.SaltSize;     // 36
+    private const int EmkBlobOffset = FileNonceOffset + CoreConstants.NonceSize;     // 48
+    private const int ModeOffset = EmkBlobOffset + CoreConstants.EmkBlobSize;        // 108
+    private const int VersionOffset = ModeOffset + 1;                                // 109
+    private const int MagicOffset = VersionOffset + 1;                               // 110
+
     public static bool IsTailFile(string path)
     {
         try
@@ -35,7 +45,8 @@ public static class V2Tail
 
     /// <summary>
     /// 原地加密当前文件（不重写整体），并在尾部追加 footer。
-    /// 返回 footer 写入后的文件路径（与原路径相同）。
+    /// 失败安全：锁定区原始字节全程保留在内存（≤1MB，与文件大小无关），
+    /// 任一步骤失败都会写回原样并截掉半截 footer，重试安全。
     /// </summary>
     public static void ProtectInPlace(string filePath, V2Metadata meta, string pin,
         byte[] masterKey, byte[] configSalt)
@@ -65,26 +76,56 @@ public static class V2Tail
         byte[] fileNonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
 
-        // 1) 计算每个区的原始 CRC32（用于还原后快速校验，无需读全文件）
-        meta.RegionCrcs = new List<uint>();
+        // 锁定区原始字节：既用于 CRC，也是失败回滚的唯一依据（必须在加密前留存副本）
+        var originals = new List<byte[]>(regions.Count);
+        meta.RegionCrcs = new List<uint>(regions.Count);
+
         using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            foreach (var r in regions)
+            try
             {
-                byte[] buf = new byte[r.Length];
-                fs.Seek(r.Offset, SeekOrigin.Begin);
-                fs.ReadExactly(buf, 0, buf.Length);
-                meta.RegionCrcs.Add(Crc32Helper.Compute(buf));
+                // 1) 读出全部锁定区原始字节
+                foreach (var r in regions)
+                {
+                    byte[] buf = new byte[r.Length];
+                    fs.Seek(r.Offset, SeekOrigin.Begin);
+                    fs.ReadExactly(buf, 0, buf.Length);
+                    originals.Add(buf);
+                    meta.RegionCrcs.Add(Crc32Helper.Compute(buf));
+                }
 
-                // 原地 CTR 加密
-                byte[] nonce = V2Crypto.BlockNonce(fileNonce, (ulong)r.Offset);
-                CtrInPlace(buf, fileKey, nonce);
-                fs.Seek(r.Offset, SeekOrigin.Begin);
-                fs.Write(buf, 0, buf.Length);
+                // 2) 在副本上 CTR 加密后写回（原文件只在此处被改动）
+                for (int i = 0; i < regions.Count; i++)
+                {
+                    byte[] cipher = (byte[])originals[i].Clone();
+                    CtrInPlace(cipher, fileKey, V2Crypto.BlockNonce(fileNonce, (ulong)regions[i].Offset));
+                    fs.Seek(regions[i].Offset, SeekOrigin.Begin);
+                    fs.Write(cipher, 0, cipher.Length);
+                }
+                fs.Flush(true);
+
+                // 3) 整段 footer 一次写入，缩小"半截 footer"的窗口
+                byte[] footer = BuildFooter(meta, pin, masterKey, configSalt, fileSalt, fileNonce, fileKey);
+                fs.Seek(0, SeekOrigin.End);
+                fs.Write(footer, 0, footer.Length);
+                fs.Flush(true);
+
+                // 4) 提交点：长度与尾部魔数都对上才算成功
+                EnsureCommitted(fs, origLen, footer.Length);
             }
-            fs.Flush(true);
+            catch (Exception ex)
+            {
+                if (!TryRollback(fs, regions, originals, origLen))
+                    throw new IOException($"结构锁写入失败，且回滚未能完成，文件可能损坏：{filePath}", ex);
+                throw;
+            }
         }
+    }
 
+    /// <summary>构造完整 footer（元数据 GCM 密文 + 密钥材料 + 版本/魔数）</summary>
+    private static byte[] BuildFooter(V2Metadata meta, string pin, byte[] masterKey, byte[] configSalt,
+        byte[] fileSalt, byte[] fileNonce, byte[] fileKey)
+    {
         // 完整性用 RegionCrcs 校验（只覆盖被加密区），无需全文件 SHA-256 —— 这是保持大文件秒级的关键
         meta.OriginalSha256 = Array.Empty<byte>();
 
@@ -99,18 +140,52 @@ public static class V2Tail
             gcm.Encrypt(metaNonce, metaPlain, metaCipher.AsSpan(0, metaPlain.Length),
                 metaCipher.AsSpan(metaPlain.Length));
 
-        // 3) 追加 footer
-        using var outFs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None);
-        outFs.Write(metaCipher);
-        outFs.Write(BitConverter.GetBytes(metaCipher.Length));
-        outFs.Write(configSalt);
-        outFs.Write(fileSalt);
-        outFs.Write(fileNonce);
-        outFs.Write(emkBlob);
-        outFs.WriteByte((byte)ProtectionMode.StructureLock);
-        outFs.WriteByte(CoreConstants.V2Version);
-        outFs.Write(CoreConstants.V2TailMagic);
-        outFs.Flush(true);
+        using var ms = new MemoryStream(FixedTailSize + metaCipher.Length);
+        ms.Write(metaCipher);
+        ms.Write(BitConverter.GetBytes(metaCipher.Length));
+        ms.Write(configSalt);
+        ms.Write(fileSalt);
+        ms.Write(fileNonce);
+        ms.Write(emkBlob);
+        ms.WriteByte((byte)ProtectionMode.StructureLock);
+        ms.WriteByte(CoreConstants.V2Version);
+        ms.Write(CoreConstants.V2TailMagic);
+        return ms.ToArray();
+    }
+
+    /// <summary>提交点判定：footer 长度与尾部魔数必须完全落盘</summary>
+    private static void EnsureCommitted(FileStream fs, long originalLength, int footerLength)
+    {
+        long expected = originalLength + footerLength;
+        if (fs.Length != expected)
+            throw new InvalidDataException($"结构锁容器写入不完整（期望 {expected} 字节，实际 {fs.Length} 字节）。");
+
+        fs.Seek(fs.Length - CoreConstants.V2TailMagic.Length, SeekOrigin.Begin);
+        byte[] magic = new byte[CoreConstants.V2TailMagic.Length];
+        fs.ReadExactly(magic, 0, magic.Length);
+        if (!magic.AsSpan().SequenceEqual(CoreConstants.V2TailMagic))
+            throw new InvalidDataException("结构锁容器尾部魔数校验失败。");
+    }
+
+    /// <summary>用内存中的原始字节回滚锁定区，并截掉可能已写入的 footer</summary>
+    private static bool TryRollback(FileStream fs, List<LockRegion> regions, List<byte[]> originals, long originalLength)
+    {
+        try
+        {
+            for (int i = 0; i < originals.Count && i < regions.Count; i++)
+            {
+                if (originals[i].Length == 0) continue;
+                fs.Seek(regions[i].Offset, SeekOrigin.Begin);
+                fs.Write(originals[i], 0, originals[i].Length);
+            }
+            fs.SetLength(originalLength);
+            fs.Flush(true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>读取尾部 footer 并解密元数据</summary>
@@ -126,19 +201,16 @@ public static class V2Tail
         fs.Seek(len - FixedTailSize, SeekOrigin.Begin);
         fs.ReadExactly(tail, 0, tail.Length);
 
-        // tail 是顺序读入的，字段在其中的偏移：
-        // metaLen@0, configSalt@4, fileSalt@20, fileNonce@36, emkBlob@48, mode@108, ver@109, magic@110
-        int magicPos = FixedTailSize - 8; // =110
-        if (!tail.AsSpan(magicPos, 8).SequenceEqual(CoreConstants.V2TailMagic))
+        if (!tail.AsSpan(MagicOffset, 8).SequenceEqual(CoreConstants.V2TailMagic))
             throw new InvalidDataException("Not a v2 structure-lock tail container.");
-        byte ver = tail[magicPos - 1];   // 109
+        byte ver = tail[VersionOffset];
         if (ver != CoreConstants.V2Version) throw new InvalidDataException($"Unsupported version {ver}");
-        var mode = (ProtectionMode)tail[magicPos - 2]; // 108
-        byte[] emkBlob = tail.AsSpan(48, CoreConstants.EmkBlobSize).ToArray();
-        byte[] fileNonce = tail.AsSpan(36, CoreConstants.NonceSize).ToArray();
-        byte[] fileSalt = tail.AsSpan(20, CoreConstants.SaltSize).ToArray();
-        byte[] configSalt = tail.AsSpan(4, CoreConstants.SaltSize).ToArray();
-        int metaLen = BitConverter.ToInt32(tail, 0);
+        var mode = (ProtectionMode)tail[ModeOffset];
+        byte[] emkBlob = tail.AsSpan(EmkBlobOffset, CoreConstants.EmkBlobSize).ToArray();
+        byte[] fileNonce = tail.AsSpan(FileNonceOffset, CoreConstants.NonceSize).ToArray();
+        byte[] fileSalt = tail.AsSpan(FileSaltOffset, CoreConstants.SaltSize).ToArray();
+        byte[] configSalt = tail.AsSpan(ConfigSaltOffset, CoreConstants.SaltSize).ToArray();
+        int metaLen = BitConverter.ToInt32(tail, MetaLenOffset);
 
         long metaCipherPos = len - FixedTailSize - metaLen;
         if (metaLen < CoreConstants.GcmTagSize || metaCipherPos < 0)
@@ -176,37 +248,52 @@ public static class V2Tail
     }
 
     /// <summary>
-    /// 原地解密各区、校验 CRC、截断 footer。返回是否全部校验通过。
+    /// 原地解密各区、校验 CRC、截断 footer。
+    ///
+    /// 两阶段执行：先把所有区读进内存并完成 CRC 校验，全部通过后才写回文件。
+    /// 这样任何失败都不会让文件停在"部分区已解密"的状态，用户可以安全重试
+    /// （CTR 自反，若中途写回后再重试会二次加密导致损坏）。
     /// </summary>
     public static void RestoreInPlace(string path, V2TailReadResult read)
     {
         var meta = read.Metadata;
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        if (read.BodyLength != meta.OriginalLength)
+            throw new InvalidDataException(
+                $"容器长度与元数据不一致（body={read.BodyLength}, original={meta.OriginalLength}），文件可能被截断或拼接。");
+
+        var regions = meta.LockRegions;
+        var plains = new List<byte[]>(regions.Count);
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        // 阶段一：全部读出、解密、校验（不改动文件）
+        for (int i = 0; i < regions.Count; i++)
         {
-            for (int i = 0; i < meta.LockRegions.Count; i++)
+            var r = regions[i];
+            byte[] buf = new byte[r.Length];
+            fs.Seek(r.Offset, SeekOrigin.Begin);
+            fs.ReadExactly(buf, 0, buf.Length);
+
+            CtrInPlace(buf, read.FileKey, V2Crypto.BlockNonce(read.FileNonce, (ulong)r.Offset)); // CTR 对称：再跑一遍即解密
+
+            if (meta.RegionCrcs != null && i < meta.RegionCrcs.Count)
             {
-                var r = meta.LockRegions[i];
-                byte[] buf = new byte[r.Length];
-                fs.Seek(r.Offset, SeekOrigin.Begin);
-                fs.ReadExactly(buf, 0, buf.Length);
-
-                byte[] nonce = V2Crypto.BlockNonce(read.FileNonce, (ulong)r.Offset);
-                CtrInPlace(buf, read.FileKey, nonce); // CTR 对称：再跑一遍即解密
-
-                // CRC 校验（若存在）
-                if (meta.RegionCrcs != null && i < meta.RegionCrcs.Count)
-                {
-                    uint crc = Crc32Helper.Compute(buf);
-                    if (crc != meta.RegionCrcs[i])
-                        throw new InvalidDataException($"Integrity check failed at region '{r.Kind}' (offset {r.Offset}).");
-                }
-
-                fs.Seek(r.Offset, SeekOrigin.Begin);
-                fs.Write(buf, 0, buf.Length);
+                uint crc = Crc32Helper.Compute(buf);
+                if (crc != meta.RegionCrcs[i])
+                    throw new InvalidDataException($"Integrity check failed at region '{r.Kind}' (offset {r.Offset}).");
             }
-            fs.Flush(true);
-            fs.SetLength(read.BodyLength); // 截断尾部 footer
+            plains.Add(buf);
         }
+
+        // 阶段二：全部校验通过后才写回并截断 footer
+        for (int i = 0; i < regions.Count; i++)
+        {
+            if (plains[i].Length == 0) continue;
+            fs.Seek(regions[i].Offset, SeekOrigin.Begin);
+            fs.Write(plains[i], 0, plains[i].Length);
+        }
+        fs.Flush(true);
+        fs.SetLength(read.BodyLength); // 截断尾部 footer
     }
 
     private static void CtrInPlace(Span<byte> data, byte[] key, byte[] nonce)
