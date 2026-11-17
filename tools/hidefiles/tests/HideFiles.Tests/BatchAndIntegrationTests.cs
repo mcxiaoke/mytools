@@ -35,6 +35,8 @@ public class BatchAndIntegrationTests : IDisposable
     {
         var config = HideFilesConfig.CreateDefault();
         config.IncludeSubdirectories = true;
+        config.SetPinV2("batch-pin");
+        config.ProtectionMode = ProtectionMode.FullEncrypt; // 合成样本无真实媒体结构
         var processor = new BatchProcessor();
 
         // 构造深层嵌套文件结构
@@ -86,7 +88,7 @@ public class BatchAndIntegrationTests : IDisposable
         var collectedForRestore = processor.CollectFiles(new[] { _testDir }, config, forObfuscate: false);
         Assert.Equal(20, collectedForRestore.Count);
 
-        var restoreSummary = processor.RestoreBatch(collectedForRestore);
+        var restoreSummary = processor.RestoreBatch(collectedForRestore, "batch-pin");
         Assert.Equal(20, restoreSummary.Total);
         Assert.Equal(20, restoreSummary.Succeeded);
         Assert.Equal(0, restoreSummary.Failed);

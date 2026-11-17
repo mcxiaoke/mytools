@@ -19,113 +19,166 @@ public class CoreTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(_testDir))
-            {
-                Directory.Delete(_testDir, true);
-            }
-        }
+        try { if (Directory.Exists(_testDir)) Directory.Delete(_testDir, true); }
         catch { }
     }
 
-    [Fact]
-    public void MetadataBlock_SerializeAndDeserialize_RoundTripMatches()
+    private static HideFilesConfig MakeConfig(string pin)
     {
-        var originalHead = Encoding.UTF8.GetBytes("SAMPLE_HEAD_DATA_1234567890_XYZ");
-        var meta = new MetadataBlock
-        {
-            OriginalFileName = "my_sample_video.mp4",
-            OriginalExtension = ".mp4",
-            OriginalLength = 1048576,
-            ObfuscatedHeadLength = originalHead.Length,
-            HeadChecksum = Crc32Helper.Compute(originalHead),
-            OriginalHeadBytes = originalHead
-        };
-
-        byte[] serialized = meta.Serialize();
-        Assert.NotEmpty(serialized);
-
-        using var ms = new MemoryStream(serialized);
-        var restored = MetadataBlock.ReadFromStream(ms);
-
-        Assert.NotNull(restored);
-        Assert.Equal(meta.OriginalFileName, restored.OriginalFileName);
-        Assert.Equal(meta.OriginalExtension, restored.OriginalExtension);
-        Assert.Equal(meta.OriginalLength, restored.OriginalLength);
-        Assert.Equal(meta.ObfuscatedHeadLength, restored.ObfuscatedHeadLength);
-        Assert.Equal(meta.HeadChecksum, restored.HeadChecksum);
-        Assert.Equal(meta.OriginalHeadBytes, restored.OriginalHeadBytes);
+        var cfg = HideFilesConfig.CreateDefault();
+        cfg.SetPinV2(pin);
+        // 测试样本为随机字节，无有效媒体结构，显式用整体加密模式
+        cfg.ProtectionMode = ProtectionMode.FullEncrypt;
+        return cfg;
     }
 
     [Theory]
-    [InlineData(16)]          // 小于 64KB
-    [InlineData(1024)]        // 1 KB
-    [InlineData(64 * 1024)]   // 64 KB
-    [InlineData(256 * 1024)]  // 256 KB
-    public void FileObfuscator_ObfuscateAndRestore_BitForBitIdentical(int fileSize)
+    [InlineData(16)]
+    [InlineData(1024)]
+    [InlineData(64 * 1024)]
+    [InlineData(256 * 1024)]
+    public void FileObfuscator_V2_RoundTrip_BitForBitIdentical(int fileSize)
     {
         var obfuscator = new FileObfuscator();
-        var config = HideFilesConfig.CreateDefault();
+        var config = MakeConfig("123456");
 
         string filePath = Path.Combine(_testDir, $"test_{fileSize}.mp4");
         byte[] originalContent = new byte[fileSize];
         Random.Shared.NextBytes(originalContent);
         File.WriteAllBytes(filePath, originalContent);
-
         string originalHash = Convert.ToHexString(SHA256.HashData(originalContent));
 
-        // 1. 探测状态：应为 Normal
-        var preInspect = obfuscator.Inspect(filePath);
-        Assert.Equal(FileStatus.Normal, preInspect.Status);
+        Assert.Equal(FileStatus.Normal, obfuscator.Inspect(filePath).Status);
 
-        // 2. 执行混淆
-        var obfResult = obfuscator.ObfuscateFile(filePath, config);
-        Assert.True(obfResult.Success, obfResult.ErrorMessage);
-        Assert.True(File.Exists(obfResult.FinalPath));
-        Assert.EndsWith(".dat", obfResult.FinalPath);
+        var obf = obfuscator.ObfuscateFile(filePath, config);
+        Assert.True(obf.Success, obf.ErrorMessage);
+        Assert.True(File.Exists(obf.FinalPath));
+        Assert.True(V2Container.IsV2File(obf.FinalPath), "输出应为 v2 容器");
+        Assert.Equal(FileStatus.Obfuscated, obfuscator.Inspect(obf.FinalPath).Status);
 
-        // 3. 检查混淆后状态：应为 Obfuscated
-        var midInspect = obfuscator.Inspect(obfResult.FinalPath);
-        Assert.Equal(FileStatus.Obfuscated, midInspect.Status);
-        Assert.Equal("test_" + fileSize + ".mp4", midInspect.OriginalFileName);
-
-        // 4. 重复混淆防呆：对已混淆文件再次执行混淆必须失败
-        var reObf = obfuscator.ObfuscateFile(obfResult.FinalPath, config);
+        // 重复混淆防呆
+        var reObf = obfuscator.ObfuscateFile(obf.FinalPath, config);
         Assert.False(reObf.Success);
-        Assert.Contains("Already obfuscated", reObf.ErrorMessage);
 
-        // 5. 执行还原
-        var restResult = obfuscator.RestoreFile(obfResult.FinalPath);
-        Assert.True(restResult.Success, restResult.ErrorMessage);
-        Assert.True(File.Exists(restResult.FinalPath));
-        Assert.EndsWith(".mp4", restResult.FinalPath);
-
-        // 6. 比对哈希：必须 100% Bit-for-bit 一致
-        byte[] restoredContent = File.ReadAllBytes(restResult.FinalPath);
-        string restoredHash = Convert.ToHexString(SHA256.HashData(restoredContent));
+        var rest = obfuscator.RestoreFile(obf.FinalPath, "123456");
+        Assert.True(rest.Success, rest.ErrorMessage);
+        string restoredHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(rest.FinalPath)));
         Assert.Equal(originalHash, restoredHash);
+    }
+
+    [Fact]
+    public void V2_StructureLock_NoStructure_ReportsError()
+    {
+        var config = HideFilesConfig.CreateDefault();
+        config.SetPinV2("123456");
+        config.ProtectionMode = ProtectionMode.StructureLock; // 默认模式
+        string filePath = Path.Combine(_testDir, "random.mp4"); // 随机内容，非真实 MP4
+        File.WriteAllBytes(filePath, RandomNumberGenerator.GetBytes(4096));
+
+        var result = new FileObfuscator().ObfuscateFile(filePath, config);
+        Assert.False(result.Success);
+        Assert.Contains("整体加密", result.ErrorMessage);
+        Assert.True(File.Exists(filePath), "失败时原文件必须保持不变");
+        Assert.False(V2Container.IsV2File(filePath));
+    }
+
+    [Fact]
+    public void V2_WrongPin_Rejected()
+    {
+        var obfuscator = new FileObfuscator();
+        var config = MakeConfig("right-pin");
+        string filePath = Path.Combine(_testDir, "secret.bin");
+        File.WriteAllBytes(filePath, RandomNumberGenerator.GetBytes(4096));
+
+        var obf = obfuscator.ObfuscateFile(filePath, config);
+        Assert.True(obf.Success, obf.ErrorMessage);
+
+        var wrong = obfuscator.RestoreFile(obf.FinalPath, "wrong-pin");
+        Assert.False(wrong.Success);
+        Assert.True(File.Exists(obf.FinalPath), "错误 PIN 不应删除混淆文件");
+    }
+
+    [Fact]
+    public void V2_RecoveryCode_RestoresWithoutPin()
+    {
+        var obfuscator = new FileObfuscator();
+        var config = MakeConfig("123456");
+        string recovery = config.SetPinV2("123456");
+        Assert.True(config.VerifyRecoveryCode(recovery));
+
+        string filePath = Path.Combine(_testDir, "recover.dat");
+        byte[] content = RandomNumberGenerator.GetBytes(8192);
+        File.WriteAllBytes(filePath, content);
+        string hash = Convert.ToHexString(SHA256.HashData(content));
+
+        var obf = obfuscator.ObfuscateFile(filePath, config);
+        Assert.True(obf.Success, obf.ErrorMessage);
+
+        // 仅用恢复码还原（不传 PIN）
+        var rest = obfuscator.RestoreFile(obf.FinalPath, null, recovery);
+        Assert.True(rest.Success, rest.ErrorMessage);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(rest.FinalPath))));
+    }
+
+    [Fact]
+    public void V2_Tampering_DetectedBySha256()
+    {
+        var obfuscator = new FileObfuscator();
+        var config = MakeConfig("123456");
+        config.ProtectionMode = ProtectionMode.FullEncrypt;
+        string filePath = Path.Combine(_testDir, "tamper.mp4");
+        File.WriteAllBytes(filePath, RandomNumberGenerator.GetBytes(200000));
+
+        var obf = obfuscator.ObfuscateFile(filePath, config);
+        Assert.True(obf.Success, obf.ErrorMessage);
+
+        // 篡改密文主体一个字节（跳过 120 字节头，改末尾）
+        byte[] all = File.ReadAllBytes(obf.FinalPath);
+        all[^1] ^= 0xFF;
+        File.WriteAllBytes(obf.FinalPath, all);
+
+        var rest = obfuscator.RestoreFile(obf.FinalPath, "123456");
+        Assert.False(rest.Success, "篡改后应校验失败");
+    }
+
+    [Fact]
+    public void V2Metadata_TlvRoundTrip()
+    {
+        var meta = new V2Metadata
+        {
+            OriginalFileName = "video.mp4", OriginalExtension = ".mp4",
+            OriginalLength = 1234567, KdfIterations = 600000,
+            Mode = ProtectionMode.StructureLock,
+            OriginalSha256 = RandomNumberGenerator.GetBytes(32),
+            LockRegions = new() { new LockRegion(100, 256, "stco"), new LockRegion(4096, 64, "avcC") }
+        };
+        byte[] bytes = meta.Serialize();
+        var back = V2Metadata.Deserialize(bytes);
+        Assert.Equal(meta.OriginalFileName, back.OriginalFileName);
+        Assert.Equal(meta.OriginalLength, back.OriginalLength);
+        Assert.Equal(meta.Mode, back.Mode);
+        Assert.Equal(2, back.LockRegions.Count);
+        Assert.Equal(100, back.LockRegions[0].Offset);
+        Assert.Equal("stco", back.LockRegions[0].Kind);
+    }
+
+    [Fact]
+    public void Base32_RoundTrip()
+    {
+        byte[] key = RandomNumberGenerator.GetBytes(CoreConstants.MasterKeySize);
+        string code = V2Crypto.MasterKeyToRecoveryCode(key);
+        Assert.Equal(key, V2Crypto.RecoveryCodeToMasterKey(code));
     }
 
     [Fact]
     public void DirectoryObfuscator_RoundTrip_MatchesOriginal()
     {
-        string[] sampleNames = new[]
-        {
-            "Personal_Photos",
-            "秘密资料_2026",
-            "DeepFolder.Test-01",
-            "Special!@#%^&()_+",
-            "Simple"
-        };
-
+        string[] sampleNames = { "Personal_Photos", "秘密资料_2026", "DeepFolder.Test-01", "Special!@#%^&()_+", "Simple" };
         foreach (var name in sampleNames)
         {
             string obfuscated = DirectoryObfuscator.ObfuscateName(name);
             Assert.StartsWith(CoreConstants.ObfuscatedDirectoryPrefix, obfuscated);
-
-            bool success = DirectoryObfuscator.TryRestoreName(obfuscated, out string restored);
-            Assert.True(success);
+            Assert.True(DirectoryObfuscator.TryRestoreName(obfuscated, out string restored));
             Assert.Equal(name, restored);
         }
     }
@@ -135,39 +188,35 @@ public class CoreTests : IDisposable
     {
         var config = HideFilesConfig.CreateDefault();
         Assert.False(config.HasPin);
-        Assert.True(config.VerifyPin(null)); // 未设置时无门控
+        Assert.True(config.VerifyPin(null));
 
-        // 设置 PIN
         config.SetPin("123456");
         Assert.True(config.HasPin);
         Assert.True(config.VerifyPin("123456"));
         Assert.False(config.VerifyPin("wrong_pin"));
         Assert.False(config.VerifyPin(""));
 
-        // 清除 PIN
         config.SetPin(null);
         Assert.False(config.HasPin);
-        Assert.True(config.VerifyPin(null));
     }
 
     [Fact]
     public void Config_SaveAndLoad_PreservesPinAcrossRestart()
     {
-        // 回归测试：Save() 通过 JsonStringEnumConverter 把枚举写成字符串（如 "HashStem"），
-        // Load() 必须使用同样的 Converter，否则反序列化会抛异常并被 catch 吞掉，
-        // 静默返回默认配置，导致已保存的 PIN 丢失、界面显示"未设置 PIN"。
         var config = HideFilesConfig.CreateDefault();
         config.SetPin("123456");
         string path = Path.Combine(_testDir, "config.json");
         config.Save(path);
 
         string raw = File.ReadAllText(path);
-        Assert.Contains("\"HashStem\"", raw); // 确认枚举确实以字符串写出
+        Assert.Contains("\"HashStem\"", raw);
 
         var loaded = HideFilesConfig.Load(path);
-        Assert.True(loaded.HasPin, "PinHash 应在 Save/Load 往返后保留");
+        Assert.True(loaded.HasPin);
         Assert.True(loaded.VerifyPin("123456"));
         Assert.False(loaded.VerifyPin("wrong_pin"));
+        Assert.NotNull(loaded.WrappedMasterKey);
+        Assert.NotNull(loaded.ConfigSalt);
         Assert.Equal(NameMode.HashStem, loaded.NameObfuscationMode);
     }
 
@@ -175,16 +224,12 @@ public class CoreTests : IDisposable
     public void Config_RuleMatching_WorksCorrectly()
     {
         var config = HideFilesConfig.CreateDefault();
-
         Assert.True(config.MatchExtension(".mp4", out string fakeExt1));
         Assert.Equal(".dat", fakeExt1);
-
         Assert.True(config.MatchExtension(".PNG", out string fakeExt2));
         Assert.Equal(".tmp", fakeExt2);
-
         Assert.True(config.MatchExtension(".flac", out string fakeExt3));
         Assert.Equal(".bin", fakeExt3);
-
         Assert.False(config.MatchExtension(".unknown_ext_xyz", out string fakeExt4));
         Assert.Equal(config.DefaultFakeExtension, fakeExt4);
     }

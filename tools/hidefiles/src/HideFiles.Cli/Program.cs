@@ -31,6 +31,9 @@ public static class Program
         var targetArgs = new List<string>();
         bool dryRun = false;
         bool hashName = false;
+        string? pin = null;
+        string? recovery = null;
+        ProtectionMode? modeOverride = null;
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -43,6 +46,20 @@ public static class Program
             {
                 hashName = true;
             }
+            else if (a.Equals("--pin", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                pin = args[++i];
+            }
+            else if (a.Equals("--recovery", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                recovery = args[++i];
+            }
+            else if (a.Equals("--mode", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                string m = args[++i];
+                modeOverride = m.Equals("full", StringComparison.OrdinalIgnoreCase)
+                    ? ProtectionMode.FullEncrypt : ProtectionMode.StructureLock;
+            }
             else
             {
                 targetArgs.Add(a);
@@ -54,6 +71,14 @@ public static class Program
         {
             config.NameObfuscationMode = NameMode.HashStem;
         }
+        if (modeOverride.HasValue)
+        {
+            config.ProtectionMode = modeOverride.Value;
+        }
+        if (!string.IsNullOrEmpty(pin))
+        {
+            config.SessionPin = pin;
+        }
 
         switch (command)
         {
@@ -62,7 +87,10 @@ public static class Program
 
             case "unhide":
             case "restore":
-                return ExecuteUnhide(targetArgs, dryRun);
+                return ExecuteUnhide(targetArgs, dryRun, pin, recovery);
+
+            case "setpin":
+                return ExecuteSetPin(targetArgs, config);
 
             case "scan":
             case "status":
@@ -72,11 +100,10 @@ public static class Program
                 return ExecuteMenu(targetArgs);
 
             default:
-                // 如果第一个参数不是已知命令，但它是一个现存的文件或目录，智能推断：
                 if (File.Exists(args[0]) || Directory.Exists(args[0]))
                 {
                     targetArgs.Insert(0, args[0]);
-                    return ExecuteSmartAction(targetArgs, config);
+                    return ExecuteSmartAction(targetArgs, config, pin, recovery);
                 }
 
                 Console.ForegroundColor = ConsoleColor.Red;
@@ -84,6 +111,26 @@ public static class Program
                 Console.ResetColor();
                 return 1;
         }
+    }
+
+    private static int ExecuteSetPin(List<string> args, HideFilesConfig config)
+    {
+        if (args.Count == 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("[Error] Usage: hidefiles setpin <your-pin>");
+            Console.ResetColor();
+            return 1;
+        }
+        string newPin = args[0];
+        string recovery = config.SetPinV2(newPin);
+        config.Save();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("[Success] PIN 已设置。请妥善保存下面的恢复码（忘记 PIN 时可用它还原文件）：");
+        Console.ResetColor();
+        Console.WriteLine($"  Recovery Code: {recovery}");
+        Console.WriteLine($"  Protection Mode: {config.ProtectionMode}");
+        return 0;
     }
 
     private static int ExecuteHide(List<string> paths, HideFilesConfig config, bool dryRun)
@@ -147,11 +194,18 @@ public static class Program
         return failed == 0 ? 0 : 2;
     }
 
-    private static int ExecuteUnhide(List<string> paths, bool dryRun)
+    private static int ExecuteUnhide(List<string> paths, bool dryRun, string? pin, string? recovery)
     {
         if (paths.Count == 0)
         {
             Console.WriteLine("[Warning] No file or directory path specified to restore.");
+            return 1;
+        }
+        if (string.IsNullOrEmpty(pin) && string.IsNullOrEmpty(recovery))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("[Error] 还原需要 --pin <PIN> 或 --recovery <恢复码>。");
+            Console.ResetColor();
             return 1;
         }
 
@@ -195,7 +249,7 @@ public static class Program
 
         foreach (var f in obfuscatedFiles)
         {
-            var res = obfuscator.RestoreFile(f);
+            var res = obfuscator.RestoreFile(f, pin, recovery);
             if (res.Success)
             {
                 success++;
@@ -275,7 +329,7 @@ public static class Program
         return 0;
     }
 
-    private static int ExecuteSmartAction(List<string> paths, HideFilesConfig config)
+    private static int ExecuteSmartAction(List<string> paths, HideFilesConfig config, string? pin, string? recovery)
     {
         var obfuscator = new FileObfuscator();
         bool anyObfuscated = false;
@@ -290,7 +344,7 @@ public static class Program
         }
 
         // 如果包含已混淆文件，智能执行 unhide；否则执行 hide
-        return anyObfuscated ? ExecuteUnhide(paths, false) : ExecuteHide(paths, config, false);
+        return anyObfuscated ? ExecuteUnhide(paths, false, pin, recovery) : ExecuteHide(paths, config, false);
     }
 
     private static int ExecuteMenu(List<string> args)
@@ -335,15 +389,18 @@ public static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("==================================================================");
-        Console.WriteLine(" HideFiles - Fast In-File Self-Contained Obfuscation Tool (.NET 8)");
+        Console.WriteLine(" HideFiles v2 - Self-Contained Encrypted Container Tool (.NET 8)");
         Console.WriteLine("==================================================================");
+        Console.WriteLine("Setup:");
+        Console.WriteLine("  hidefiles setpin <PIN>");
+        Console.WriteLine("      Set PIN and print a one-time recovery code (keep it safe!).");
         Console.WriteLine("Usage:");
-        Console.WriteLine("  hidefiles hide <paths...> [--dry-run] [--hash-name]");
-        Console.WriteLine("      Obfuscate file headers and change extensions according to rules.");
-        Console.WriteLine("  hidefiles unhide <paths...> [--dry-run]");
-        Console.WriteLine("      Restore obfuscated files using self-contained metadata.");
+        Console.WriteLine("  hidefiles hide <paths...> [--pin <PIN>] [--mode full|struct] [--dry-run]");
+        Console.WriteLine("      Obfuscate files into v2 containers. Requires PIN (or config session).");
+        Console.WriteLine("  hidefiles unhide <paths...> (--pin <PIN> | --recovery <CODE>) [--dry-run]");
+        Console.WriteLine("      Restore v2 containers with PIN or recovery code.");
         Console.WriteLine("  hidefiles scan [paths...]");
-        Console.WriteLine("      Inspect and list files status in paths.");
+        Console.WriteLine("      Inspect file status (Normal / Obfuscated-struct / Obfuscated-full).");
         Console.WriteLine("  hidefiles menu install | uninstall");
         Console.WriteLine("      Register or remove Windows cascading context menu for Current User.");
         Console.WriteLine("  hidefiles --help");

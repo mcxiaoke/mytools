@@ -16,6 +16,8 @@ namespace HideFiles.App.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly FileObfuscator _obfuscator = new();
+    /// <summary>本次会话验证通过的 PIN（v2 解密用明文 PIN，不落盘）</summary>
+    private string? _sessionPin;
 
     [ObservableProperty]
     private string _title = "HideFiles - 极速文件自包含混淆保护工具";
@@ -37,6 +39,23 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string _newPinInput = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRecoveryCode))]
+    private string _recoveryCodeDisplay = string.Empty;
+
+    public bool HasRecoveryCode => !string.IsNullOrEmpty(RecoveryCodeDisplay);
+
+    /// <summary>保护模式下拉索引：0=结构锁 1=整体加密，映射到 Config.ProtectionMode</summary>
+    public int ProtectionModeIndex
+    {
+        get => Config.ProtectionMode == ProtectionMode.FullEncrypt ? 1 : 0;
+        set
+        {
+            Config.ProtectionMode = value == 1 ? ProtectionMode.FullEncrypt : ProtectionMode.StructureLock;
+            OnPropertyChanged();
+        }
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ConfiguredPinDisplay))]
@@ -171,7 +190,13 @@ public partial class MainViewModel : ObservableObject
             Owner = Application.Current?.MainWindow
         };
         bool? result = dlg.ShowDialog();
-        return result == true && dlg.IsVerified;
+        if (result == true && dlg.IsVerified)
+        {
+            _sessionPin = dlg.EnteredPin;
+            Config.SessionPin = _sessionPin;
+            return true;
+        }
+        return false;
     }
 
     [RelayCommand]
@@ -183,11 +208,13 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        Config.SetPin(NewPinInput);
+        string recovery = Config.SetPinV2(NewPinInput);
         Config.Save();
         HasPinConfigured = Config.HasPin;
+        _sessionPin = Config.SessionPin;
         NewPinInput = string.Empty;
-        StatusMessage = "安全 PIN 码已成功设置！还原时将进行验证。";
+        RecoveryCodeDisplay = recovery;
+        StatusMessage = "安全 PIN 码已设置！请妥善保存生成的恢复码（仅显示一次）。";
     }
 
     [RelayCommand]
@@ -213,6 +240,21 @@ public partial class MainViewModel : ObservableObject
         if (targets.Count == 0)
         {
             StatusMessage = "未选择可混淆的普通文件。";
+            return;
+        }
+
+        // v2 加密需要 PIN 明文解锁主密钥；重启后 SessionPin 为空，需重新验证
+        if (Config.HasPin && string.IsNullOrEmpty(Config.SessionPin))
+        {
+            if (!EnsurePinVerified())
+            {
+                StatusMessage = "需要先输入 PIN 解锁加密密钥，混淆已中止。";
+                return;
+            }
+        }
+        else if (!Config.HasPin)
+        {
+            StatusMessage = "请先设置 PIN 码（v2 加密需要 PIN 保护密钥）。";
             return;
         }
 
@@ -267,7 +309,7 @@ public partial class MainViewModel : ObservableObject
 
                 ProcessFileResult res = isObfuscate
                     ? _obfuscator.ObfuscateFile(item.FilePath, Config)
-                    : _obfuscator.RestoreFile(item.FilePath);
+                    : _obfuscator.RestoreFile(item.FilePath, _sessionPin);
 
                 if (res.Success)
                 {
@@ -304,9 +346,11 @@ public partial class MainViewModel : ObservableObject
         {
             if (!string.IsNullOrWhiteSpace(NewPinInput))
             {
-                Config.SetPin(NewPinInput);
+                string recovery = Config.SetPinV2(NewPinInput);
                 HasPinConfigured = Config.HasPin;
+                _sessionPin = Config.SessionPin;
                 NewPinInput = string.Empty;
+                RecoveryCodeDisplay = recovery;
             }
 
             Config.Save();

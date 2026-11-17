@@ -10,6 +10,8 @@ public partial class PinVerifyDialog : FluentWindow
     private readonly HideFilesConfig _config;
 
     public bool IsVerified { get; private set; }
+    /// <summary>验证通过时用户输入的 PIN 明文（v2 解密需要真实 PIN，而非哈希）</summary>
+    public string EnteredPin { get; private set; } = string.Empty;
 
     public PinVerifyDialog(HideFilesConfig config)
     {
@@ -43,6 +45,7 @@ public partial class PinVerifyDialog : FluentWindow
         if (_config.VerifyPin(input))
         {
             IsVerified = true;
+            EnteredPin = input;
             DialogResult = true;
             Close();
         }

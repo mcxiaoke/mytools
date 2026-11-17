@@ -140,19 +140,19 @@
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="🔒 安全 PIN 还原门控" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                <TextBlock Text="设置 PIN 码后，执行任何文件还原操作都必须输入验证 PIN 码；未设置时可直接还原。" 
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" />
+                                <TextBlock Text="🔒 安全 PIN 与加密模式 (v2)" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                                <TextBlock Text="文件被装入统一加密容器，不泄露原始格式。默认结构锁极速、防大部分人；可选整体加密防专业提取。还原需 PIN 或恢复码。" 
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
 
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                     <TextBlock Text="当前状态: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <Border Background="#1A10B981" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
                                             Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <TextBlock Text="🔒 已启用 PIN 保护 (●●●●●● 安全加密存储)" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <TextBlock Text="🔒 已启用 PIN 加密保护" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </Border>
                                     <Border Background="#1A6B7280" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
                                             Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
-                                        <TextBlock Text="⚪ 未设置 PIN (还原时无需密码)" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="⚪ 未设置 PIN (无法混淆：v2 必须先设 PIN)" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                                     </Border>
                                 </StackPanel>
 
@@ -166,7 +166,23 @@
                                                Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
 
-                                <TextBlock Text="💡 提示：PIN 码采用 SHA-256 加盐哈希不可逆保护，软件退出重启后不会以明文回显原密码；当前状态显示已启用即表示已成功持久化。"
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="保护模式: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,8,0" />
+                                    <ComboBox SelectedIndex="{Binding ProtectionModeIndex, Mode=TwoWay}" Width="200" VerticalContentAlignment="Center" Height="34">
+                                        <ComboBoxItem Content="结构锁（极速，默认）" />
+                                        <ComboBoxItem Content="整体加密（最强保护）" />
+                                    </ComboBox>
+                                    <TextBlock Text="改模式后点下方“保存配置变更”生效" VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="10,0,0,0" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,0,8"
+                                            Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="恢复码（忘记 PIN 时可用，请离线保存，仅显示本次）：" FontSize="12" Foreground="#BA7517" TextWrapping="Wrap" />
+                                    <TextBox Text="{Binding RecoveryCodeDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                             FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" Margin="0,4,0,0" />
+                                </StackPanel>
+
+                                <TextBlock Text="💡 文件采用 AES-256-GCM 加密容器，同源格式统一、不泄露文件类型；恢复码可脱离 PIN 还原。请务必牢记 PIN 或保存恢复码，二者丢失将无法还原。"
                                            FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
