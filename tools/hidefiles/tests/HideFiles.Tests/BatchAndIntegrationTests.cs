@@ -35,7 +35,7 @@ public class BatchAndIntegrationTests : IDisposable
     {
         var config = HideFilesConfig.CreateDefault();
         config.IncludeSubdirectories = true;
-        config.SetPinV2("batch-pin");
+        config.ChangePin("batch-pin");
         config.ProtectionMode = ProtectionMode.FullEncrypt; // 合成样本无真实媒体结构
         var processor = new BatchProcessor();
 

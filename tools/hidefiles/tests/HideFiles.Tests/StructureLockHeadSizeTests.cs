@@ -43,7 +43,7 @@ public class StructureLockHeadSizeTests : IDisposable
     private static HideFilesConfig MakeConfig(int? headSize = null)
     {
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2("pin-123456");
+        cfg.ChangePin("pin-123456");
         cfg.ProtectionMode = ProtectionMode.StructureLock;
         cfg.ObfuscateFileName = false;
         if (headSize.HasValue) cfg.HeadObfuscateSize = headSize.Value;

@@ -220,6 +220,9 @@
                                                Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
 
+                                <TextBlock Text="修改已有 PIN 时会先校验当前 PIN，只重新封装同一主密钥——恢复码保持不变，此前保护的文件仍可用新 PIN 还原。"
+                                           FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap" />
+
                                 <TextBlock Text="保护模式已按工作台独立：结构锁工作台=混淆/还原（极速原地）；整体加密工作台=加密/解密（全文件最强保护）。右键菜单同样提供四个独立动作。"
                                            FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
@@ -230,7 +233,7 @@
                                              FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" Margin="0,4,0,0" />
                                 </StackPanel>
 
-                                <TextBlock Text="💡 文件采用 AES-256-GCM 加密容器，同源格式统一、不泄露文件类型；恢复码可脱离 PIN 还原。请务必牢记 PIN 或保存恢复码，二者丢失将无法还原。"
+                                <TextBlock Text="💡 文件采用 AES-256-GCM 加密容器，同源格式统一、不泄露文件类型；恢复码可脱离 PIN 还原（还原对话框内可切换为“使用恢复码”）。请务必牢记 PIN 或保存恢复码，二者丢失将无法还原。"
                                            FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>

@@ -33,6 +33,7 @@ public static class Program
         bool hashName = false;
         string? pin = null;
         string? recovery = null;
+        string? currentPin = null;
         ProtectionMode? modeOverride = null;
 
         for (int i = 1; i < args.Length; i++)
@@ -53,6 +54,10 @@ public static class Program
             else if (a.Equals("--recovery", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 recovery = args[++i];
+            }
+            else if (a.Equals("--current", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                currentPin = args[++i];
             }
             else if (a.Equals("--mode", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
@@ -97,7 +102,7 @@ public static class Program
                 return ExecuteUnhide(targetArgs, dryRun, pin, recovery);
 
             case "setpin":
-                return ExecuteSetPin(targetArgs, config);
+                return ExecuteSetPin(targetArgs, config, currentPin);
 
             case "scan":
             case "status":
@@ -120,22 +125,40 @@ public static class Program
         }
     }
 
-    private static int ExecuteSetPin(List<string> args, HideFilesConfig config)
+    private static int ExecuteSetPin(List<string> args, HideFilesConfig config, string? currentPin)
     {
         if (args.Count == 0)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[Error] Usage: hidefiles setpin <your-pin>");
+            Console.WriteLine("[Error] Usage: hidefiles setpin <new-pin> [--current <old-pin>]");
             Console.ResetColor();
             return 1;
         }
-        string newPin = args[0];
-        string recovery = config.SetPinV2(newPin);
+
+        var result = config.ChangePin(args[0], currentPin);
+        if (!result.Success)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"[Error] {result.ErrorMessage}");
+            Console.ResetColor();
+            if (config.HasKeyMaterial && string.IsNullOrEmpty(currentPin))
+                Console.WriteLine("        修改已有 PIN 时请追加 --current <当前PIN>；主密钥不变，恢复码保持有效。");
+            return 1;
+        }
+
         config.Save();
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("[Success] PIN 已设置。请妥善保存下面的恢复码（忘记 PIN 时可用它还原文件）：");
-        Console.ResetColor();
-        Console.WriteLine($"  Recovery Code: {recovery}");
+        if (result.MasterKeyRecreated)
+        {
+            Console.WriteLine("[Success] PIN 已设置。请妥善保存下面的恢复码（忘记 PIN 时可用它还原文件）：");
+            Console.ResetColor();
+            Console.WriteLine($"  Recovery Code: {result.RecoveryCode}");
+        }
+        else
+        {
+            Console.WriteLine("[Success] PIN 已更新：主密钥未变，恢复码保持有效，此前保护的文件仍可用新 PIN 还原。");
+            Console.ResetColor();
+        }
         Console.WriteLine($"  Protection Mode: {config.ProtectionMode}");
         return 0;
     }
@@ -221,6 +244,8 @@ public static class Program
         var allCandidates = processor.CollectFiles(paths, config, forObfuscate: false);
 
         var obfuscator = new FileObfuscator();
+        // 改过 PIN 时文件内的 emkBlob 仍是旧 PIN 封装，用本机 config 的主密钥兜底（只算一次 PBKDF2）
+        byte[]? fallbackMasterKey = TryGetLocalMasterKey(pin);
         var obfuscatedFiles = new List<string>();
 
         foreach (var f in allCandidates)
@@ -256,7 +281,7 @@ public static class Program
 
         foreach (var f in obfuscatedFiles)
         {
-            var res = obfuscator.RestoreFile(f, pin, recovery);
+            var res = obfuscator.RestoreFile(f, pin, recovery, fallbackMasterKey);
             if (res.Success)
             {
                 success++;
@@ -399,8 +424,10 @@ public static class Program
         Console.WriteLine(" HideFiles v2 - Self-Contained Encrypted Container Tool (.NET 8)");
         Console.WriteLine("==================================================================");
         Console.WriteLine("Setup:");
-        Console.WriteLine("  hidefiles setpin <PIN>");
-        Console.WriteLine("      Set PIN and print a one-time recovery code (keep it safe!).");
+        Console.WriteLine("  hidefiles setpin <PIN> [--current <old-pin>]");
+        Console.WriteLine("      Set or change the PIN. Changing keeps the same master key, so the");
+        Console.WriteLine("      recovery code stays valid; a recovery code is printed only when the");
+        Console.WriteLine("      master key is created for the first time.");
         Console.WriteLine("Usage:");
         Console.WriteLine("  hidefiles hide <paths...> [--pin <PIN>] [--dry-run]");
         Console.WriteLine("      Obfuscate via structure-lock (fast, in-place). Safe for most cases.");
@@ -417,8 +444,25 @@ public static class Program
         Console.WriteLine();
     }
 
-    private static string FormatSize(long bytes)
+    /// <summary>
+    /// 用本机 config 的密钥材料解出与 PIN 对应的主密钥；失败返回 null。
+    /// 用于"用户改过 PIN，文件内 emkBlob 仍是旧 PIN 封装"的兜底解密。
+    /// </summary>
+    private static byte[]? TryGetLocalMasterKey(string? pin)
     {
+        if (string.IsNullOrEmpty(pin)) return null;
+        try
+        {
+            var cfg = HideFilesConfig.Load();
+            return cfg.HasKeyMaterial ? cfg.UnwrapMasterKeyWithPin(pin) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatSize(long bytes)    {
         if (bytes >= 1024 * 1024) return $"{(double)bytes / 1024 / 1024:F2} MB";
         if (bytes >= 1024) return $"{(double)bytes / 1024:F1} KB";
         return $"{bytes} B";

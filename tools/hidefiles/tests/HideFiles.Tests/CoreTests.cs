@@ -26,7 +26,7 @@ public class CoreTests : IDisposable
     private static HideFilesConfig MakeConfig(string pin)
     {
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2(pin);
+        cfg.ChangePin(pin);
         // 测试样本为随机字节，无有效媒体结构，显式用整体加密模式
         cfg.ProtectionMode = ProtectionMode.FullEncrypt;
         return cfg;
@@ -71,7 +71,7 @@ public class CoreTests : IDisposable
     {
         // 构造一个含合法 PNG signature + IHDR 的最小文件，使结构锁能定位到关键结构
         var config = HideFilesConfig.CreateDefault();
-        config.SetPinV2("123456");
+        config.ChangePin("123456");
         config.ProtectionMode = ProtectionMode.StructureLock;
         config.ObfuscateFileName = false; // 保持原扩展名，便于断言
 
@@ -107,7 +107,7 @@ public class CoreTests : IDisposable
     public void V2_StructureLock_NoStructure_ReportsError()
     {
         var config = HideFilesConfig.CreateDefault();
-        config.SetPinV2("123456");
+        config.ChangePin("123456");
         config.ProtectionMode = ProtectionMode.StructureLock; // 默认模式
         string filePath = Path.Combine(_testDir, "random.mp4"); // 随机内容，非真实 MP4
         File.WriteAllBytes(filePath, RandomNumberGenerator.GetBytes(4096));
@@ -139,8 +139,9 @@ public class CoreTests : IDisposable
     public void V2_RecoveryCode_RestoresWithoutPin()
     {
         var obfuscator = new FileObfuscator();
-        var config = MakeConfig("123456");
-        string recovery = config.SetPinV2("123456");
+        var config = HideFilesConfig.CreateDefault();
+        config.ProtectionMode = ProtectionMode.FullEncrypt;
+        string recovery = config.ChangePin("123456").RecoveryCode!;
         Assert.True(config.VerifyRecoveryCode(recovery));
 
         string filePath = Path.Combine(_testDir, "recover.dat");
@@ -227,13 +228,13 @@ public class CoreTests : IDisposable
         Assert.False(config.HasPin);
         Assert.True(config.VerifyPin(null));
 
-        config.SetPin("123456");
+        config.ChangePin("123456");
         Assert.True(config.HasPin);
         Assert.True(config.VerifyPin("123456"));
         Assert.False(config.VerifyPin("wrong_pin"));
         Assert.False(config.VerifyPin(""));
 
-        config.SetPin(null);
+        config.ClearKeyMaterial();
         Assert.False(config.HasPin);
     }
 
@@ -241,7 +242,7 @@ public class CoreTests : IDisposable
     public void Config_SaveAndLoad_PreservesPinAcrossRestart()
     {
         var config = HideFilesConfig.CreateDefault();
-        config.SetPin("123456");
+        config.ChangePin("123456");
         string path = Path.Combine(_testDir, "config.json");
         config.Save(path);
 

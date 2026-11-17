@@ -188,8 +188,9 @@ public static class V2Tail
         }
     }
 
-    /// <summary>读取尾部 footer 并解密元数据</summary>
-    public static V2TailReadResult ReadFooter(string path, string? pin, string? recoveryCode)
+    /// <summary>读取尾部 footer 并解密元数据（fallbackMasterKey 语义见 V2Crypto.ResolveMasterKey）</summary>
+    public static V2TailReadResult ReadFooter(string path, string? pin, string? recoveryCode,
+        byte[]? fallbackMasterKey = null)
     {
         using var fs = File.OpenRead(path);
         long len = fs.Length;
@@ -219,22 +220,21 @@ public static class V2Tail
         fs.Seek(metaCipherPos, SeekOrigin.Begin);
         fs.ReadExactly(metaCipher, 0, metaLen);
 
-        byte[] masterKey;
-        if (!string.IsNullOrEmpty(recoveryCode))
-            masterKey = V2Crypto.RecoveryCodeToMasterKey(recoveryCode);
-        else if (!string.IsNullOrEmpty(pin))
-        {
-            byte[] kek = V2Crypto.DeriveKek(pin, configSalt, CoreConstants.DefaultKdfIterations);
-            masterKey = V2Crypto.UnwrapMasterKey(kek, emkBlob); // 错误 PIN → 认证异常
-        }
-        else throw new ArgumentException("PIN or recovery code is required.");
+        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob, fallbackMasterKey);
 
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
         byte[] metaNonce = V2Crypto.BlockNonce(fileNonce, ulong.MaxValue);
         byte[] metaPlain = new byte[metaLen - CoreConstants.GcmTagSize];
-        using (var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize))
+        try
+        {
+            using var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize);
             gcm.Decrypt(metaNonce, metaCipher.AsSpan(0, metaPlain.Length),
                 metaCipher.AsSpan(metaPlain.Length), metaPlain);
+        }
+        catch (AuthenticationTagMismatchException ex)
+        {
+            throw new InvalidDataException("PIN 或恢复码与该文件不匹配（元数据认证失败）。", ex);
+        }
 
         var meta = V2Metadata.Deserialize(metaPlain);
         if (meta.Mode != mode) throw new InvalidDataException("Mode mismatch in tail container.");

@@ -206,9 +206,11 @@ public sealed class FileObfuscator
     }
 
     /// <summary>
-    /// 还原文件。pin 与 recoveryCode 二选一。
+    /// 还原文件。pin 与 recoveryCode 二选一；fallbackMasterKey 为本机 config 中当前 PIN 对应的
+    /// 主密钥，用于"用户改过 PIN、文件内 emkBlob 仍是旧 PIN 封装"的情形。
     /// </summary>
-    public ProcessFileResult RestoreFile(string filePath, string? pin, string? recoveryCode = null)
+    public ProcessFileResult RestoreFile(string filePath, string? pin, string? recoveryCode = null,
+        byte[]? fallbackMasterKey = null)
     {
         var sw = Stopwatch.StartNew();
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
@@ -224,7 +226,7 @@ public sealed class FileObfuscator
             if (isTail)
             {
                 // 结构锁尾部容器：原地解密各区 + 校验 CRC + 截断 footer，不重写整体
-                var read = V2Tail.ReadFooter(filePath, pin, recoveryCode);
+                var read = V2Tail.ReadFooter(filePath, pin, recoveryCode, fallbackMasterKey);
                 V2Tail.RestoreInPlace(filePath, read);
 
                 string tailName = RequireOriginalName(read.Metadata);
@@ -242,7 +244,7 @@ public sealed class FileObfuscator
             }
 
             // 前置容器（整体加密）：读出主体 + 校验
-            var front = V2Container.Read(filePath, pin, recoveryCode);
+            var front = V2Container.Read(filePath, pin, recoveryCode, fallbackMasterKey);
             var meta = front.Metadata;
             string frontName = RequireOriginalName(meta);
             string tmpOut = Path.Combine(dir, $"hf_rst_{Guid.NewGuid():N}.tmp");

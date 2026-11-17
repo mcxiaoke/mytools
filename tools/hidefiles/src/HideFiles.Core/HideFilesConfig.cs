@@ -34,6 +34,17 @@ public sealed class ExtensionRuleGroup
     }
 }
 
+/// <summary>PIN 变更结果</summary>
+public sealed class PinChangeResult
+{
+    public bool Success { get; set; }
+    /// <summary>true 表示新生成了主密钥：此前保护的文件只能用旧恢复码还原</summary>
+    public bool MasterKeyRecreated { get; set; }
+    /// <summary>仅在新建主密钥时返回的一次性恢复码</summary>
+    public string? RecoveryCode { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
 public sealed class HideFilesConfig
 {
     private const string PinSalt = "#HF_PIN_SALT_2026#";
@@ -75,31 +86,90 @@ public sealed class HideFilesConfig
 
     public List<ExtensionRuleGroup> Groups { get; set; } = new();
 
-    /// <summary>设置 PIN：生成随机 MK + configSalt，用 PIN 加密 MK，并返回恢复码</summary>
-    public string SetPinV2(string? pin)
+    /// <summary>是否已持有密钥材料（可用于加解密）</summary>
+    [JsonIgnore]
+    public bool HasKeyMaterial => !string.IsNullOrEmpty(ConfigSalt) && !string.IsNullOrEmpty(WrappedMasterKey);
+
+    /// <summary>
+    /// 设置或修改 PIN。
+    /// - 尚无密钥材料：生成新的主密钥，返回一次性恢复码（`MasterKeyRecreated = true`）。
+    /// - 已有密钥材料：**必须**提供当前 PIN，仅用新 PIN 重新封装同一主密钥，
+    ///   恢复码保持不变，历史文件继续可用。
+    /// 绝不在"改 PIN"时重建主密钥——那会让此前保护的文件当场失效。
+    /// </summary>
+    public PinChangeResult ChangePin(string? newPin, string? currentPin = null)
     {
-        if (string.IsNullOrWhiteSpace(pin))
+        if (string.IsNullOrWhiteSpace(newPin))
+            return new PinChangeResult { Success = false, ErrorMessage = "PIN 不能为空。" };
+
+        string normalized = newPin.Trim();
+        bool recreated = !HasKeyMaterial;
+        byte[] mk;
+
+        if (recreated)
         {
-            PinHash = null; ConfigSalt = null; WrappedMasterKey = null;
-            RecoveryCodeHash = null; SessionPin = null;
-            return string.Empty;
+            mk = RandomNumberGenerator.GetBytes(CoreConstants.MasterKeySize);
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(currentPin))
+                return new PinChangeResult { Success = false, ErrorMessage = "修改 PIN 需要先验证当前 PIN。" };
+            try
+            {
+                mk = UnwrapMasterKeyWithPin(currentPin);
+            }
+            catch (Exception ex) when (ex is CryptographicException or FormatException)
+            {
+                return new PinChangeResult { Success = false, ErrorMessage = "当前 PIN 不正确。" };
+            }
         }
 
-        string normalized = pin.Trim();
         byte[] salt = RandomNumberGenerator.GetBytes(CoreConstants.SaltSize);
-        byte[] mk = RandomNumberGenerator.GetBytes(CoreConstants.MasterKeySize);
         byte[] kek = V2Crypto.DeriveKek(normalized, salt, CoreConstants.DefaultKdfIterations);
         byte[] wrapped = V2Crypto.WrapMasterKey(kek, mk);
-        string recovery = V2Crypto.MasterKeyToRecoveryCode(mk);
 
         ConfigSalt = Convert.ToBase64String(salt);
         WrappedMasterKey = Convert.ToBase64String(wrapped);
-        PinHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized + PinSalt))).ToLowerInvariant();
-        RecoveryCodeHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(recovery)));
+        PinHash = HashPin(normalized);
         KdfIterations = CoreConstants.DefaultKdfIterations;
         SessionPin = normalized;
-        return recovery;
+
+        string? recovery = null;
+        if (recreated)
+        {
+            recovery = V2Crypto.MasterKeyToRecoveryCode(mk);
+            RecoveryCodeHash = HashRecoveryCode(recovery);
+        }
+
+        return new PinChangeResult
+        {
+            Success = true,
+            MasterKeyRecreated = recreated,
+            RecoveryCode = recovery
+        };
     }
+
+    /// <summary>
+    /// 清除全部密钥材料（等价于放弃用 PIN 解密的能力）。
+    /// 历史文件仍可用当前恢复码还原，清除前应确保已离线保存恢复码。
+    /// </summary>
+    public void ClearKeyMaterial()
+    {
+        PinHash = null;
+        ConfigSalt = null;
+        WrappedMasterKey = null;
+        RecoveryCodeHash = null;
+        SessionPin = null;
+    }
+
+    private static string HashPin(string normalizedPin) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPin + PinSalt))).ToLowerInvariant();
+
+    private static string HashRecoveryCode(string recoveryCode) =>
+        Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeRecoveryCode(recoveryCode))));
+
+    private static string NormalizeRecoveryCode(string code) =>
+        code.Trim().ToUpperInvariant().Replace("-", "").Replace(" ", "");
 
     /// <summary>用 PIN 解开 config 中的主密钥 MK；失败抛认证异常</summary>
     public byte[] UnwrapMasterKeyWithPin(string? pin)
@@ -116,21 +186,20 @@ public sealed class HideFilesConfig
     {
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrEmpty(RecoveryCodeHash)) return false;
         string expected = RecoveryCodeHash;
-        string actual = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim())));
+        string actual = HashRecoveryCode(code);
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(actual));
     }
 
-    public void SetPin(string? pin) => SetPinV2(pin);
-
+    /// <summary>
+    /// 校验 PIN 是否与配置中的哈希一致。
+    /// 注意：未设置 PIN 时恒为 true，调用方应先判断 <see cref="HasPin"/>。
+    /// </summary>
     public bool VerifyPin(string? pin)
     {
         if (!HasPin) return true;
         if (string.IsNullOrWhiteSpace(pin)) return false;
-
-        byte[] salted = Encoding.UTF8.GetBytes(pin.Trim() + PinSalt);
-        string hash = Convert.ToHexString(SHA256.HashData(salted)).ToLowerInvariant();
-        return string.Equals(PinHash, hash, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(PinHash, HashPin(pin.Trim()), StringComparison.OrdinalIgnoreCase);
     }
 
     public static HideFilesConfig CreateDefault()

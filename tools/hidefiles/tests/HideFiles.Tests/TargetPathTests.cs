@@ -42,7 +42,7 @@ public class TargetPathTests : IDisposable
     private static HideFilesConfig MakeConfig(ProtectionMode mode, bool obfuscateName)
     {
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2("pin-123456");
+        cfg.ChangePin("pin-123456");
         cfg.ProtectionMode = mode;
         cfg.ObfuscateFileName = obfuscateName;
         return cfg;

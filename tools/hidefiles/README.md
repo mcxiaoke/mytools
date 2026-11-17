@@ -20,7 +20,7 @@ Windows 文件保护小工具（.NET 8 / C# 12 / WPF-UI）。把文件装入**�
 ## 命令行
 
 ```bash
-hidefiles setpin <PIN>                          # 设置 PIN 并显示一次性恢复码
+hidefiles setpin <PIN> [--current <旧PIN>]       # 首次设置生成恢复码；改 PIN 只重封装主密钥
 hidefiles hide <路径...> --pin <PIN>            # 混淆（结构锁，极速）
 hidefiles unhide <路径...> --pin <PIN>          # 还原（自动识别容器）
 hidefiles encrypt <路径...> --pin <PIN>         # 加密（整体 AES-256-GCM）
@@ -52,7 +52,8 @@ hidefiles --help
 ## 安全要点
 
 - PIN 经 PBKDF2（60 万次）派生密钥；config 不保存明文 PIN 或主密钥。
-- 恢复码是主密钥的 Base32，可脱离 PIN 还原文件；请与 PIN 分开离线保存。
+- **修改 PIN 不会重建主密钥**：只用新 PIN 重新封装同一主密钥，恢复码保持不变，此前保护的文件仍可用新 PIN 还原（修改时需提供当前 PIN，CLI 用 `--current`）。
+- 恢复码是主密钥的 Base32，可脱离 PIN 还原文件；请与 PIN 分开离线保存。GUI 还原时可切换为"使用恢复码"。
 - 加密后不能直接播放/预览，必须先还原。
 - 不兼容早期 v1 格式；旧文件请先用旧版本还原后再重新处理。
 

@@ -18,6 +18,10 @@ public partial class MainViewModel : ObservableObject
     private readonly FileObfuscator _obfuscator = new();
     /// <summary>本次会话验证通过的 PIN（v2 解密用明文 PIN，不落盘）</summary>
     private string? _sessionPin;
+    /// <summary>本次会话验证通过的恢复码（与 PIN 二选一，均可用于还原）</summary>
+    private string? _sessionRecoveryCode;
+    /// <summary>本机 config 中当前 PIN 对应的主密钥（改过 PIN 时兜底，避免每个文件都跑一次 PBKDF2）</summary>
+    private byte[]? _sessionMasterKey;
 
     [ObservableProperty]
     private string _title = "HideFiles - 极速文件自包含混淆保护工具";
@@ -166,50 +170,116 @@ public partial class MainViewModel : ObservableObject
         StatusMessage = "列表已清空。";
     }
 
+    /// <summary>弹出安全验证对话框，记录本会话凭据（PIN 或恢复码）</summary>
+    private bool TryPromptCredential()
+    {
+        var dlg = new Views.PinVerifyDialog(Config) { Owner = Application.Current?.MainWindow };
+        if (dlg.ShowDialog() != true || !dlg.IsVerified) return false;
+
+        _sessionPin = string.IsNullOrEmpty(dlg.EnteredPin) ? null : dlg.EnteredPin;
+        _sessionRecoveryCode = string.IsNullOrEmpty(dlg.EnteredRecoveryCode) ? null : dlg.EnteredRecoveryCode;
+        Config.SessionPin = _sessionPin;
+        RefreshSessionMasterKey();
+        return true;
+    }
+
+    /// <summary>用当前会话 PIN 解出本机主密钥并缓存（PBKDF2 只跑一次，批量还原不必逐文件派生）</summary>
+    private void RefreshSessionMasterKey()
+    {
+        _sessionMasterKey = null;
+        if (string.IsNullOrEmpty(_sessionPin) || !Config.HasKeyMaterial) return;
+        try { _sessionMasterKey = Config.UnwrapMasterKeyWithPin(_sessionPin); }
+        catch { _sessionMasterKey = null; }
+    }
+
+    /// <summary>
+    /// 还原所需凭据：PIN 或恢复码任一即可。
+    /// 即使本机已没有密钥材料（PIN 被清除），也允许用恢复码还原。
+    /// </summary>
+    public bool EnsureRestoreCredential()
+    {
+        if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode)) return true;
+        return TryPromptCredential();
+    }
+
+    /// <summary>管理类操作（清除/修改 PIN）的身份验证：未设置 PIN 时无需验证</summary>
     public bool EnsurePinVerified()
     {
         if (!Config.HasPin) return true;
-        var dlg = new Views.PinVerifyDialog(Config) { Owner = Application.Current?.MainWindow };
-        bool? result = dlg.ShowDialog();
-        if (result == true && dlg.IsVerified)
-        {
-            _sessionPin = dlg.EnteredPin;
-            Config.SessionPin = _sessionPin;
-            return true;
-        }
-        return false;
+        if (!string.IsNullOrEmpty(_sessionPin) && Config.VerifyPin(_sessionPin)) return true;
+        return TryPromptCredential();
     }
 
     [RelayCommand]
     private void SavePin()
     {
         if (string.IsNullOrWhiteSpace(NewPinInput)) { StatusMessage = "请输入有效的 PIN 码。"; return; }
-        string recovery = Config.SetPinV2(NewPinInput);
+
+        string? currentPin = null;
+        if (Config.HasKeyMaterial)
+        {
+            // 修改已有 PIN：先验证当前 PIN，只重新封装同一主密钥（恢复码不变、历史文件仍可用）
+            if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 才能修改。"; return; }
+            currentPin = _sessionPin;
+        }
+
+        var result = Config.ChangePin(NewPinInput, currentPin);
+        if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置 PIN 失败。"; return; }
+
         Config.Save();
         HasPinConfigured = Config.HasPin;
         _sessionPin = Config.SessionPin;
+        RefreshSessionMasterKey();
         NewPinInput = string.Empty;
-        RecoveryCodeDisplay = recovery;
-        StatusMessage = "安全 PIN 码已设置！请妥善保存生成的恢复码（仅显示一次）。";
+        if (result.MasterKeyRecreated)
+        {
+            RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
+            StatusMessage = "安全 PIN 已设置！请妥善保存生成的恢复码（仅显示一次）。";
+        }
+        else
+        {
+            StatusMessage = "PIN 已更新：主密钥与恢复码均未变，此前保护的文件仍可用新 PIN 还原。";
+        }
     }
 
     [RelayCommand]
     private void ClearPin()
     {
         if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 码后方可清除。"; return; }
-        Config.SetPin(null);
+
+        var confirm = MessageBox.Show(
+            "清除 PIN 会删除本机保存的密钥材料，历史文件将只能用恢复码还原。\n\n请确认已离线保存恢复码。继续？",
+            "清除 PIN 保护", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        Config.ClearKeyMaterial();
         Config.Save();
         HasPinConfigured = false;
+        _sessionPin = null;
+        _sessionRecoveryCode = null;
+        _sessionMasterKey = null;
         NewPinInput = string.Empty;
-        StatusMessage = "PIN 码保护已清除。";
+        StatusMessage = "PIN 已清除；历史文件仍可用恢复码还原。";
     }
 
-    /// <summary>确保加密所需的 PIN 会话已解锁</summary>
+    /// <summary>确保加密所需的 PIN 会话已解锁（恢复码只能用于还原，不能用于加密新文件）</summary>
     private bool EnsureEncryptionReady(string action)
     {
-        if (!Config.HasPin) { StatusMessage = $"请先设置 PIN 码（v2 加密需要 PIN 保护密钥），{action}已中止。"; return false; }
+        if (!Config.HasPin || !Config.HasKeyMaterial)
+        {
+            StatusMessage = $"请先设置 PIN 码（v2 加密需要 PIN 保护密钥），{action}已中止。";
+            return false;
+        }
         if (string.IsNullOrEmpty(Config.SessionPin) && !EnsurePinVerified())
-        { StatusMessage = $"需要输入 PIN 解锁加密密钥，{action}已中止。"; return false; }
+        {
+            StatusMessage = $"需要输入 PIN 解锁加密密钥，{action}已中止。";
+            return false;
+        }
+        if (string.IsNullOrEmpty(Config.SessionPin))
+        {
+            StatusMessage = $"{action}需要 PIN（恢复码只能用于还原），已中止。";
+            return false;
+        }
         return true;
     }
 
@@ -221,7 +291,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task RestoreSelectedAsync()
     {
-        if (!EnsurePinVerified()) { StatusMessage = "PIN 验证未通过或已取消，还原已中止。"; return; }
+        if (!EnsureRestoreCredential()) { StatusMessage = "未提供可用的 PIN 或恢复码，还原已中止。"; return; }
         await ProcessSelectedAsync(Files, ProtectionMode.StructureLock, isObfuscate: false);
     }
 
@@ -233,7 +303,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task DecryptSelectedAsync()
     {
-        if (!EnsurePinVerified()) { StatusMessage = "PIN 验证未通过或已取消，解密已中止。"; return; }
+        if (!EnsureRestoreCredential()) { StatusMessage = "未提供可用的 PIN 或恢复码，解密已中止。"; return; }
         await ProcessSelectedAsync(SecureFiles, ProtectionMode.FullEncrypt, isObfuscate: false);
     }
 
@@ -262,7 +332,7 @@ public partial class MainViewModel : ObservableObject
         AddPaths(paths, m);
         var collection = CollectionFor(m);
         if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "混淆")) return;
-        if (!isObfuscate && !EnsurePinVerified()) return;
+        if (!isObfuscate && !EnsureRestoreCredential()) return;
         await ProcessAsync(collection.Where(f =>
             (isObfuscate ? f.Status == FileStatus.Normal : f.Status == FileStatus.Obfuscated)).ToList(), isObfuscate, mode);
     }
@@ -284,7 +354,7 @@ public partial class MainViewModel : ObservableObject
                 StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}";
                 ProcessFileResult res = isObfuscate
                     ? _obfuscator.ObfuscateFile(item.FilePath, Config)
-                    : _obfuscator.RestoreFile(item.FilePath, _sessionPin);
+                    : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey);
 
                 if (res.Success)
                 {
@@ -318,11 +388,21 @@ public partial class MainViewModel : ObservableObject
         {
             if (!string.IsNullOrWhiteSpace(NewPinInput))
             {
-                string recovery = Config.SetPinV2(NewPinInput);
+                string? currentPin = null;
+                if (Config.HasKeyMaterial)
+                {
+                    if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 才能修改，配置未保存。"; return; }
+                    currentPin = _sessionPin;
+                }
+
+                var result = Config.ChangePin(NewPinInput, currentPin);
+                if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置 PIN 失败。"; return; }
+
                 HasPinConfigured = Config.HasPin;
                 _sessionPin = Config.SessionPin;
+                RefreshSessionMasterKey();
                 NewPinInput = string.Empty;
-                RecoveryCodeDisplay = recovery;
+                if (result.MasterKeyRecreated) RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
             }
             Config.Save();
             StatusMessage = "所有配置变更已成功保存！";
@@ -333,10 +413,20 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ResetConfig()
     {
-        Config = HideFilesConfig.CreateDefault();
+        // 只重置规则，保留密钥材料——"重置为默认配置"不应顺手销毁解密历史文件的能力
+        var fresh = HideFilesConfig.CreateDefault();
+        fresh.PinHash = Config.PinHash;
+        fresh.ConfigSalt = Config.ConfigSalt;
+        fresh.WrappedMasterKey = Config.WrappedMasterKey;
+        fresh.RecoveryCodeHash = Config.RecoveryCodeHash;
+        fresh.KdfIterations = Config.KdfIterations;
+        fresh.SessionPin = Config.SessionPin;
+
+        Config = fresh;
         Config.Save();
         HasPinConfigured = Config.HasPin;
-        StatusMessage = "已恢复为默认配置。";
+        RefreshSessionMasterKey();
+        StatusMessage = "已恢复默认规则（PIN 与密钥材料保持不变）。";
     }
 
     [RelayCommand]

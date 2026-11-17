@@ -2,8 +2,8 @@
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-                 Title="安全 PIN 验证"
-                 Height="230" Width="380"
+                 Title="安全验证"
+                 Height="330" Width="420"
                  WindowStartupLocation="CenterOwner"
                  ResizeMode="NoResize"
                  WindowBackdropType="Mica"
@@ -15,23 +15,32 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- 标题栏 -->
-        <ui:TitleBar Grid.Row="0" Title="安全 PIN 门控验证" ShowMaximize="False" ShowMinimize="False" />
+        <ui:TitleBar Grid.Row="0" Title="安全验证" ShowMaximize="False" ShowMinimize="False" />
 
-        <TextBlock Grid.Row="1" Text="🔒 请输入安全 PIN 码以继续还原：" 
-                   FontWeight="SemiBold" Margin="0,12,0,8" />
+        <TextBlock x:Name="HintText" Grid.Row="1" Text="🔒 请输入安全 PIN 码以继续："
+                   FontWeight="SemiBold" Margin="0,12,0,8" TextWrapping="Wrap" />
 
-        <PasswordBox x:Name="PinBox" Grid.Row="2" Height="34" FontSize="14" 
+        <PasswordBox x:Name="PinBox" Grid.Row="2" Height="34" FontSize="14"
                      VerticalContentAlignment="Center" Margin="0,0,0,6"
-                     KeyDown="PinBox_KeyDown" />
+                     KeyDown="Input_KeyDown" />
 
-        <TextBlock x:Name="ErrorText" Grid.Row="3" Text="" Foreground="#EF4444" 
-                   FontSize="12" Margin="0,0,0,8" Visibility="Collapsed" />
+        <ui:TextBox x:Name="RecoveryBox" Grid.Row="2" Height="34" FontSize="13"
+                    PlaceholderText="粘贴恢复码（52 位字母数字，可含空格或横线）"
+                    VerticalContentAlignment="Center" Margin="0,0,0,6"
+                    Visibility="Collapsed" KeyDown="Input_KeyDown" />
 
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+        <CheckBox x:Name="RecoveryMode" Grid.Row="3" Content="使用恢复码（忘记 PIN 时）"
+                  Margin="0,2,0,8" Checked="RecoveryMode_Changed" Unchecked="RecoveryMode_Changed" />
+
+        <TextBlock x:Name="ErrorText" Grid.Row="4" Text="" Foreground="#EF4444"
+                   FontSize="12" Margin="0,0,0,8" Visibility="Collapsed" TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
             <Button Content="取消" Click="Cancel_Click" Margin="0,0,8,0" Width="80" />
             <ui:Button Content="确定" Appearance="Primary" Click="Confirm_Click" Width="80" />
         </StackPanel>

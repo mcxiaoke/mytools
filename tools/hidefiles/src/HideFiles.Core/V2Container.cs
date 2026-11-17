@@ -110,10 +110,11 @@ public static class V2Container
     }
 
     /// <summary>
-    /// 读取容器头与元数据并验证。pin 与 recoveryCode 二选一。
+    /// 读取容器头与元数据并验证。pin 与 recoveryCode 二选一，
+    /// fallbackMasterKey 为本机 config 中当前 PIN 对应的主密钥（改过 PIN 时兜底，见 ResolveMasterKey）。
     /// 返回后调用方按 Mode 与 LockRegions 处理主体。
     /// </summary>
-    public static V2ReadResult Read(string path, string? pin, string? recoveryCode)
+    public static V2ReadResult Read(string path, string? pin, string? recoveryCode, byte[]? fallbackMasterKey = null)
     {
         using var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (fs.Length < CoreConstants.V2MinSize) throw new InvalidDataException("File too small to be a v2 container.");
@@ -135,22 +136,7 @@ public static class V2Container
         if (metaLen < CoreConstants.GcmTagSize || metaLen > fs.Length - CoreConstants.V2HeaderSize)
             throw new InvalidDataException("Corrupted metadata length.");
 
-        byte[] masterKey;
-        if (!string.IsNullOrEmpty(recoveryCode))
-        {
-            masterKey = V2Crypto.RecoveryCodeToMasterKey(recoveryCode);
-        }
-        else if (!string.IsNullOrEmpty(pin))
-        {
-            // 先用文件自带 configSalt 派生 KEK 解 MK；迭代数在加密元数据里，但那需 MK 才能解。
-            // 因此 KDF 迭代数固定为常量（写入端不可改），保证自包含可解。
-            byte[] kek = V2Crypto.DeriveKek(pin, configSalt, CoreConstants.DefaultKdfIterations);
-            masterKey = V2Crypto.UnwrapMasterKey(kek, emkBlob); // PIN 错误 → 抛认证异常
-        }
-        else
-        {
-            throw new ArgumentException("PIN or recovery code is required.");
-        }
+        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob, fallbackMasterKey);
 
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
         byte[] metaCipher = new byte[metaLen];
@@ -159,9 +145,16 @@ public static class V2Container
 
         byte[] metaNonce = V2Crypto.BlockNonce(fileNonce, ulong.MaxValue);
         byte[] metaPlain = new byte[metaLen - CoreConstants.GcmTagSize];
-        using (var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize))
+        try
+        {
+            using var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize);
             gcm.Decrypt(metaNonce, metaCipher.AsSpan(0, metaPlain.Length),
                 metaCipher.AsSpan(metaPlain.Length), metaPlain);
+        }
+        catch (AuthenticationTagMismatchException ex)
+        {
+            throw new InvalidDataException("PIN 或恢复码与该文件不匹配（元数据认证失败）。", ex);
+        }
 
         var meta = V2Metadata.Deserialize(metaPlain);
         if (meta.Mode != mode)

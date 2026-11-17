@@ -50,7 +50,7 @@ public class StructureLockFailureTests : IDisposable
         string hash = Sha(original);
 
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2("pin-123456");
+        cfg.ChangePin("pin-123456");
         byte[] mk = cfg.UnwrapMasterKeyWithPin("pin-123456");
         byte[] salt = Convert.FromBase64String(cfg.ConfigSalt!);
 
@@ -74,7 +74,7 @@ public class StructureLockFailureTests : IDisposable
     public void Restore_RejectsBodyLengthMismatch_AndLeavesFileUntouched()
     {
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2("pin-123456");
+        cfg.ChangePin("pin-123456");
         cfg.ProtectionMode = ProtectionMode.StructureLock;
         cfg.ObfuscateFileName = false;
 
@@ -102,7 +102,7 @@ public class StructureLockFailureTests : IDisposable
     public void Restore_IntegrityFailure_IsRetrySafe()
     {
         var cfg = HideFilesConfig.CreateDefault();
-        cfg.SetPinV2("pin-123456");
+        cfg.ChangePin("pin-123456");
         cfg.ProtectionMode = ProtectionMode.StructureLock;
         cfg.ObfuscateFileName = false;
 

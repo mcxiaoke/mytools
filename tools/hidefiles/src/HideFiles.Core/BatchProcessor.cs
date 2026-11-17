@@ -102,7 +102,7 @@ public sealed class BatchProcessor
     }
 
     public BatchSummary RestoreBatch(IEnumerable<string> filePaths, string? pin, string? recoveryCode = null,
-        IProgress<BatchProgress>? progress = null)
+        IProgress<BatchProgress>? progress = null, byte[]? fallbackMasterKey = null)
     {
         var files = new List<string>(filePaths);
         var summary = new BatchSummary { Total = files.Count };
@@ -115,7 +115,7 @@ public sealed class BatchProcessor
             string f = files[i];
             prog.CurrentFile = Path.GetFileName(f);
 
-            var res = _obfuscator.RestoreFile(f, pin, recoveryCode);
+            var res = _obfuscator.RestoreFile(f, pin, recoveryCode, fallbackMasterKey);
             summary.Results.Add(res);
 
             prog.ProcessedCount++;
