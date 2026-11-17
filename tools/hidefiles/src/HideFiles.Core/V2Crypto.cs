@@ -91,6 +91,49 @@ public static class V2Crypto
         return n;
     }
 
+    /// <summary>
+    /// 原地 AES-CTR 变换（加密与解密同一操作，长度不变）。
+    /// counter block = nonce(12) || 4 字节大端块序号（从 0 开始，按区内偏移计算）。
+    /// 结构锁只有一个 CTR 实现，避免多份拷贝各自漂移。
+    /// </summary>
+    public static void CtrTransform(Span<byte> data, byte[] key, byte[] nonce)
+    {
+        byte[] counter = new byte[16];
+        Buffer.BlockCopy(nonce, 0, counter, 0, Math.Min(nonce.Length, CoreConstants.NonceSize));
+        byte[] ks = new byte[16];
+        using var aes = Aes.Create();
+        aes.Key = key;
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.None;
+        using var ecb = aes.CreateEncryptor();
+
+        uint ordinal = 0;
+        int blocks = data.Length / 16;
+        for (int b = 0; b < blocks; b++)
+        {
+            counter[15] = (byte)ordinal;
+            counter[14] = (byte)(ordinal >> 8);
+            counter[13] = (byte)(ordinal >> 16);
+            counter[12] = (byte)(ordinal >> 24);
+            ecb.TransformBlock(counter, 0, 16, ks, 0);
+            int off = b * 16;
+            for (int i = 0; i < 16; i++) data[off + i] ^= ks[i];
+            ordinal++;
+        }
+
+        int rem = data.Length % 16;
+        if (rem > 0)
+        {
+            counter[15] = (byte)ordinal;
+            counter[14] = (byte)(ordinal >> 8);
+            counter[13] = (byte)(ordinal >> 16);
+            counter[12] = (byte)(ordinal >> 24);
+            ecb.TransformBlock(counter, 0, 16, ks, 0);
+            int off = blocks * 16;
+            for (int i = 0; i < rem; i++) data[off + i] ^= ks[i];
+        }
+    }
+
     private static byte[] NormalizePin(string pin) => System.Text.Encoding.UTF8.GetBytes(pin.Trim());
 
     /// <summary>生成恢复码：MK 的 Base32（无填充、大写、易抄写）</summary>

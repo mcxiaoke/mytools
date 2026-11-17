@@ -99,7 +99,7 @@ public sealed class V2Metadata
         {
             byte tag = data[p++];
             if (!TryReadVarInt(data, ref p, out ulong len)) break;
-            if (p + (int)len > data.Length) break;
+            if (len > (ulong)(data.Length - p)) break;   // 同时挡住 len 超出 int 范围的畸形值
             ReadOnlySpan<byte> val = data.Slice(p, (int)len);
             p += (int)len;
 
@@ -141,8 +141,9 @@ public sealed class V2Metadata
         {
             if (!TryReadVarInt(val, ref p, out ulong off) ||
                 !TryReadVarInt(val, ref p, out ulong len) ||
-                !TryReadVarInt(val, ref p, out ulong kindLen) ||
-                p + (int)kindLen > val.Length) return;
+                !TryReadVarInt(val, ref p, out ulong kindLen)) return;
+            if (kindLen > (ulong)(val.Length - p)) return;
+            if (off > long.MaxValue || len > int.MaxValue) return;   // 越界值视为损坏数据
             string kind = Encoding.UTF8.GetString(val.Slice(p, (int)kindLen));
             p += (int)kindLen;
             list.Add(new LockRegion((long)off, (int)len, kind));

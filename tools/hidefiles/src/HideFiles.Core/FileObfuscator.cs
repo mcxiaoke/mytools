@@ -174,19 +174,26 @@ public sealed class FileObfuscator
                     using var inFs = File.OpenRead(filePath);
                     WriteFullEncryptBody(inFs, outFs, fileKey, fileNonce);
                 }
-                V2Container.Write(tmpOut, meta, opt, WriteBody);
+                try
+                {
+                    V2Container.Write(tmpOut, meta, opt, WriteBody);
 
-                if (renameRequired)
-                {
-                    // 先落地新名字，再删除原文；目标同名时自动改为 "原名 (1).ext"，绝不覆盖
-                    targetPath = UniquePath.Move(tmpOut, dir, targetName);
-                    File.Delete(filePath);
+                    if (renameRequired)
+                    {
+                        // 先落地新名字，再删除原文；目标同名时自动改为 "原名 (1).ext"，绝不覆盖
+                        targetPath = UniquePath.Move(tmpOut, dir, targetName);
+                        File.Delete(filePath);
+                    }
+                    else
+                    {
+                        // 关闭文件名混淆：用容器原地替换原文件
+                        File.Move(tmpOut, filePath, overwrite: true);
+                        targetPath = filePath;
+                    }
                 }
-                else
+                finally
                 {
-                    // 关闭文件名混淆：用容器原地替换原文件
-                    File.Move(tmpOut, filePath, overwrite: true);
-                    targetPath = filePath;
+                    if (File.Exists(tmpOut)) { try { File.Delete(tmpOut); } catch { } }
                 }
             }
 
@@ -248,33 +255,41 @@ public sealed class FileObfuscator
             var meta = front.Metadata;
             string frontName = RequireOriginalName(meta);
             string tmpOut = Path.Combine(dir, $"hf_rst_{Guid.NewGuid():N}.tmp");
-
-            using (var inFs = File.OpenRead(filePath))
-            using (var outFs = new FileStream(tmpOut, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                inFs.Seek(front.BodyOffset, SeekOrigin.Begin);
-                ReadFullEncryptBody(inFs, outFs, front.FileKey, front.FileNonce, meta.OriginalLength);
-            }
-
-            if (new FileInfo(tmpOut).Length != meta.OriginalLength)
-                throw new InvalidDataException("还原后文件长度不符。");
-            byte[] restoredSha;
-            using (var fs = File.OpenRead(tmpOut)) restoredSha = SHA256.HashData(fs);
-            if (meta.OriginalSha256.Length > 0 &&
-                !CryptographicOperations.FixedTimeEquals(restoredSha, meta.OriginalSha256))
-                throw new InvalidDataException("还原后 SHA-256 校验失败，文件可能已损坏或被篡改。");
-
             string frontTarget;
-            if (string.Equals(filePath, Path.Combine(dir, frontName), StringComparison.OrdinalIgnoreCase))
+
+            try
             {
-                // 原始名与容器名相同（关闭文件名混淆）：用还原结果原地替换容器自身
-                File.Move(tmpOut, filePath, overwrite: true);
-                frontTarget = filePath;
+                using (var inFs = File.OpenRead(filePath))
+                using (var outFs = new FileStream(tmpOut, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    inFs.Seek(front.BodyOffset, SeekOrigin.Begin);
+                    ReadFullEncryptBody(inFs, outFs, front.FileKey, front.FileNonce, meta.OriginalLength);
+                }
+
+                if (new FileInfo(tmpOut).Length != meta.OriginalLength)
+                    throw new InvalidDataException("还原后文件长度不符。");
+                byte[] restoredSha;
+                using (var fs = File.OpenRead(tmpOut)) restoredSha = SHA256.HashData(fs);
+                if (meta.OriginalSha256.Length > 0 &&
+                    !CryptographicOperations.FixedTimeEquals(restoredSha, meta.OriginalSha256))
+                    throw new InvalidDataException("还原后 SHA-256 校验失败，文件可能已损坏或被篡改。");
+
+                if (string.Equals(filePath, Path.Combine(dir, frontName), StringComparison.OrdinalIgnoreCase))
+                {
+                    // 原始名与容器名相同（关闭文件名混淆）：用还原结果原地替换容器自身
+                    File.Move(tmpOut, filePath, overwrite: true);
+                    frontTarget = filePath;
+                }
+                else
+                {
+                    frontTarget = UniquePath.Move(tmpOut, dir, frontName);
+                    File.Delete(filePath);
+                }
             }
-            else
+            finally
             {
-                frontTarget = UniquePath.Move(tmpOut, dir, frontName);
-                File.Delete(filePath);
+                // 失败路径不得留下解密后的明文临时文件
+                if (File.Exists(tmpOut)) { try { File.Delete(tmpOut); } catch { } }
             }
 
             sw.Stop();
@@ -292,88 +307,28 @@ public sealed class FileObfuscator
         }
     }
 
-    // ==================== 结构锁主体 ====================
-    private static void WriteStructureLockBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce, List<LockRegion> regions)
-    {
-        long pos = 0;
-        long len = inFs.Length;
-        byte[] buf = new byte[64 * 1024];
-        var sorted = regions.OrderBy(r => r.Offset).ToList();
-        int ri = 0;
-        while (pos < len)
-        {
-            int want = (int)Math.Min(buf.Length, len - pos);
-            inFs.Seek(pos, SeekOrigin.Begin);
-            inFs.ReadExactly(buf, 0, want);
-
-            // 对落在当前窗口内的锁定区做原地 GCM 加密（每区独立 nonce）
-            while (ri < sorted.Count && sorted[ri].Offset + sorted[ri].Length <= pos)
-                ri++;
-            for (int k = ri; k < sorted.Count; k++)
-            {
-                var r = sorted[k];
-                if (r.Offset >= pos + want) break;
-                long start = Math.Max(r.Offset, pos);
-                long end = Math.Min(r.Offset + r.Length, pos + want);
-                if (end <= start) continue;
-                int off = (int)(start - pos);
-                int cnt = (int)(end - start);
-                byte[] nonce = V2Crypto.BlockNonce(fileNonce, (ulong)r.Offset);
-                EncryptInPlace(buf.AsSpan(off, cnt), fileKey, nonce);
-            }
-            outFs.Write(buf, 0, want);
-            pos += want;
-        }
-    }
-
-    private static void ReadStructureLockBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce,
-        List<LockRegion> regions, long bodyLength)
-    {
-        // 结构锁不改变长度，按偏移逐区解密后流式拷贝
-        long pos = 0;
-        long len = bodyLength;
-        byte[] buf = new byte[64 * 1024];
-        var sorted = regions.OrderBy(r => r.Offset).ToList();
-        int ri = 0;
-        while (pos < len)
-        {
-            int want = (int)Math.Min(buf.Length, len - pos);
-            inFs.ReadExactly(buf, 0, want);
-            while (ri < sorted.Count && sorted[ri].Offset + sorted[ri].Length <= pos) ri++;
-            for (int k = ri; k < sorted.Count; k++)
-            {
-                var r = sorted[k];
-                if (r.Offset >= pos + want) break;
-                long start = Math.Max(r.Offset, pos);
-                long end = Math.Min(r.Offset + r.Length, pos + want);
-                if (end <= start) continue;
-                int off = (int)(start - pos);
-                int cnt = (int)(end - start);
-                byte[] nonce = V2Crypto.BlockNonce(fileNonce, (ulong)r.Offset);
-                DecryptInPlace(buf.AsSpan(off, cnt), fileKey, nonce);
-            }
-            outFs.Write(buf, 0, want);
-            pos += want;
-        }
-    }
-
     // ==================== 整体加密主体 ====================
     private static void WriteFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce)
     {
         byte[] plain = new byte[CoreConstants.FullChunkSize];
+        byte[] cipher = new byte[CoreConstants.FullChunkSize];
+        byte[] tag = new byte[CoreConstants.GcmTagSize];
+        byte[] lenBuf = new byte[4];
         ulong idx = 0;
+        using var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize);
+
         while (true)
         {
             int n = inFs.Read(plain, 0, plain.Length);
-            if (n == 0) break;
+            if (n <= 0) break;
+
             byte[] nonce = V2Crypto.BlockNonce(fileNonce, idx);
-            byte[] tag = new byte[CoreConstants.GcmTagSize];
-            byte[] cipher = new byte[n];
-            using (var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize))
-                gcm.Encrypt(nonce, plain.AsSpan(0, n), cipher, tag);
-            outFs.Write(BitConverter.GetBytes(n));   // 明文长度（末块）
-            outFs.Write(cipher);
-            outFs.Write(tag);
+            gcm.Encrypt(nonce, plain.AsSpan(0, n), cipher.AsSpan(0, n), tag);
+
+            BitConverter.TryWriteBytes(lenBuf, n);    // 明文长度（末块可能不足 64KB）
+            outFs.Write(lenBuf, 0, 4);
+            outFs.Write(cipher, 0, n);
+            outFs.Write(tag, 0, tag.Length);
             idx++;
         }
     }
@@ -381,68 +336,32 @@ public sealed class FileObfuscator
     private static void ReadFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce, long originalLength)
     {
         byte[] lenBuf = new byte[4];
+        byte[] cipher = new byte[CoreConstants.FullChunkSize];
+        byte[] plain = new byte[CoreConstants.FullChunkSize];
+        byte[] tag = new byte[CoreConstants.GcmTagSize];
         ulong idx = 0;
-        long written = 0;
-        while (written < originalLength)
+        long remaining = originalLength;
+        using var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize);
+
+        while (remaining > 0)
         {
             inFs.ReadExactly(lenBuf, 0, 4);
             int n = BitConverter.ToInt32(lenBuf);
-            byte[] cipher = new byte[n];
-            byte[] tag = new byte[CoreConstants.GcmTagSize];
+
+            // 长度前缀不在 GCM 认证范围内，必须先做范围校验再分配/读取
+            if (n <= 0 || n > CoreConstants.FullChunkSize)
+                throw new InvalidDataException($"容器已损坏：分块长度异常（{n}）。");
+            if (n > remaining)
+                throw new InvalidDataException("容器已损坏：分块长度超出原始文件长度。");
+
             inFs.ReadExactly(cipher, 0, n);
             inFs.ReadExactly(tag, 0, tag.Length);
+
             byte[] nonce = V2Crypto.BlockNonce(fileNonce, idx);
-            byte[] plain = new byte[n];
-            using (var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize))
-                gcm.Decrypt(nonce, cipher, tag, plain);
-            outFs.Write(plain);
-            written += n;
+            gcm.Decrypt(nonce, cipher.AsSpan(0, n), tag, plain.AsSpan(0, n));
+            outFs.Write(plain, 0, n);
+            remaining -= n;
             idx++;
-        }
-    }
-
-    // ==================== 原地流式加解密（CTR 模式，保证长度不变）====================
-    private static void EncryptInPlace(Span<byte> data, byte[] key, byte[] nonce)
-        => CtrInPlace(data, key, nonce);
-    private static void DecryptInPlace(Span<byte> data, byte[] key, byte[] nonce)
-        => CtrInPlace(data, key, nonce); // CTR 对称
-
-    private static void CtrInPlace(Span<byte> data, byte[] key, byte[] nonce)
-    {
-        // 结构锁要求长度不变，故用 AES-CTR（不是 GCM，避免附加 tag 改变长度）。
-        // 完整性由元数据里的原文件 SHA-256 在还原时统一校验。
-        // counter block = 16 字节：nonce(12) || 4 字节大端块序号（从 0 开始）
-        byte[] counter = new byte[16];
-        Buffer.BlockCopy(nonce, 0, counter, 0, Math.Min(nonce.Length, 12));
-        byte[] ks = new byte[16];
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.None;
-        using var ecb = aes.CreateEncryptor();
-        uint blockOrdinal = 0;
-        int blocks = data.Length / 16;
-        for (int b = 0; b < blocks; b++)
-        {
-            counter[15] = (byte)blockOrdinal;
-            counter[14] = (byte)(blockOrdinal >> 8);
-            counter[13] = (byte)(blockOrdinal >> 16);
-            counter[12] = (byte)(blockOrdinal >> 24);
-            ecb.TransformBlock(counter, 0, 16, ks, 0);
-            int off = b * 16;
-            for (int i = 0; i < 16; i++) data[off + i] ^= ks[i];
-            blockOrdinal++;
-        }
-        int rem = data.Length % 16;
-        if (rem > 0)
-        {
-            counter[15] = (byte)blockOrdinal;
-            counter[14] = (byte)(blockOrdinal >> 8);
-            counter[13] = (byte)(blockOrdinal >> 16);
-            counter[12] = (byte)(blockOrdinal >> 24);
-            ecb.TransformBlock(counter, 0, 16, ks, 0);
-            int off = blocks * 16;
-            for (int i = 0; i < rem; i++) data[off + i] ^= ks[i];
         }
     }
 

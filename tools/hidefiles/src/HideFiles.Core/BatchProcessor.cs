@@ -27,7 +27,13 @@ public sealed class BatchProcessor
 {
     private readonly FileObfuscator _obfuscator = new();
 
-    public List<string> CollectFiles(IEnumerable<string> paths, HideFilesConfig config, bool forObfuscate)
+    /// <summary>
+    /// 展开路径为待处理文件清单。
+    /// filterByExtensionRules：仅结构锁需要按扩展名规则筛选（整体加密对任意文件都有效）；
+    /// 已保护的文件（含容器魔数）不会被再次收集。
+    /// </summary>
+    public List<string> CollectFiles(IEnumerable<string> paths, HideFilesConfig config, bool forObfuscate,
+        bool filterByExtensionRules = true)
     {
         var targetFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -44,19 +50,19 @@ public sealed class BatchProcessor
 
                 foreach (var f in allFiles)
                 {
-                    string ext = Path.GetExtension(f);
+                    string full = Path.GetFullPath(f);
                     if (forObfuscate)
                     {
-                        // 混淆时：只收集符合规则且未混淆的文件
-                        if (config.MatchExtension(ext, out _))
-                        {
-                            targetFiles.Add(Path.GetFullPath(f));
-                        }
+                        // 混淆时：按需匹配规则，并跳过已经保护过的文件
+                        if (filterByExtensionRules && !config.MatchExtension(Path.GetExtension(f), out _))
+                            continue;
+                        if (IsProtected(full)) continue;
+                        targetFiles.Add(full);
                     }
                     else
                     {
                         // 还原时：收集已被混淆的文件
-                        targetFiles.Add(Path.GetFullPath(f));
+                        targetFiles.Add(full);
                     }
                 }
             }
@@ -64,6 +70,8 @@ public sealed class BatchProcessor
 
         return new List<string>(targetFiles);
     }
+
+    private static bool IsProtected(string path) => V2Container.IsV2File(path) || V2Tail.IsTailFile(path);
 
     public BatchSummary ObfuscateBatch(IEnumerable<string> filePaths, HideFilesConfig config, IProgress<BatchProgress>? progress = null)
     {

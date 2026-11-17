@@ -172,11 +172,15 @@ public static class Program
         }
 
         var processor = new BatchProcessor();
-        var files = processor.CollectFiles(paths, config, forObfuscate: true);
+        // 结构锁只处理规则内的媒体格式；整体加密对任意文件都有效，不做扩展名过滤
+        bool filterByRules = config.ProtectionMode == ProtectionMode.StructureLock;
+        var files = processor.CollectFiles(paths, config, forObfuscate: true, filterByExtensionRules: filterByRules);
 
         if (files.Count == 0)
         {
-            Console.WriteLine("[Info] No matching files found to obfuscate according to rules.");
+            Console.WriteLine(filterByRules
+                ? "[Info] No matching files found to obfuscate according to rules."
+                : "[Info] No files found to encrypt.");
             return 0;
         }
 

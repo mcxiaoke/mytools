@@ -98,7 +98,7 @@ public static class V2Tail
                 for (int i = 0; i < regions.Count; i++)
                 {
                     byte[] cipher = (byte[])originals[i].Clone();
-                    CtrInPlace(cipher, fileKey, V2Crypto.BlockNonce(fileNonce, (ulong)regions[i].Offset));
+                    V2Crypto.CtrTransform(cipher, fileKey, V2Crypto.BlockNonce(fileNonce, (ulong)regions[i].Offset));
                     fs.Seek(regions[i].Offset, SeekOrigin.Begin);
                     fs.Write(cipher, 0, cipher.Length);
                 }
@@ -262,6 +262,12 @@ public static class V2Tail
                 $"容器长度与元数据不一致（body={read.BodyLength}, original={meta.OriginalLength}），文件可能被截断或拼接。");
 
         var regions = meta.LockRegions;
+        foreach (var r in regions)
+        {
+            if (r.Offset < 0 || r.Length < 0 || r.Offset + r.Length > meta.OriginalLength)
+                throw new InvalidDataException($"锁定区越界（offset={r.Offset}, length={r.Length}），容器已损坏。");
+        }
+
         var plains = new List<byte[]>(regions.Count);
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
@@ -274,7 +280,7 @@ public static class V2Tail
             fs.Seek(r.Offset, SeekOrigin.Begin);
             fs.ReadExactly(buf, 0, buf.Length);
 
-            CtrInPlace(buf, read.FileKey, V2Crypto.BlockNonce(read.FileNonce, (ulong)r.Offset)); // CTR 对称：再跑一遍即解密
+            V2Crypto.CtrTransform(buf, read.FileKey, V2Crypto.BlockNonce(read.FileNonce, (ulong)r.Offset)); // CTR 对称：再跑一遍即解密
 
             if (meta.RegionCrcs != null && i < meta.RegionCrcs.Count)
             {
@@ -294,36 +300,6 @@ public static class V2Tail
         }
         fs.Flush(true);
         fs.SetLength(read.BodyLength); // 截断尾部 footer
-    }
-
-    private static void CtrInPlace(Span<byte> data, byte[] key, byte[] nonce)
-    {
-        byte[] counter = new byte[16];
-        Buffer.BlockCopy(nonce, 0, counter, 0, Math.Min(nonce.Length, 12));
-        byte[] ks = new byte[16];
-        using var aes = Aes.Create();
-        aes.Key = key; aes.Mode = CipherMode.ECB; aes.Padding = PaddingMode.None;
-        using var ecb = aes.CreateEncryptor();
-        uint ord = 0;
-        int blocks = data.Length / 16;
-        for (int b = 0; b < blocks; b++)
-        {
-            counter[15] = (byte)ord; counter[14] = (byte)(ord >> 8);
-            counter[13] = (byte)(ord >> 16); counter[12] = (byte)(ord >> 24);
-            ecb.TransformBlock(counter, 0, 16, ks, 0);
-            int off = b * 16;
-            for (int i = 0; i < 16; i++) data[off + i] ^= ks[i];
-            ord++;
-        }
-        int rem = data.Length % 16;
-        if (rem > 0)
-        {
-            counter[15] = (byte)ord; counter[14] = (byte)(ord >> 8);
-            counter[13] = (byte)(ord >> 16); counter[12] = (byte)(ord >> 24);
-            ecb.TransformBlock(counter, 0, 16, ks, 0);
-            int off = blocks * 16;
-            for (int i = 0; i < rem; i++) data[off + i] ^= ks[i];
-        }
     }
 }
 
