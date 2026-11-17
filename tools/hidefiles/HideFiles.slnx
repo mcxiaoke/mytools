@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/HideFiles.Core/HideFiles.Core.csproj" />
+    <Project Path="src/HideFiles.Cli/HideFiles.Cli.csproj" />
+    <Project Path="src/HideFiles.App/HideFiles.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HideFiles.Tests/HideFiles.Tests.csproj" />
+  </Folder>
+</Solution>

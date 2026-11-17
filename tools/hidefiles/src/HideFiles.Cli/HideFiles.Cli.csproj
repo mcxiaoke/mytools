@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>HideFiles.Cli</RootNamespace>
+    <AssemblyName>hidefiles</AssemblyName>
+    <Description>HideFiles 命令行工具 — Windows 极速自包含文件混淆与还原器</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HideFiles.Core\HideFiles.Core.csproj" />
+  </ItemGroup>
+
+</Project>

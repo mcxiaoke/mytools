@@ -1,0 +1,44 @@
+<Project>
+
+  <!-- ============================================================ -->
+  <!-- 统一版本号与构建管理：所有子项目共享同一份配置定义             -->
+  <!-- ============================================================ -->
+
+  <PropertyGroup>
+    <Major>1</Major>
+    <Minor>0</Minor>
+    <Patch>0</Patch>
+    <VersionPrefix>$(Major).$(Minor).$(Patch)</VersionPrefix>
+    <FileVersionEpoch>2026-01-01</FileVersionEpoch>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- 共享程序集元数据 -->
+    <Company>mcxiaoke</Company>
+    <Product>HideFiles</Product>
+    <Authors>$(Company)</Authors>
+    <Copyright>Copyright © $(Company) 2026</Copyright>
+
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <Target Name="GenerateCustomVersion" BeforeTargets="GetAssemblyVersion">
+    <PropertyGroup>
+      <Today>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd"))</Today>
+      <TodayCompact>$([System.DateTime]::UtcNow.ToString("yyyyMMdd"))</TodayCompact>
+      <NowHHmm>$([System.DateTime]::UtcNow.ToString("HHmm"))</NowHHmm>
+      <DaysSinceEpoch>$([System.DateTime]::Parse($(Today)).Subtract($([System.DateTime]::Parse($(FileVersionEpoch)))).Days)</DaysSinceEpoch>
+
+      <AssemblyVersion Condition="'$(Configuration)' == 'Debug'">$(Major).$(Minor).$(DaysSinceEpoch).0</AssemblyVersion>
+      <FileVersion Condition="'$(Configuration)' == 'Debug'">$(Major).$(Minor).$(DaysSinceEpoch).$(NowHHmm)</FileVersion>
+      <Version Condition="'$(Configuration)' == 'Debug'">$(VersionPrefix)-debug</Version>
+
+      <AssemblyVersion Condition="'$(Configuration)' != 'Debug'">$(Major).$(Minor).$(Patch).0</AssemblyVersion>
+      <FileVersion Condition="'$(Configuration)' != 'Debug'">$(Major).$(Minor).$(Patch).0</FileVersion>
+      <Version Condition="'$(Configuration)' != 'Debug'">$(VersionPrefix)</Version>
+    </PropertyGroup>
+  </Target>
+
+</Project>
