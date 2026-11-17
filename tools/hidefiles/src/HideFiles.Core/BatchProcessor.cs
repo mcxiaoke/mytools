@@ -33,7 +33,7 @@ public sealed class BatchProcessor
     /// 已保护的文件（含容器魔数）不会被再次收集。
     /// </summary>
     public List<string> CollectFiles(IEnumerable<string> paths, HideFilesConfig config, bool forObfuscate,
-        bool filterByExtensionRules = true)
+        bool filterByExtensionRules = true, bool? recursive = null)
     {
         var targetFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -45,7 +45,8 @@ public sealed class BatchProcessor
             }
             else if (Directory.Exists(p))
             {
-                var opt = config.IncludeSubdirectories ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+                bool recurse = recursive ?? config.IncludeSubdirectories;
+                var opt = recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
                 var allFiles = Directory.EnumerateFiles(p, "*.*", opt);
 
                 foreach (var f in allFiles)

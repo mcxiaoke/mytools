@@ -311,7 +311,8 @@ public static class Program
         }
 
         var processor = new BatchProcessor();
-        var files = processor.CollectFiles(paths, config, forObfuscate: false);
+        // 查看状态时总是递归：scan 是只读盘点，不应受"是否包含子目录"的批量设置影响
+        var files = processor.CollectFiles(paths, config, forObfuscate: false, recursive: true);
         var obfuscator = new FileObfuscator();
         byte[]? masterKey = TryGetLocalMasterKey(pin);   // 有 PIN 时顺带显示原始文件名
 
@@ -333,17 +334,23 @@ public static class Program
             {
                 case FileStatus.Obfuscated:
                     obfuscated++;
-                    statusStr = "OBFUSCATED";
+                    statusStr = "已保护";
                     col = ConsoleColor.Yellow;
                     break;
                 case FileStatus.Normal:
                     normal++;
-                    statusStr = "Normal";
+                    statusStr = "普通";
                     col = ConsoleColor.Gray;
                     break;
                 default:
                     corrupted++;
-                    statusStr = insp.Status.ToString().ToUpper();
+                    statusStr = insp.Status switch
+                    {
+                        FileStatus.Corrupted => "损坏",
+                        FileStatus.Locked => "被占用",
+                        FileStatus.NotFound => "未找到",
+                        _ => "未知"
+                    };
                     col = ConsoleColor.Red;
                     break;
             }
