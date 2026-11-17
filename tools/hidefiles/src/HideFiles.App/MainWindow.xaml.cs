@@ -31,7 +31,9 @@ public partial class MainWindow : FluentWindow
             var paths = (string[]?)e.Data.GetData(DataFormats.FileDrop);
             if (paths != null && paths.Length > 0 && DataContext is MainViewModel vm)
             {
-                vm.AddPaths(paths);
+                // 根据拖放目标 DataGrid 决定加入哪个工作台（命名元素 > 当前 Tab）
+                string mode = ReferenceEquals(sender, SecureFileGrid) ? "secure" : "struct";
+                vm.AddPaths(paths, mode);
             }
         }
     }

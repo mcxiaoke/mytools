@@ -1,75 +1,93 @@
 # HideFiles
 
-Windows 极速自包含文件特征混淆与还原小工具（基于 .NET 8 / C# 12 / WPF-UI）。
+Windows 文件保护小工具（.NET 8 / C# 12 / WPF-UI）。把文件装入**单文件自加密容器**：统一魔数、不泄露原格式、可独立搬运，用 PIN 或恢复码还原。
 
----
+提供两种**彼此独立**的保护模式：
 
-## 核心特性
+- **结构锁（默认，极速）**：只加密文件头签名和格式关键结构，原地操作、不重写整个文件。2GB 视频约 0.6 秒，适合"防大部分人"和日常批量处理。
+- **整体加密（可选，最强）**：整文件 AES-256-GCM 分块加密，没有 PIN/恢复码无法提取任何内容，约 1.5–2.7 GB/s。
 
-- **极速就地特征混淆（In-Place Obfuscation）**：
-  不进行低效的全文件加密，仅针对前 64KB 头部进行特征掩码覆写，毫秒级摧毁视频容器与多媒体关键元数据。500MB+ 视频处理耗时低于 5ms，上千个文件秒级批处理。
-- **单文件自包含（In-File Stash 协议）**：
-  原始头部特征、原始文件名及扩展名加密打包追加于文件尾部，自带 8 字节私有魔数与 CRC32 校验。脱离工具元数据数据库也能随时无损还原，防二次混淆。
-- **灵活规则与伪装映射**：
-  内置视频（`.mp4`, `.mkv` -> `.dat`）、图片（`.png`, `.jpg` -> `.tmp`）、音频（`.flac`, `.mp3` -> `.bin`）等规则组，支持自定义扩展名与伪装名。
-- **Windows 资源管理器折叠右键菜单**：
-  支持一键写入当前用户注册表级联二级菜单（Cascading Menu），桌面与文件右键整洁不杂乱。
-- **现代化 WPF 界面 + 极速 CLI**：
-  支持拖拽放置批量处理，提供完整命令行接口便于自动化批处理。
+两种模式都以**原生右键菜单**提供四个独立动作，GUI 也分成两个独立工作台。
 
----
+## 快速上手
 
-## 解决方案结构
+1. 安装：解压 `dist/HideFilesApp-1.0.0-win-x64.zip`，运行 `HideFilesApp.exe`。
+2. 打开 GUI →「规则与系统设置」→ 设置 PIN，并**离线保存生成的恢复码**（忘记 PIN 时唯一凭据）。
+3. 在「结构锁工作台」拖入文件 → 点「混淆文件」；要撤销点「还原文件」。
+4. 需要强保护时切到「整体加密工作台」→「加密文件」/「解密文件」。
+5. （可选）在设置页点"安装右键菜单"，资源管理器和文件夹右键即出现四个动作。
 
-参考成熟的 .NET 8 项目组织形式：
-
-```text
-hidefiles/
-├── Directory.Build.props              # 统一版本控制与构建参数
-├── HideFiles.slnx                     # 解决方案文件
-├── publish.ps1                        # 自动化发布打包脚本
-├── src/
-│   ├── HideFiles.Core/                # 跨平台核心类库 (就地混淆、元数据编解码、规则引擎、右键菜单)
-│   ├── HideFiles.Cli/                 # 命令行程序 (hidefiles.exe)
-│   └── HideFiles.App/                 # 现代化 WPF GUI 客户端 (HideFilesApp.exe)
-├── tests/
-│   └── HideFiles.Tests/               # xUnit 单元测试与端到端集成测试 (100% 通过)
-└── docs/                              # 技术方案与性能基准测试报告
-```
-
----
-
-## 命令行用法
+## 命令行
 
 ```bash
-# 混淆指定文件或目录
-hidefiles hide <paths...> [--dry-run] [--hash-name]
-
-# 还原指定文件或目录
-hidefiles unhide <paths...> [--dry-run]
-
-# 扫描并输出路径下文件的混淆状态
-hidefiles scan [paths...]
-
-# 一键安装/卸载 Windows 资源管理器级联折叠右键菜单
-hidefiles menu install
-hidefiles menu uninstall
-
-# 查看帮助
+hidefiles setpin <PIN>                          # 设置 PIN 并显示一次性恢复码
+hidefiles hide <路径...> --pin <PIN>            # 混淆（结构锁，极速）
+hidefiles unhide <路径...> --pin <PIN>          # 还原（自动识别容器）
+hidefiles encrypt <路径...> --pin <PIN>         # 加密（整体 AES-256-GCM）
+hidefiles decrypt <路径...> --recovery <恢复码> # 解密（也可用 --pin）
+hidefiles scan [路径...]                        # 扫描文件状态
+hidefiles menu install | uninstall              # 安装/卸载四动作右键菜单
 hidefiles --help
 ```
 
----
+`unhide` / `restore` / `decrypt` 等价，容器自带模式标记会自动识别；命令名只是便于记忆。
+
+## 右键菜单（四项）
+
+| 菜单项 | 动作 |
+|---|---|
+| 混淆文件 (结构锁·极速) | `--hide` |
+| 还原文件 (结构锁) | `--unhide` |
+| 加密文件 (整体·最强) | `--encrypt` |
+| 解密文件 (整体) | `--decrypt` |
+
+外加"在 HideFiles 中管理..."，用 GUI 打开并加入对应工作台。
+
+## 支持格式
+
+- 结构锁：MP4 / M4V / MOV、MKV / WebM、JPG / JPEG、PNG（解析其关键结构并加密）。
+- 整体加密：任意文件（按字节流整体加密，与格式无关）。
+- 其它格式用结构锁会明确报错并提示改用整体加密，不会静默产生"假保护"。
+
+## 安全要点
+
+- PIN 经 PBKDF2（60 万次）派生密钥；config 不保存明文 PIN 或主密钥。
+- 恢复码是主密钥的 Base32，可脱离 PIN 还原文件；请与 PIN 分开离线保存。
+- 加密后不能直接播放/预览，必须先还原。
+- 不兼容早期 v1 格式；旧文件请先用旧版本还原后再重新处理。
+
+## 性能参考
+
+| 场景 | 结构锁 | 整体加密 |
+|---|---|---|
+| 小文件（几 MB）还原 | ~0.15s | ~0.15s |
+| 2GB 视频混淆/还原 | ~0.6s / ~0.3s | ~1.6s / ~1.2s |
+| 吞吐量 | 与文件大小基本无关 | 1.5–2.7 GB/s |
+
+（含进程启动与 PBKDF2 约 0.1s；结构锁耗时取决于被加密的关键结构大小。）
+
+## 项目结构
+
+```text
+hidefiles/
+├── publish.ps1                  自动化发布（测试→打包→SHA256）
+├── src/
+│   ├── HideFiles.Core/          加密容器、格式定位、密钥、右键菜单、批处理
+│   ├── HideFiles.Cli/           命令行 hidefiles.exe
+│   └── HideFiles.App/           WPF GUI HideFilesApp.exe
+├── tests/HideFiles.Tests/       xUnit 单元测试
+├── docs/
+│   ├── 架构方案.md              与代码一致的设计说明
+│   └── CHANGES-YYYYMMDD.md      变更记录
+└── dist/                        发布产物
+```
 
 ## 构建与测试
 
 ```powershell
-# 运行全部单元测试
-dotnet test
-
-# 构建整个解决方案
-dotnet build -c Release
-
-# 一键打包发布（生成 dist/*.zip 与 SHA256SUMS.txt）
-.\publish.ps1
+dotnet test                          # 运行全部单元测试（16 项）
+dotnet build -c Release              # 构建
+.\publish.ps1                        # 打包 dist/*.zip 与 SHA256SUMS.txt
 ```
+
+更完整的格式容器规范与密钥体系见 [docs/架构方案.md](docs/架构方案.md)。

@@ -1,4 +1,5 @@
 using System.Windows;
+using HideFiles.Core;
 
 namespace HideFiles.App;
 
@@ -31,6 +32,14 @@ public partial class App : Application
                     {
                         action = "unhide";
                     }
+                    else if (arg is "--encrypt" or "-encrypt")
+                    {
+                        action = "encrypt";
+                    }
+                    else if (arg is "--decrypt" or "-decrypt")
+                    {
+                        action = "decrypt";
+                    }
                     else if (arg is "--open" or "-open")
                     {
                         action = "open";
@@ -45,11 +54,16 @@ public partial class App : Application
                 {
                     if (action == "hide")
                     {
-                        _ = vm.AutoProcessPathsAsync(paths, isObfuscate: true);
+                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.StructureLock, isObfuscate: true);
                     }
-                    else if (action == "unhide")
+                    else if (action == "encrypt")
                     {
-                        _ = vm.AutoProcessPathsAsync(paths, isObfuscate: false);
+                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.FullEncrypt, isObfuscate: true);
+                    }
+                    else if (action is "unhide" or "decrypt")
+                    {
+                        // 还原/解密由容器自动识别模式，走统一还原流程
+                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.StructureLock, isObfuscate: false);
                     }
                     else
                     {

@@ -35,16 +35,14 @@
 
         <!-- 主内容多标签页 -->
         <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12">
-            <!-- TAB 1: 工作台 -->
-            <TabItem Header="文件处理工作台">
+            <!-- TAB 1: 结构锁工作台 -->
+            <TabItem Header="结构锁工作台" IsSelected="True">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-
-                    <!-- 顶部统计与操作卡片 -->
                     <Border Grid.Row="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
@@ -53,61 +51,42 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="当前文件: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding TotalCount}" FontWeight="Bold" Margin="0,0,16,0" />
-
-                                <TextBlock Text="待混淆 (普通): " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="待混淆: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding NormalCount}" FontWeight="Bold" Foreground="#10B981" Margin="0,0,16,0" />
-
-                                <TextBlock Text="已混淆保护: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="已混淆: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding ObfuscatedCount}" FontWeight="Bold" Foreground="#F59E0B" />
                             </StackPanel>
-
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="选择文件" Command="{Binding SelectFilesCommand}" Margin="0,0,8,0" />
-                                <Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" Margin="0,0,8,0" />
-                                <Button Content="清空列表" Command="{Binding ClearFilesCommand}" />
+                                <Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="struct" Margin="0,0,8,0" AutomationProperties.AutomationId="StructSelectFiles" />
+                                <Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="struct" Margin="0,0,8,0" />
+                                <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="struct" />
                             </StackPanel>
                         </Grid>
                     </Border>
-
-                    <!-- 操作栏 -->
                     <Grid Grid.Row="1" Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-
-                        <TextBlock Text="💡 提示：可直接拖拽多个文件或文件夹到下方列表中" 
-                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" 
-                                   VerticalAlignment="Center" />
-
+                        <TextBlock Text="💡 结构锁：原地加密关键结构，极速，防大部分人（可拖拽文件到列表）"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <ui:Button Content="🛡️ 混淆保护 (Hide)" 
-                                       Command="{Binding ObfuscateSelectedCommand}" 
-                                       Appearance="Primary" 
-                                       Margin="0,0,8,0" />
-                            <ui:Button Content="🔓 一键还原 (Unhide)" 
-                                       Command="{Binding RestoreSelectedCommand}" 
-                                       Appearance="Secondary" />
+                            <ui:Button Content="混淆文件" Command="{Binding ObfuscateSelectedCommand}"
+                                       Appearance="Primary" Margin="0,0,8,0" AutomationProperties.AutomationId="StructObfuscate" />
+                            <ui:Button Content="还原文件" Command="{Binding RestoreSelectedCommand}"
+                                       Appearance="Secondary" AutomationProperties.AutomationId="StructRestore" />
                         </StackPanel>
                     </Grid>
-
-                    <!-- 文件列表 -->
-                    <Border Grid.Row="2" 
-                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="8"
                             AllowDrop="True" Drop="FileList_Drop" DragOver="FileList_DragOver">
-                        <DataGrid ItemsSource="{Binding Files}" 
-                                  AutoGenerateColumns="False" 
-                                  CanUserAddRows="False"
-                                  GridLinesVisibility="Horizontal"
-                                  HeadersVisibility="Column"
-                                  Background="Transparent"
-                                  BorderThickness="0">
+                        <DataGrid x:Name="StructFileGrid" ItemsSource="{Binding Files}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                  GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                  Background="Transparent" BorderThickness="0">
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected}" Width="40" />
                                 <DataGridTemplateColumn Header="状态" Width="80">
@@ -122,7 +101,82 @@
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
-                                <DataGridTextColumn Header="原始文件名 (还原目标)" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
+                                <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="320" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- TAB 2: 整体加密工作台 -->
+            <TabItem Header="整体加密工作台">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="当前文件: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding SecureTotalCount}" FontWeight="Bold" Margin="0,0,16,0" />
+                                <TextBlock Text="待加密: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding SecureNormalCount}" FontWeight="Bold" Foreground="#10B981" Margin="0,0,16,0" />
+                                <TextBlock Text="已加密: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding SecureObfuscatedCount}" FontWeight="Bold" Foreground="#F59E0B" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="secure" Margin="0,0,8,0" AutomationProperties.AutomationId="SecureSelectFiles" />
+                                <Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="secure" Margin="0,0,8,0" />
+                                <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="secure" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="🔒 整体加密：全文件 AES-256-GCM，最强保护（五类格式均支持）"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <ui:Button Content="加密文件" Command="{Binding EncryptSelectedCommand}"
+                                       Appearance="Primary" Margin="0,0,8,0" AutomationProperties.AutomationId="SecureEncrypt" />
+                            <ui:Button Content="解密文件" Command="{Binding DecryptSelectedCommand}"
+                                       Appearance="Secondary" AutomationProperties.AutomationId="SecureDecrypt" />
+                        </StackPanel>
+                    </Grid>
+                    <Border Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="8"
+                            AllowDrop="True" Drop="FileList_Drop" DragOver="FileList_DragOver">
+                        <DataGrid x:Name="SecureFileGrid" ItemsSource="{Binding SecureFiles}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                  GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                  Background="Transparent" BorderThickness="0">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="选" Binding="{Binding IsSelected}" Width="40" />
+                                <DataGridTemplateColumn Header="状态" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="4" Padding="6,2"
+                                                    Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
+                                                    HorizontalAlignment="Center">
+                                                <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
+                                <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
                                 <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="320" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                             </DataGrid.Columns>
@@ -166,14 +220,8 @@
                                                Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
 
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                    <TextBlock Text="保护模式: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,8,0" />
-                                    <ComboBox SelectedIndex="{Binding ProtectionModeIndex, Mode=TwoWay}" Width="200" VerticalContentAlignment="Center" Height="34">
-                                        <ComboBoxItem Content="结构锁（极速，默认）" />
-                                        <ComboBoxItem Content="整体加密（最强保护）" />
-                                    </ComboBox>
-                                    <TextBlock Text="改模式后点下方“保存配置变更”生效" VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="10,0,0,0" />
-                                </StackPanel>
+                                <TextBlock Text="保护模式已按工作台独立：结构锁工作台=混淆/还原（极速原地）；整体加密工作台=加密/解密（全文件最强保护）。右键菜单同样提供四个独立动作。"
+                                           FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
                                 <StackPanel Margin="0,0,0,8"
                                             Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}}">

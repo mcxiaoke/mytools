@@ -83,10 +83,17 @@ public static class Program
         switch (command)
         {
             case "hide":
+                if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.StructureLock; // 混淆 = 结构锁
+                return ExecuteHide(targetArgs, config, dryRun);
+
+            case "encrypt":
+                if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.FullEncrypt;   // 加密 = 整体加密
                 return ExecuteHide(targetArgs, config, dryRun);
 
             case "unhide":
             case "restore":
+            case "decrypt":
+                // 还原/解密：容器自带模式标记，自动识别（结构锁尾容器 或 整体加密前置容器）
                 return ExecuteUnhide(targetArgs, dryRun, pin, recovery);
 
             case "setpin":
@@ -395,10 +402,12 @@ public static class Program
         Console.WriteLine("  hidefiles setpin <PIN>");
         Console.WriteLine("      Set PIN and print a one-time recovery code (keep it safe!).");
         Console.WriteLine("Usage:");
-        Console.WriteLine("  hidefiles hide <paths...> [--pin <PIN>] [--mode full|struct] [--dry-run]");
-        Console.WriteLine("      Obfuscate files into v2 containers. Requires PIN (or config session).");
-        Console.WriteLine("  hidefiles unhide <paths...> (--pin <PIN> | --recovery <CODE>) [--dry-run]");
-        Console.WriteLine("      Restore v2 containers with PIN or recovery code.");
+        Console.WriteLine("  hidefiles hide <paths...> [--pin <PIN>] [--dry-run]");
+        Console.WriteLine("      Obfuscate via structure-lock (fast, in-place). Safe for most cases.");
+        Console.WriteLine("  hidefiles encrypt <paths...> [--pin <PIN>] [--dry-run]");
+        Console.WriteLine("      Full-file AES-256-GCM encryption (strongest protection).");
+        Console.WriteLine("  hidefiles unhide|restore|decrypt <paths...> (--pin <PIN> | --recovery <CODE>) [--dry-run]");
+        Console.WriteLine("      Restore obfuscated/encrypted files. Container mode is auto-detected.");
         Console.WriteLine("  hidefiles scan [paths...]");
         Console.WriteLine("      Inspect file status (Normal / Obfuscated-struct / Obfuscated-full).");
         Console.WriteLine("  hidefiles menu install | uninstall");
