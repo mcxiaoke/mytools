@@ -10,6 +10,14 @@ public static class CoreConstants
     /// </summary>
     public static readonly byte[] V2Magic = new byte[] { 0x89, 0x48, 0x46, 0x0D, 0x0A, 0x1A, 0x0A, 0x9F };
 
+    /// <summary>
+    /// 结构锁模式的尾部魔数（置于文件末尾，区别于整体加密的前置 V2Magic）。
+    /// </summary>
+    public static readonly byte[] V2TailMagic = new byte[] { 0x8A, 0x48, 0x46, 0x0D, 0x0A, 0x1A, 0x0A, 0x9F };
+
+    /// <summary>结构锁原地加密时，头部签名区长度（覆盖 ftyp/EBML/JPEG SOI/PNG signature）</summary>
+    public const int HeadSignatureSize = 64;
+
     public const byte V2Version = 2;
 
     /// <summary>

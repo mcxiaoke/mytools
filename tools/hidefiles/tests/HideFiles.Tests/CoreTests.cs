@@ -67,6 +67,43 @@ public class CoreTests : IDisposable
     }
 
     [Fact]
+    public void V2_StructureLock_TailContainer_RoundTrip()
+    {
+        // 构造一个含合法 PNG signature + IHDR 的最小文件，使结构锁能定位到关键结构
+        var config = HideFilesConfig.CreateDefault();
+        config.SetPinV2("123456");
+        config.ProtectionMode = ProtectionMode.StructureLock;
+        config.ObfuscateFileName = false; // 保持原扩展名，便于断言
+
+        string filePath = Path.Combine(_testDir, "mini.png");
+        using (var ms = new MemoryStream())
+        {
+            ms.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+            // IHDR chunk: len(4)=13, type="IHDR", data(13), crc(4)
+            ms.Write(new byte[] { 0, 0, 0, 13 }); // IHDR length, big-endian
+            ms.Write(System.Text.Encoding.ASCII.GetBytes("IHDR"));
+            ms.Write(RandomNumberGenerator.GetBytes(13));
+            ms.Write(RandomNumberGenerator.GetBytes(4));
+            ms.Write(RandomNumberGenerator.GetBytes(2048)); // 模拟图像数据
+            File.WriteAllBytes(filePath, ms.ToArray());
+        }
+        byte[] original = File.ReadAllBytes(filePath);
+        string hash = Convert.ToHexString(SHA256.HashData(original));
+
+        var obf = new FileObfuscator().ObfuscateFile(filePath, config);
+        Assert.True(obf.Success, obf.ErrorMessage);
+        Assert.True(V2Tail.IsTailFile(obf.FinalPath), "应为尾部容器（原地加密）");
+        Assert.True(new FileInfo(obf.FinalPath).Length > original.Length, "尾部容器应追加 footer");
+        // 头部签名应被加密（不再是 PNG signature）
+        byte[] head = File.ReadAllBytes(obf.FinalPath).AsSpan(0, 8).ToArray();
+        Assert.False(head.SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }));
+
+        var rest = new FileObfuscator().RestoreFile(obf.FinalPath, "123456");
+        Assert.True(rest.Success, rest.ErrorMessage);
+        Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(rest.FinalPath))));
+    }
+
+    [Fact]
     public void V2_StructureLock_NoStructure_ReportsError()
     {
         var config = HideFilesConfig.CreateDefault();

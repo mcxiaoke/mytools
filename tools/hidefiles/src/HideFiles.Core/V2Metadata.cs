@@ -31,6 +31,8 @@ public sealed class V2Metadata
     public int KdfIterations { get; set; } = CoreConstants.DefaultKdfIterations;
     public byte[] OriginalSha256 { get; set; } = Array.Empty<byte>();
     public ProtectionMode Mode { get; set; }
+    /// <summary>结构锁模式：每个 LockRegion 解密后的原始 CRC32，用于快速完整性校验</summary>
+    public List<uint>? RegionCrcs { get; set; }
 
     public byte[] Serialize()
     {
@@ -75,6 +77,17 @@ public sealed class V2Metadata
         ms.WriteByte(7); WriteVarInt(ms, 1);
         ms.WriteByte((byte)Mode);
 
+        if (RegionCrcs != null)
+        {
+            ms.WriteByte(8);
+            using var cms = new MemoryStream();
+            WriteVarInt(cms, (ulong)RegionCrcs.Count);
+            foreach (uint crc in RegionCrcs) cms.Write(BitConverter.GetBytes(crc));
+            byte[] cb = cms.ToArray();
+            WriteVarInt(ms, (ulong)cb.Length);
+            ms.Write(cb);
+        }
+
         return ms.ToArray();
     }
 
@@ -99,10 +112,25 @@ public sealed class V2Metadata
                 case 5: if (val.Length == 4) meta.KdfIterations = BitConverter.ToInt32(val); break;
                 case 6: meta.OriginalSha256 = val.ToArray(); break;
                 case 7: if (val.Length >= 1) meta.Mode = (ProtectionMode)val[0]; break;
+                case 8: ParseCrcs(val, meta); break;
                 default: break; // 未知 tag：跳过，向后兼容
             }
         }
         return meta;
+    }
+
+    private static void ParseCrcs(ReadOnlySpan<byte> val, V2Metadata meta)
+    {
+        int p = 0;
+        if (!TryReadVarInt(val, ref p, out ulong count)) return;
+        var list = new List<uint>();
+        for (ulong i = 0; i < count; i++)
+        {
+            if (p + 4 > val.Length) return;
+            list.Add(BitConverter.ToUInt32(val.Slice(p, 4)));
+            p += 4;
+        }
+        meta.RegionCrcs = list;
     }
 
     private static void ParseRegions(ReadOnlySpan<byte> val, List<LockRegion> list)
