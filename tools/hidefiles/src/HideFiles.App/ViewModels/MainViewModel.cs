@@ -56,6 +56,9 @@ public partial class MainViewModel : ObservableObject
 
     public string ConfiguredPinDisplay => HasPinConfigured ? "已设置 (●●●●●●)" : "未设置";
 
+    [ObservableProperty]
+    private int _selectedTabIndex;
+
     /// <summary>当前活动工作台：struct=结构锁 secure=整体加密（由 Tab 切换设置，决定拖拽目标）</summary>
     [ObservableProperty]
     private string _activeMode = "struct";
@@ -68,9 +71,12 @@ public partial class MainViewModel : ObservableObject
     public int TotalCount => Files.Count;
     public int NormalCount => Files.Count(f => f.Status == FileStatus.Normal);
     public int ObfuscatedCount => Files.Count(f => f.Status == FileStatus.Obfuscated);
+    public bool HasFiles => TotalCount > 0;
+
     public int SecureTotalCount => SecureFiles.Count;
     public int SecureNormalCount => SecureFiles.Count(f => f.Status == FileStatus.Normal);
     public int SecureObfuscatedCount => SecureFiles.Count(f => f.Status == FileStatus.Obfuscated);
+    public bool HasSecureFiles => SecureTotalCount > 0;
 
     public MainViewModel()
     {
@@ -93,9 +99,11 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(TotalCount));
         OnPropertyChanged(nameof(NormalCount));
         OnPropertyChanged(nameof(ObfuscatedCount));
+        OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(SecureTotalCount));
         OnPropertyChanged(nameof(SecureNormalCount));
         OnPropertyChanged(nameof(SecureObfuscatedCount));
+        OnPropertyChanged(nameof(HasSecureFiles));
     }
 
     /// <summary>添加路径到指定工作台（mode: struct/secure）</summary>
@@ -168,6 +176,31 @@ public partial class MainViewModel : ObservableObject
         UpdateCounts();
         ProgressValue = 0;
         StatusMessage = "列表已清空。";
+    }
+
+    [RelayCommand]
+    private void ToggleSelectAll(string mode)
+    {
+        var collection = CollectionFor(mode);
+        bool allSelected = collection.Count > 0 && collection.All(f => f.IsSelected);
+        foreach (var item in collection) item.IsSelected = !allSelected;
+    }
+
+    [RelayCommand]
+    private void RemoveFile(FileItemModel? item)
+    {
+        if (item == null) return;
+        Files.Remove(item);
+        SecureFiles.Remove(item);
+        UpdateCounts();
+    }
+
+    [RelayCommand]
+    private void CopyRecoveryCode()
+    {
+        if (string.IsNullOrEmpty(RecoveryCodeDisplay)) return;
+        Clipboard.SetText(RecoveryCodeDisplay);
+        StatusMessage = "恢复码已复制到剪贴板。";
     }
 
     /// <summary>弹出安全验证对话框，记录本会话凭据（PIN 或恢复码）</summary>
@@ -267,6 +300,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (!Config.HasPin || !Config.HasKeyMaterial)
         {
+            MessageBox.Show("尚未设置密码。请先设置密码后再执行加密。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            SelectedTabIndex = 2; // 自动跳转至“设置”Tab
             StatusMessage = $"请先设置密码，{action}已中止。";
             return false;
         }

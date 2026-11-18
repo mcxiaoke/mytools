@@ -34,9 +34,9 @@
         </ui:TitleBar>
 
         <!-- 主内容多标签页 -->
-        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12">
+        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12" SelectedIndex="{Binding SelectedTabIndex}">
             <!-- TAB 1: 结构加密 -->
-            <TabItem Header="结构加密" IsSelected="True">
+            <TabItem Header="结构加密">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -84,28 +84,67 @@
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="8"
                             AllowDrop="True" Drop="FileList_Drop" DragOver="FileList_DragOver">
-                        <DataGrid x:Name="StructFileGrid" ItemsSource="{Binding Files}" AutoGenerateColumns="False" CanUserAddRows="False"
-                                  GridLinesVisibility="Horizontal" HeadersVisibility="Column"
-                                  Background="Transparent" BorderThickness="0">
-                            <DataGrid.Columns>
-                                <DataGridCheckBoxColumn Binding="{Binding IsSelected}" Width="40" />
-                                <DataGridTemplateColumn Header="状态" Width="80">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Border CornerRadius="4" Padding="6,2"
-                                                    Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
-                                                    HorizontalAlignment="Center">
-                                                <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
-                                            </Border>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
-                                <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
-                                <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="320" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <Grid>
+                            <!-- 空状态引导占位 -->
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                <TextBlock Text="📂" FontSize="40" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                                <TextBlock Text="拖拽文件或文件夹到此处" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                <TextBlock Text="支持任意格式音视频、图片及文档" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,14" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <ui:Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="struct" Margin="0,0,8,0" />
+                                    <ui:Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="struct" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- 文件列表 -->
+                            <DataGrid x:Name="StructFileGrid" ItemsSource="{Binding Files}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                      Background="Transparent" BorderThickness="0"
+                                      Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="42">
+                                        <DataGridTemplateColumn.Header>
+                                            <CheckBox Command="{Binding DataContext.ToggleSelectAllCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                      CommandParameter="struct" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </DataGridTemplateColumn.Header>
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" 
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="状态" Width="80">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="4" Padding="6,2"
+                                                        Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
+                                                        HorizontalAlignment="Center">
+                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
+                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <DataGridTemplateColumn Header="操作" Width="50">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="✕" ToolTip="移出列表" Padding="0" Width="22" Height="22"
+                                                        Command="{Binding DataContext.RemoveFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>
@@ -159,28 +198,67 @@
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="8"
                             AllowDrop="True" Drop="FileList_Drop" DragOver="FileList_DragOver">
-                        <DataGrid x:Name="SecureFileGrid" ItemsSource="{Binding SecureFiles}" AutoGenerateColumns="False" CanUserAddRows="False"
-                                  GridLinesVisibility="Horizontal" HeadersVisibility="Column"
-                                  Background="Transparent" BorderThickness="0">
-                            <DataGrid.Columns>
-                                <DataGridCheckBoxColumn Binding="{Binding IsSelected}" Width="40" />
-                                <DataGridTemplateColumn Header="状态" Width="80">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Border CornerRadius="4" Padding="6,2"
-                                                    Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
-                                                    HorizontalAlignment="Center">
-                                                <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
-                                            </Border>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
-                                <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
-                                <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="320" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <Grid>
+                            <!-- 空状态引导占位 -->
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="{Binding HasSecureFiles, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                <TextBlock Text="📂" FontSize="40" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                                <TextBlock Text="拖拽文件或文件夹到此处" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                <TextBlock Text="支持任意格式音视频、图片及文档" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,14" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <ui:Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="secure" Margin="0,0,8,0" />
+                                    <ui:Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="secure" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- 文件列表 -->
+                            <DataGrid x:Name="SecureFileGrid" ItemsSource="{Binding SecureFiles}" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                      Background="Transparent" BorderThickness="0"
+                                      Visibility="{Binding HasSecureFiles, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="42">
+                                        <DataGridTemplateColumn.Header>
+                                            <CheckBox Command="{Binding DataContext.ToggleSelectAllCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                      CommandParameter="secure" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </DataGridTemplateColumn.Header>
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" 
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="状态" Width="80">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="4" Padding="6,2"
+                                                        Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
+                                                        HorizontalAlignment="Center">
+                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
+                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <DataGridTemplateColumn Header="操作" Width="50">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="✕" ToolTip="移出列表" Padding="0" Width="22" Height="22"
+                                                        Command="{Binding DataContext.RemoveFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>
@@ -222,9 +300,12 @@
 
                                 <StackPanel Margin="0,4,0,8"
                                             Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}}">
-                                    <TextBlock Text="恢复码（请妥善保存，仅显示一次）：" FontSize="12" Foreground="#BA7517" TextWrapping="Wrap" />
+                                    <Grid Margin="0,0,0,4">
+                                        <TextBlock Text="恢复码（请妥善保存，仅显示一次）：" FontSize="12" Foreground="#BA7517" VerticalAlignment="Center" />
+                                        <ui:Button Content="复制恢复码" Command="{Binding CopyRecoveryCodeCommand}" HorizontalAlignment="Right" Height="26" Padding="8,2" />
+                                    </Grid>
                                     <TextBox Text="{Binding RecoveryCodeDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                                             FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" Margin="0,4,0,0" />
+                                             FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" />
                                 </StackPanel>
 
                                 <TextBlock Text="提示：忘记密码时可使用恢复码解密文件。请务必妥善保存密码与恢复码。"
