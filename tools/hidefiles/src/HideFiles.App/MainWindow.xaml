@@ -9,7 +9,7 @@
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
                  ExtendsContentIntoTitleBar="True"
-                 Icon="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png">
+                 Icon="pack://application:,,,/CarroCasket;component/Assets/Icon/AppIcon.png">
 
     <ui:FluentWindow.DataContext>
         <vm:MainViewModel />
@@ -27,7 +27,7 @@
             <ui:TitleBar.Icon>
                 <ui:ImageIcon>
                     <ui:ImageIcon.Source>
-                        <BitmapImage UriSource="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" />
+                        <BitmapImage UriSource="pack://application:,,,/CarroCasket;component/Assets/Icon/AppIcon.png" />
                     </ui:ImageIcon.Source>
                 </ui:ImageIcon>
             </ui:TitleBar.Icon>
@@ -35,8 +35,8 @@
 
         <!-- 主内容多标签页 -->
         <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12" SelectedIndex="{Binding SelectedTabIndex}">
-            <!-- TAB 1: 结构加密 -->
-            <TabItem Header="结构加密">
+            <!-- TAB 1: 混淆（结构模式，只处理媒体格式） -->
+            <TabItem Header="混淆">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -54,15 +54,21 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="当前文件: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding TotalCount}" FontWeight="Bold" Margin="0,0,16,0" />
-                                <TextBlock Text="未加密: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="可混淆: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding NormalCount}" FontWeight="Bold" Foreground="#10B981" Margin="0,0,16,0" />
-                                <TextBlock Text="已加密: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="{Binding ObfuscatedCount}" FontWeight="Bold" Foreground="#F59E0B" />
+                                <TextBlock Text="已混淆: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding ObfuscatedCount}" FontWeight="Bold" Foreground="#F59E0B" Margin="0,0,16,0" />
+                                <TextBlock Text="不支持: " Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Visibility="{Binding HasUnsupported, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <TextBlock Text="{Binding UnsupportedCount}" FontWeight="Bold" Foreground="#9CA3AF"
+                                           Visibility="{Binding HasUnsupported, Converter={StaticResource BoolToVisibilityConverter}}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="struct" Margin="0,0,8,0" AutomationProperties.AutomationId="StructSelectFiles" />
                                 <Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="struct" Margin="0,0,8,0" />
-                                <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="struct" />
+                                <Button Content="导出失败清单" Command="{Binding ExportFailureReportCommand}" Margin="0,0,8,0"
+                                        Visibility="{Binding HasFailureReport, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="struct" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -71,12 +77,12 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="原地加密文件头部与关键结构，支持大文件快速处理"
+                        <TextBlock Text="原地混淆文件头部与关键结构，支持大文件快速处理"
                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <ui:Button Content="加密" Command="{Binding ObfuscateSelectedCommand}"
+                            <ui:Button Content="混淆" Command="{Binding ObfuscateSelectedCommand}"
                                        Appearance="Primary" Margin="0,0,8,0" AutomationProperties.AutomationId="StructObfuscate" />
-                            <ui:Button Content="解密" Command="{Binding RestoreSelectedCommand}"
+                            <ui:Button Content="还原" Command="{Binding RestoreSelectedCommand}"
                                        Appearance="Secondary" AutomationProperties.AutomationId="StructRestore" />
                         </StackPanel>
                     </Grid>
@@ -90,7 +96,7 @@
                                         Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
                                 <TextBlock Text="📂" FontSize="40" HorizontalAlignment="Center" Margin="0,0,0,10" />
                                 <TextBlock Text="拖拽文件或文件夹到此处" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4" />
-                                <TextBlock Text="支持任意格式音视频、图片及文档" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,14" />
+                                <TextBlock Text="支持 MP4 / MKV / JPG / PNG 等媒体格式（其它格式请用“加密”）" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,14" />
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                     <ui:Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="struct" Margin="0,0,8,0" />
                                     <ui:Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="struct" />
@@ -115,13 +121,26 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="状态" Width="80">
+                                    <DataGridTemplateColumn Header="状态" Width="130">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Border CornerRadius="4" Padding="6,2"
-                                                        Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
-                                                        HorizontalAlignment="Center">
-                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                                        HorizontalAlignment="Center"
+                                                        ToolTip="{Binding ErrorMessage}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background"
+                                                                    Value="{Binding Status, Converter={StaticResource StatusToColorConverter}}" />
+                                                            <Style.Triggers>
+                                                                <!-- 处理失败的项用红色标出；"不支持"不是失败，保持 Status 决定的灰色 -->
+                                                                <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                                                    <Setter Property="Background" Value="#EF4444" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" MaxWidth="112" />
                                                 </Border>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
@@ -149,8 +168,8 @@
                 </Grid>
             </TabItem>
 
-            <!-- TAB 2: 整体加密 -->
-            <TabItem Header="整体加密">
+            <!-- TAB 2: 加密（整体模式，任意格式） -->
+            <TabItem Header="加密">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -176,7 +195,9 @@
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button Content="选择文件" Command="{Binding SelectFilesCommand}" CommandParameter="secure" Margin="0,0,8,0" AutomationProperties.AutomationId="SecureSelectFiles" />
                                 <Button Content="选择文件夹" Command="{Binding SelectFolderCommand}" CommandParameter="secure" Margin="0,0,8,0" />
-                                <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="secure" />
+                                <Button Content="导出失败清单" Command="{Binding ExportFailureReportCommand}" Margin="0,0,8,0"
+                                        Visibility="{Binding HasFailureReport, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    <Button Content="清空列表" Command="{Binding ClearFilesCommand}" CommandParameter="secure" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -229,13 +250,26 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="状态" Width="80">
+                                    <DataGridTemplateColumn Header="状态" Width="130">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Border CornerRadius="4" Padding="6,2"
-                                                        Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"
-                                                        HorizontalAlignment="Center">
-                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold" />
+                                                        HorizontalAlignment="Center"
+                                                        ToolTip="{Binding ErrorMessage}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Background"
+                                                                    Value="{Binding Status, Converter={StaticResource StatusToColorConverter}}" />
+                                                            <Style.Triggers>
+                                                                <!-- 处理失败的项用红色标出；"不支持"不是失败，保持 Status 决定的灰色 -->
+                                                                <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                                                    <Setter Property="Background" Value="#EF4444" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding StatusText}" Foreground="White" FontSize="11" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" MaxWidth="112" />
                                                 </Border>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
@@ -306,7 +340,7 @@
                                         <TextBlock Text="恢复码（请妥善保存，仅显示一次）：" FontSize="12" Foreground="#BA7517" VerticalAlignment="Center" />
                                         <ui:Button Content="复制恢复码" Command="{Binding CopyRecoveryCodeCommand}" HorizontalAlignment="Right" Height="26" Padding="8,2" />
                                     </Grid>
-                                    <TextBox Text="{Binding RecoveryCodeDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                    <TextBox Text="{Binding RecoveryCodeGroupedDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
                                              FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" />
                                 </StackPanel>
 
@@ -354,12 +388,12 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- 卡片 2: 结构加密与文件名设置 -->
+                        <!-- 卡片 2: 混淆与文件名设置 -->
                         <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="结构加密与文件名" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
+                                <TextBlock Text="混淆与文件名" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
                                 <Grid Margin="0,0,0,12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="200" />
@@ -504,16 +538,16 @@
                         BorderThickness="1" CornerRadius="8" Padding="24" Margin="0,12,0,0">
                     <StackPanel MaxWidth="640" HorizontalAlignment="Left">
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <Image Source="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
+                            <Image Source="pack://application:,,,/CarroCasket;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="{Binding AppVersionDisplay}" FontSize="18" FontWeight="Bold" />
-                                <TextBlock Text="Windows 文件加密工具" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="Windows 文件混淆与加密工具" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </StackPanel>
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="功能说明：" FontWeight="Bold" Margin="0,0,0,8" />
-                        <TextBlock Text="1. 结构加密：原地加密文件头部与关键结构，耗时极短，适合大体积音视频与图片。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="2. 整体加密：使用 AES-256-GCM 加密完整文件，适合任意格式文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="1. 混淆：原地混淆文件头部与关键结构，耗时极短，适合大体积音视频与图片。主体仍为明文，防打开不防提取。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="2. 加密：使用 AES-256-GCM 加密完整文件，适合任意格式文件，提供密码学级保护。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="3. 密码与恢复码：支持密码保护与紧急恢复码解密，修改密码不影响已加密文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="4. 安全机制：失败自动回滚，目标重名自动编号，不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <Separator Margin="0,8,0,10" />

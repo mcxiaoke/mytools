@@ -88,6 +88,7 @@ $RECYCLE.BIN/
 # Agents
 .workbuddy/
 .box-agent/
+.box-agent-scratch/
 
 *.json
 

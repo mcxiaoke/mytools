@@ -114,7 +114,9 @@ public class CoreTests : IDisposable
 
         var result = new FileObfuscator().ObfuscateFile(filePath, config);
         Assert.False(result.Success);
-        Assert.Contains("整体加密", result.ErrorMessage);
+        // .mp4 属于支持格式，但随机字节找不到关键结构 → 归为"文件可能损坏"，而不是"格式不支持"
+        Assert.Equal(ProcessErrorKind.Failed, result.ErrorKind);
+        Assert.Contains("关键结构", result.ErrorMessage);
         Assert.True(File.Exists(filePath), "失败时原文件必须保持不变");
         Assert.False(V2Container.IsV2File(filePath));
     }

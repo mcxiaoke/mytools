@@ -49,7 +49,11 @@ public static class CoreConstants
     /// <summary>加密后的最小文件长度：头部 + 至少一字节元数据密文</summary>
     public const int V2MinSize = V2HeaderSize + GcmTagSize;
 
-    /// <summary>可逆混淆目录名前缀</summary>
+    /// <summary>
+    /// 可逆混淆目录名前缀。
+    /// v2 起在 Base32 载荷内部带格式标记与 CRC 校验尾，因此新旧两代共用此前缀，
+    /// 对外表现（目录名形态、幂等判断）完全不变。
+    /// </summary>
     public const string ObfuscatedDirectoryPrefix = "_hf_";
 }
 

@@ -296,6 +296,9 @@ public sealed class HideFilesConfig
 
     public static HideFilesConfig Load(string? path = null)
     {
+        LastLoadWasCorrupted = false;
+        LastLoadBackupPath = null;
+
         string filePath = path ?? GetDefaultConfigPath();
         if (!File.Exists(filePath))
         {
@@ -320,11 +323,42 @@ public sealed class HideFilesConfig
                 EnsureDefaultGroups(loaded);
                 return loaded;
             }
-            return CreateDefault();
         }
         catch
         {
-            return CreateDefault();
+            // 落到下面的损坏处理
+        }
+
+        // 配置已损坏：先另存备份再返回默认值，避免下一次 Save 把残存的密钥材料彻底覆盖掉。
+        // 用户可凭备份文件手工恢复；备份失败也不阻塞启动。
+        LastLoadBackupPath = TryBackupCorrupt(filePath);
+        LastLoadWasCorrupted = true;
+        return CreateDefault();
+    }
+
+    /// <summary>
+    /// 最近一次 <see cref="Load"/> 是否因配置损坏而回退到默认值。
+    /// 为 true 时密钥材料已不在内存中，调用方必须提示用户（而不是静默让其重设密码，
+    /// 那会生成新主密钥，导致历史文件用新密码永久打不开）。
+    /// </summary>
+    public static bool LastLoadWasCorrupted { get; private set; }
+
+    /// <summary>损坏配置的备份路径（Load 回退时写入，供调用方提示用户）</summary>
+    public static string? LastLoadBackupPath { get; private set; }
+
+    /// <summary>把损坏的配置文件另存为 config.json.corrupt-yyyyMMddHHmmss，返回备份路径（失败返回 null）</summary>
+    private static string? TryBackupCorrupt(string filePath)
+    {
+        try
+        {
+            string backup = $"{filePath}.corrupt-{DateTime.Now:yyyyMMddHHmmss}";
+            if (File.Exists(backup)) backup = $"{filePath}.corrupt-{DateTime.Now:yyyyMMddHHmmssfff}";
+            File.Copy(filePath, backup, overwrite: false);
+            return backup;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -356,7 +390,21 @@ public sealed class HideFilesConfig
             Converters = { new JsonStringEnumConverter() }
         };
         string json = JsonSerializer.Serialize(this, opt);
-        File.WriteAllText(filePath, json, Encoding.UTF8);
+
+        // 原子写：先写同目录临时文件再 rename 覆盖。
+        // 直接 File.WriteAllText 在断电/磁盘满时会留下半截 JSON，
+        // 下次 Load 解析失败即静默丢弃全部密钥材料（含主密钥封装），历史文件只能靠恢复码。
+        string tmp = $"{filePath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(tmp, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            File.Move(tmp, filePath, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            throw;
+        }
     }
 
     public bool MatchExtension(string fileExt, out string fakeExt)

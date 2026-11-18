@@ -14,6 +14,22 @@ namespace HideFiles.Core;
 /// </summary>
 public static class StructureLocator
 {
+    /// <summary>结构混淆支持的扩展名（与 <see cref="Locate"/> 的分支保持一致）</summary>
+    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".m4v", ".mov",
+        ".mkv", ".webm",
+        ".jpg", ".jpeg",
+        ".png"
+    };
+
+    /// <summary>
+    /// 该扩展名能否走结构混淆（只判断格式类别，不代表文件一定解析成功）。
+    /// 用于界面预判"不支持"，避免把格式不支持误报成处理失败。
+    /// </summary>
+    public static bool IsSupportedExtension(string? ext) =>
+        !string.IsNullOrEmpty(ext) && SupportedExtensions.Contains(ext);
+
     public static List<LockRegion> Locate(string path, string ext)
     {
         try

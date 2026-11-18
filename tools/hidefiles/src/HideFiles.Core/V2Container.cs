@@ -125,7 +125,7 @@ public static class V2Container
         fs.ReadExactly(head, 0, head.Length);
 
         if (!head.AsSpan(0, 8).SequenceEqual(CoreConstants.V2Magic))
-            throw new InvalidDataException("Not a HideFiles v2 container.");
+            throw new InvalidDataException("Not a CarroCasket v2 container.");
         byte version = head[8];
         if (version != CoreConstants.V2Version)
             throw new InvalidDataException($"Unsupported v2 container version: {version}");

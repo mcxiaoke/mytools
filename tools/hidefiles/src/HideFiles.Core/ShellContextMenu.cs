@@ -26,7 +26,7 @@ public static class ShellContextMenu
     }
 
     /// <summary>
-    /// 安装右键菜单。appExePath 必须是 GUI 程序（HideFilesApp.exe）——菜单项传的是
+    /// 安装右键菜单。appExePath 必须是 GUI 程序（CarroCasket.exe）——菜单项传的是
     /// --hide/--unhide/--encrypt/--decrypt 这些 GUI 参数，指向 CLI 会导致点击无效并弹控制台。
     /// </summary>
     public static void Install(string appExePath)
@@ -64,7 +64,7 @@ public static class ShellContextMenu
     {
         try
         {
-            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HideFiles");
+            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CarroCasket");
             Directory.CreateDirectory(appDataDir);
             string appDataIco = Path.Combine(appDataDir, "AppIcon.ico");
 
@@ -112,15 +112,15 @@ public static class ShellContextMenu
         using var mainMenuKey = parentKey.CreateSubKey(MenuKeyName);
         if (mainMenuKey == null) return;
 
-        mainMenuKey.SetValue("MUIVerb", "HideFiles");
+        mainMenuKey.SetValue("MUIVerb", AppBrand.Name);
         mainMenuKey.SetValue("Icon", iconPath);
         mainMenuKey.SetValue("SubCommands", string.Empty); // 开启静态级联子菜单
 
         using var subShell = mainMenuKey.CreateSubKey("shell");
         if (subShell == null) return;
 
-        // 清理旧版本遗留的子项（例如旧版的 3_OpenApp），避免菜单出现重复项
-        foreach (var legacy in new[] { "3_OpenApp" })
+        // 清理旧版本遗留的子项（含旧版五个动词，以及更早的 3_OpenApp），避免菜单出现重复或陈旧项
+        foreach (var legacy in new[] { "1_Hide", "2_Unhide", "3_Encrypt", "4_Decrypt", "3_OpenApp" })
         {
             try { subShell.DeleteSubKeyTree(legacy, throwOnMissingSubKey: false); }
             catch { }
@@ -128,46 +128,28 @@ public static class ShellContextMenu
 
         string targetParam = isBackground ? "\"%V\"" : "\"%1\"";
 
-        // 子菜单 1: 结构加密
-        using (var hideKey = subShell.CreateSubKey("1_Hide"))
+        // 菜单项 1: 文件混淆 & 还原（同一入口按容器类型自动分派）
+        using (var obfKey = subShell.CreateSubKey("1_Obfuscate"))
         {
-            hideKey.SetValue("MUIVerb", "结构加密");
-            hideKey.SetValue("Icon", iconPath);
-            using var cmdKey = hideKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --hide {targetParam}");
+            obfKey.SetValue("MUIVerb", "文件混淆 / 还原");
+            obfKey.SetValue("Icon", iconPath);
+            using var cmdKey = obfKey.CreateSubKey("command");
+            cmdKey.SetValue("", $"\"{appExe}\" --obfuscate {targetParam}");
         }
 
-        // 子菜单 2: 结构解密
-        using (var unhideKey = subShell.CreateSubKey("2_Unhide"))
+        // 菜单项 2: 文件加密 & 解密（同一入口按容器类型自动分派）
+        using (var encKey = subShell.CreateSubKey("2_Encrypt"))
         {
-            unhideKey.SetValue("MUIVerb", "结构解密");
-            unhideKey.SetValue("Icon", iconPath);
-            using var cmdKey = unhideKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --unhide {targetParam}");
-        }
-
-        // 子菜单 3: 整体加密
-        using (var encKey = subShell.CreateSubKey("3_Encrypt"))
-        {
-            encKey.SetValue("MUIVerb", "整体加密");
+            encKey.SetValue("MUIVerb", "文件加密 / 解密");
             encKey.SetValue("Icon", iconPath);
             using var cmdKey = encKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --encrypt {targetParam}");
+            cmdKey.SetValue("", $"\"{appExe}\" --secure {targetParam}");
         }
 
-        // 子菜单 4: 整体解密
-        using (var decKey = subShell.CreateSubKey("4_Decrypt"))
+        // 菜单项 3: 打开 CarroCasket
+        using (var openKey = subShell.CreateSubKey("3_OpenApp"))
         {
-            decKey.SetValue("MUIVerb", "整体解密");
-            decKey.SetValue("Icon", iconPath);
-            using var cmdKey = decKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --decrypt {targetParam}");
-        }
-
-        // 子菜单 5: 打开 HideFiles
-        using (var openKey = subShell.CreateSubKey("5_OpenApp"))
-        {
-            openKey.SetValue("MUIVerb", "打开 HideFiles");
+            openKey.SetValue("MUIVerb", $"打开 {AppBrand.Name}");
             openKey.SetValue("Icon", iconPath);
             using var cmdKey = openKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --open {targetParam}");

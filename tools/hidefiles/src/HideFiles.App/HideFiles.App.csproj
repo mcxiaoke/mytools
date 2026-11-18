@@ -5,8 +5,8 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>HideFiles.App</RootNamespace>
-    <AssemblyName>HideFilesApp</AssemblyName>
-    <Description>HideFiles 桌面应用 — 极速自包含文件混淆与还原工具</Description>
+    <AssemblyName>CarroCasket</AssemblyName>
+    <Description>CarroCasket 桌面应用 — 极速自包含文件混淆与还原工具</Description>
     <ApplicationIcon>Assets\Icon\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 

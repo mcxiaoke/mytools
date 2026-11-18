@@ -146,7 +146,7 @@ public partial class PasswordDialog : FluentWindow
                 return;
             }
 
-            if (_config.VerifyPin(input))
+            if (VerifyPassword(input))
             {
                 IsVerified = true;
                 EnteredPin = input;
@@ -171,7 +171,7 @@ public partial class PasswordDialog : FluentWindow
                 CurrentPasswordBox.Focus();
                 return;
             }
-            if (!_config.VerifyPin(current))
+            if (!VerifyPassword(current))
             {
                 ShowError("当前密码错误，请重新输入。");
                 CurrentPasswordBox.SelectAll();
@@ -209,6 +209,31 @@ public partial class PasswordDialog : FluentWindow
     {
         ErrorText.Text = msg;
         ErrorText.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// 校验密码是否正确。
+    /// 有密钥材料时以"能否解开 WrappedMasterKey"为唯一判据（GCM 认证标签天然常时比较）：
+    /// PinHash 只是单轮 SHA-256，config 泄露后可被 GPU 高速穷举，不能作为安全依据；
+    /// 且它能被篡改，会出现"验证通过但解密永远失败"。
+    /// 仅在缺少密钥材料的旧配置上退回哈希校验，保持向后兼容。
+    /// </summary>
+    private bool VerifyPassword(string input)
+    {
+        if (_config.HasKeyMaterial)
+        {
+            try
+            {
+                _config.UnwrapMasterKeyWithPin(input);
+                return true;
+            }
+            catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException
+                                          or FormatException or InvalidOperationException)
+            {
+                return false;
+            }
+        }
+        return _config.VerifyPin(input);
     }
 
     private static string NormalizeRecoveryCode(string code) =>

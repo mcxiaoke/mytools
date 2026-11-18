@@ -13,7 +13,9 @@ public enum FileStatus
     Obfuscated = 1,
     Corrupted = 2,
     Locked = 3,
-    NotFound = 4
+    NotFound = 4,
+    /// <summary>格式不受结构混淆支持（媒体关键结构无法定位）；需改用整体加密</summary>
+    Unsupported = 5
 }
 
 public sealed class FileInspection
@@ -29,12 +31,36 @@ public sealed class FileInspection
     public ProtectionMode? ProtectionMode { get; set; }
 }
 
+/// <summary>处理结果的错误类别，供界面区分"不支持"与"真失败"</summary>
+public enum ProcessErrorKind
+{
+    None = 0,
+    /// <summary>该格式不受当前模式支持（如结构混淆遇到非媒体文件），并非执行失败</summary>
+    UnsupportedFormat,
+    /// <summary>需要密码/恢复码或密钥材料未就绪</summary>
+    CredentialRequired,
+    /// <summary>模式不匹配（在错误的工作台解密）</summary>
+    ModeMismatch,
+    /// <summary>文件被占用</summary>
+    Locked,
+    /// <summary>文件不存在</summary>
+    NotFound,
+    /// <summary>文件已经处理过（重复操作）</summary>
+    AlreadyProcessed,
+    /// <summary>其它失败</summary>
+    Failed
+}
+
 public sealed class ProcessFileResult
 {
     public bool Success { get; set; }
     public string OriginalPath { get; set; } = string.Empty;
     public string FinalPath { get; set; } = string.Empty;
     public string? ErrorMessage { get; set; }
+
+    /// <summary>错误类别；Success 时为 None</summary>
+    public ProcessErrorKind ErrorKind { get; set; }
+
     public double ElapsedMilliseconds { get; set; }
 }
 
@@ -50,14 +76,17 @@ public sealed class FileObfuscator
     /// <summary>
     /// 检查文件状态。传入 masterKey（本机已解锁的主密钥）时会顺带解出原始文件名，
     /// 便于在列表/扫描结果里辨认被改名的容器；没有密钥时只判断容器类型。
+    /// forStructureWorkspace 为 true 时，未加密且格式不受结构混淆支持的文件
+    /// 会被标记为 <see cref="FileStatus.Unsupported"/>，让界面直接显示"不支持"
+    /// 而不是等到处理时才报失败。
     /// </summary>
-    public FileInspection Inspect(string filePath, byte[]? masterKey = null)
+    public FileInspection Inspect(string filePath, byte[]? masterKey = null, bool forStructureWorkspace = false)
     {
         var info = new FileInspection { FilePath = filePath };
         if (!File.Exists(filePath))
         {
             info.Status = FileStatus.NotFound;
-            info.ErrorMessage = "File does not exist.";
+            info.ErrorMessage = "文件不存在。";
             return info;
         }
         try
@@ -67,6 +96,13 @@ public sealed class FileObfuscator
             bool isTail = !isFront && V2Tail.IsTailFile(filePath);
             if (!isFront && !isTail)
             {
+                if (forStructureWorkspace && !StructureLocator.IsSupportedExtension(Path.GetExtension(filePath)))
+                {
+                    info.Status = FileStatus.Unsupported;
+                    info.ErrorMessage = $"不支持 {Path.GetExtension(filePath)} 格式的混淆，请改用“加密”工作台。";
+                    return info;
+                }
+
                 info.Status = FileStatus.Normal;
                 return info;
             }
@@ -90,7 +126,7 @@ public sealed class FileObfuscator
         catch (IOException ex) when (IsFileLocked(ex))
         {
             info.Status = FileStatus.Locked;
-            info.ErrorMessage = "File is locked by another process.";
+            info.ErrorMessage = "文件正被其它程序占用。";
             return info;
         }
         catch (Exception ex)
@@ -128,13 +164,13 @@ public sealed class FileObfuscator
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
         try
         {
-            if (!File.Exists(filePath)) { res.ErrorMessage = "File not found."; return res; }
+            if (!File.Exists(filePath)) { res.ErrorMessage = "文件不存在。"; res.ErrorKind = ProcessErrorKind.NotFound; return res; }
             if (string.IsNullOrEmpty(config.SessionPin))
                 throw new InvalidOperationException("请先设置 PIN 码（v2 加密需要 PIN 保护主密钥）。");
             if (string.IsNullOrEmpty(config.ConfigSalt) || string.IsNullOrEmpty(config.WrappedMasterKey))
                 throw new InvalidOperationException("密钥材料未初始化，请重新设置 PIN。");
             if (V2Container.IsV2File(filePath) || V2Tail.IsTailFile(filePath))
-            { res.ErrorMessage = "Already obfuscated."; return res; }
+            { res.ErrorMessage = "该文件已被加密。"; res.ErrorKind = ProcessErrorKind.AlreadyProcessed; return res; }
 
             byte[] masterKey = config.UnwrapMasterKeyWithPin(config.SessionPin);
             byte[] configSalt = Convert.FromBase64String(config.ConfigSalt!);
@@ -164,8 +200,16 @@ public sealed class FileObfuscator
                 // 结构锁：定位关键结构；找不到则直接报错，文件不动，不自动降级
                 meta.LockRegions = StructureLocator.Locate(filePath, originalExt);
                 if (meta.LockRegions.Count == 0)
-                    throw new InvalidDataException(
-                        $"结构加密模式不支持该文件格式或关键结构（扩展名 {originalExt}）。若需加密请使用“整体加密”工作台，文件未被修改。");
+                {
+                    // 格式本身不支持 vs 格式支持但结构解析失败，给出不同措辞（前者是"不支持"，后者更像文件异常）
+                    bool extSupported = StructureLocator.IsSupportedExtension(originalExt);
+                    res.ErrorKind = extSupported ? ProcessErrorKind.Failed : ProcessErrorKind.UnsupportedFormat;
+                    res.Success = false;
+                    res.ErrorMessage = extSupported
+                        ? $"无法定位该文件的关键结构（扩展名 {originalExt}），文件可能损坏或不完整。文件未被修改。"
+                        : $"不支持 {originalExt} 格式的混淆，请改用“加密”工作台。文件未被修改。";
+                    return res;
+                }
 
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
                 V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt,
@@ -227,7 +271,11 @@ public sealed class FileObfuscator
         catch (Exception ex)
         {
             sw.Stop();
+            res.Success = false;
             res.ErrorMessage = ex.Message;
+            // 已知类型的错误保持既有归类（如"不支持"），其余归为一般失败
+            if (res.ErrorKind == ProcessErrorKind.None)
+                res.ErrorKind = ClassifyException(ex);
             res.ElapsedMilliseconds = sw.Elapsed.TotalMilliseconds;
             return res;
         }
@@ -245,18 +293,27 @@ public sealed class FileObfuscator
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
         try
         {
-            if (!File.Exists(filePath)) { res.ErrorMessage = "File not found."; return res; }
+            if (!File.Exists(filePath))
+            { res.ErrorMessage = "文件不存在。"; res.ErrorKind = ProcessErrorKind.NotFound; return res; }
             if (string.IsNullOrEmpty(pin) && string.IsNullOrEmpty(recoveryCode))
-                throw new InvalidOperationException("还原需要 PIN 码或恢复码。");
+                throw new InvalidOperationException("还原需要密码或恢复码。");
 
             string dir = Path.GetDirectoryName(filePath)!;
             bool isTail = V2Tail.IsTailFile(filePath);
 
             if (expectedMode == ProtectionMode.StructureLock && !isTail)
-                throw new InvalidDataException("该文件不是结构加密文件（可能是整体加密文件，请在“整体加密”工作台解密）。");
+            {
+                res.ErrorKind = ProcessErrorKind.ModeMismatch;
+                res.ErrorMessage = "该文件不是混淆文件（可能是加密文件，请在“加密”工作台还原）。";
+                return res;
+            }
 
             if (expectedMode == ProtectionMode.FullEncrypt && isTail)
-                throw new InvalidDataException("该文件不是整体加密文件（是结构加密文件，请在“结构加密”工作台解密）。");
+            {
+                res.ErrorKind = ProcessErrorKind.ModeMismatch;
+                res.ErrorMessage = "该文件不是加密文件（是混淆文件，请在“混淆”工作台还原）。";
+                return res;
+            }
 
             if (isTail)
             {
@@ -329,7 +386,11 @@ public sealed class FileObfuscator
         catch (Exception ex)
         {
             sw.Stop();
+            res.Success = false;
             res.ErrorMessage = ex.Message;
+            // 已知类型的错误保持既有归类（如"不支持"），其余归为一般失败
+            if (res.ErrorKind == ProcessErrorKind.None)
+                res.ErrorKind = ClassifyException(ex);
             res.ElapsedMilliseconds = sw.Elapsed.TotalMilliseconds;
             return res;
         }
@@ -424,4 +485,16 @@ public sealed class FileObfuscator
         int errorCode = exception.HResult & 0xFFFF;
         return errorCode == 32 || errorCode == 33;
     }
+
+    /// <summary>把异常映射为界面可区分的错误类别，避免把"缺少凭据"也算成处理失败</summary>
+    private static ProcessErrorKind ClassifyException(Exception ex) => ex switch
+    {
+        InvalidOperationException when ex.Message.Contains("PIN") || ex.Message.Contains("密码")
+            => ProcessErrorKind.CredentialRequired,
+        UnauthorizedAccessException => ProcessErrorKind.Locked,
+        IOException io when IsFileLocked(io) => ProcessErrorKind.Locked,
+        FileNotFoundException => ProcessErrorKind.NotFound,
+        InvalidDataException => ProcessErrorKind.Failed,
+        _ => ProcessErrorKind.Failed
+    };
 }

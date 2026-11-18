@@ -114,7 +114,7 @@ public sealed class FeatureEnhancementTests : IDisposable
         // 用 FullEncrypt 期望模式解密结构加密文件应报错拒绝
         var wrongMode1 = obfuscator.RestoreFile(reStructObf.FinalPath, "pin123456", expectedMode: ProtectionMode.FullEncrypt);
         Assert.False(wrongMode1.Success);
-        Assert.Contains("不是整体加密", wrongMode1.ErrorMessage);
+        Assert.Contains("不是加密文件", wrongMode1.ErrorMessage);
 
         // 2. 创建整体加密文件
         config.ProtectionMode = ProtectionMode.FullEncrypt;
@@ -126,7 +126,7 @@ public sealed class FeatureEnhancementTests : IDisposable
         // 用 StructureLock 期望模式解密整体加密文件应报错拒绝
         var wrongMode2 = obfuscator.RestoreFile(fullObf.FinalPath, "pin123456", expectedMode: ProtectionMode.StructureLock);
         Assert.False(wrongMode2.Success);
-        Assert.Contains("不是结构加密", wrongMode2.ErrorMessage);
+        Assert.Contains("不是混淆文件", wrongMode2.ErrorMessage);
 
         // 用 FullEncrypt 期望模式解密应成功
         var goodFull = obfuscator.RestoreFile(fullObf.FinalPath, "pin123456", expectedMode: ProtectionMode.FullEncrypt);
@@ -149,7 +149,7 @@ public sealed class FeatureEnhancementTests : IDisposable
 
         // 应当直接失败，绝不自动 fallback 到整体加密
         Assert.False(res.Success);
-        Assert.Contains("结构加密模式不支持", res.ErrorMessage);
+        Assert.Contains("不支持", res.ErrorMessage);
         Assert.True(File.Exists(txtFile));
         Assert.Equal(originalBytes, File.ReadAllBytes(txtFile));
     }

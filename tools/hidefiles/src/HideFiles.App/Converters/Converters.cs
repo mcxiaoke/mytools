@@ -20,6 +20,7 @@ public class StatusToColorConverter : IValueConverter
             {
                 FileStatus.Obfuscated => new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B)), // Amber/Yellow
                 FileStatus.Normal => new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81)),     // Green
+                FileStatus.Unsupported => new SolidColorBrush(Color.FromRgb(0x9C, 0xA3, 0xAF)),// Gray：不是错误
                 FileStatus.Corrupted => new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44)),  // Red
                 FileStatus.Locked => new SolidColorBrush(Color.FromRgb(0x63, 0x66, 0xF1)),     // Indigo
                 _ => new SolidColorBrush(Colors.Gray)

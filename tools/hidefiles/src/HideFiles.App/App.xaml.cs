@@ -13,64 +13,27 @@ public partial class App : Application
         mainWindow.Show();
 
         // 如果启动时携带参数（例如右键菜单传入的路径）
-        if (e.Args.Length > 0)
+        if (e.Args.Length == 0) return;
+        if (mainWindow.DataContext is not ViewModels.MainViewModel vm) return;
+
+        var request = ShellActionParser.Parse(e.Args);
+        if (request.Paths.Count == 0) return;
+
+        if (!request.IsAutoProcess)
         {
-            var vm = mainWindow.DataContext as ViewModels.MainViewModel;
-            if (vm != null)
-            {
-                var paths = new List<string>();
-                string? action = null;
+            vm.AddPaths(request.Paths);
+            return;
+        }
 
-                for (int i = 0; i < e.Args.Length; i++)
-                {
-                    string arg = e.Args[i];
-                    if (arg is "--hide" or "-hide")
-                    {
-                        action = "hide";
-                    }
-                    else if (arg is "--unhide" or "-unhide")
-                    {
-                        action = "unhide";
-                    }
-                    else if (arg is "--encrypt" or "-encrypt")
-                    {
-                        action = "encrypt";
-                    }
-                    else if (arg is "--decrypt" or "-decrypt")
-                    {
-                        action = "decrypt";
-                    }
-                    else if (arg is "--open" or "-open")
-                    {
-                        action = "open";
-                    }
-                    else if (!arg.StartsWith("-"))
-                    {
-                        paths.Add(arg);
-                    }
-                }
-
-                if (paths.Count > 0)
-                {
-                    if (action == "hide")
-                    {
-                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.StructureLock, isObfuscate: true);
-                    }
-                    else if (action == "encrypt")
-                    {
-                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.FullEncrypt, isObfuscate: true);
-                    }
-                    else if (action is "unhide" or "decrypt")
-                    {
-                        // 还原/解密由容器自动识别模式，走统一还原流程
-                        _ = vm.AutoProcessPathsAsync(paths, ProtectionMode.StructureLock, isObfuscate: false);
-                    }
-                    else
-                    {
-                        vm.AddPaths(paths);
-                    }
-                }
-            }
+        // 动作 → 模式/方向的映射集中在 ShellActionParser，避免此处再写死模式（2.1 回归的根因）
+        if (request.IsObfuscate is bool isObfuscate)
+        {
+            _ = vm.AutoProcessPathsAsync(request.Paths, request.Mode!.Value, isObfuscate);
+        }
+        else
+        {
+            // 新菜单的合并动词：按每个文件的容器状态自动分派"做/还原"
+            _ = vm.AutoProcessSmartAsync(request.Paths, request.Mode!.Value);
         }
     }
 }

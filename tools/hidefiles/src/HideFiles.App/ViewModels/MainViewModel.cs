@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -24,7 +25,7 @@ public partial class MainViewModel : ObservableObject
     private byte[]? _sessionMasterKey;
 
     [ObservableProperty]
-    private string _title = "HideFiles - 文件加密工具";
+    private string _title = $"{AppBrand.Name} - {AppBrand.Tagline}";
 
     [ObservableProperty]
     private HideFilesConfig _config;
@@ -46,9 +47,24 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasRecoveryCode))]
+    [NotifyPropertyChangedFor(nameof(RecoveryCodeGroupedDisplay))]
     private string _recoveryCodeDisplay = string.Empty;
 
     public bool HasRecoveryCode => !string.IsNullOrEmpty(RecoveryCodeDisplay);
+
+    /// <summary>恢复码每 4 字符分组展示，便于人工抄写（解码端已兼容空格/横线）</summary>
+    public string RecoveryCodeGroupedDisplay =>
+        string.IsNullOrEmpty(RecoveryCodeDisplay)
+            ? string.Empty
+            : string.Join(" ", Enumerable.Range(0, (RecoveryCodeDisplay.Length + 3) / 4)
+                .Select(i => RecoveryCodeDisplay.Substring(i * 4, Math.Min(4, RecoveryCodeDisplay.Length - i * 4))));
+
+    /// <summary>最近一次批量处理的失败清单（每行一条：“文件名: 原因”），无失败时为 null</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasFailureReport))]
+    private string? _lastFailureReport;
+
+    public bool HasFailureReport => !string.IsNullOrEmpty(LastFailureReport);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ConfiguredPinDisplay))]
@@ -59,18 +75,31 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private int _selectedTabIndex;
 
-    /// <summary>当前活动工作台：struct=结构锁 secure=整体加密（由 Tab 切换设置，决定拖拽目标）</summary>
+    /// <summary>当前活动工作台：struct=混淆 secure=加密（由 Tab 切换设置，决定拖拽/外部投递目标）</summary>
     [ObservableProperty]
     private string _activeMode = "struct";
 
-    /// <summary>结构加密工作台文件列表</summary>
+    /// <summary>
+    /// Tab 切换时同步活动工作台。索引 0=混淆、1=加密；
+    /// 设置页/关于页（2、3）不是工作台，保持上一个工作台不变。
+    /// </summary>
+    partial void OnSelectedTabIndexChanged(int value)
+    {
+        if (value == 0) ActiveMode = "struct";
+        else if (value == 1) ActiveMode = "secure";
+    }
+
+    /// <summary>混淆工作台文件列表</summary>
     public ObservableCollection<FileItemModel> Files { get; } = new();
-    /// <summary>整体加密工作台文件列表</summary>
+    /// <summary>加密工作台文件列表</summary>
     public ObservableCollection<FileItemModel> SecureFiles { get; } = new();
 
     public int TotalCount => Files.Count;
     public int NormalCount => Files.Count(f => f.Status == FileStatus.Normal);
     public int ObfuscatedCount => Files.Count(f => f.Status == FileStatus.Obfuscated);
+    /// <summary>格式不受混淆支持的数量（不是失败，只是需要换模式）</summary>
+    public int UnsupportedCount => Files.Count(f => f.Status == FileStatus.Unsupported);
+    public bool HasUnsupported => UnsupportedCount > 0;
     public bool HasFiles => TotalCount > 0;
 
     public int SecureTotalCount => SecureFiles.Count;
@@ -83,7 +112,21 @@ public partial class MainViewModel : ObservableObject
         _config = HideFilesConfig.Load();
         HasPinConfigured = _config.HasPin;
         RefreshContextMenuStatus();
+
+        // 配置损坏时是静默回退默认值的：此时密钥材料已从内存消失，
+        // 若用户直接重设密码会生成新主密钥，导致历史文件用新密码永久打不开。
+        // 必须显式告知用户备份位置与恢复方式。
+        if (HideFilesConfig.LastLoadWasCorrupted)
+        {
+            string backup = HideFilesConfig.LastLoadBackupPath ?? "(备份失败)";
+            StatusMessage = $"配置文件已损坏，已回退默认设置。原文件备份在：{backup}。"
+                          + "请勿直接重设密码——先用备份文件恢复 config.json，否则历史文件只能用恢复码解密。";
+            _configCorruptedOnLoad = true;
+        }
     }
+
+    /// <summary>本次启动时配置文件损坏（用于在设置密码前拦截）</summary>
+    private readonly bool _configCorruptedOnLoad;
 
     private ObservableCollection<FileItemModel> CollectionFor(string mode)
         => mode == "secure" ? SecureFiles : Files;
@@ -99,6 +142,8 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(TotalCount));
         OnPropertyChanged(nameof(NormalCount));
         OnPropertyChanged(nameof(ObfuscatedCount));
+        OnPropertyChanged(nameof(UnsupportedCount));
+        OnPropertyChanged(nameof(HasUnsupported));
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(SecureTotalCount));
         OnPropertyChanged(nameof(SecureNormalCount));
@@ -112,28 +157,48 @@ public partial class MainViewModel : ObservableObject
         var collection = CollectionFor(mode ?? ActiveMode);
         var existing = new HashSet<string>(collection.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
 
+        bool structure = ReferenceEquals(collection, Files);
+
         foreach (var p in paths)
         {
             if (File.Exists(p))
-                AddSingleFile(p, existing, collection);
+                AddSingleFile(p, existing, collection, structure);
             else if (Directory.Exists(p))
             {
                 var opt = Config.IncludeSubdirectories ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
                 foreach (var f in Directory.EnumerateFiles(p, "*.*", opt))
-                    AddSingleFile(f, existing, collection);
+                    AddSingleFile(f, existing, collection, structure);
             }
         }
 
         UpdateCounts();
-        StatusMessage = $"已加载 {collection.Count} 个文件 (未加密: {collection.Count(f => f.Status == FileStatus.Normal)}, 已加密: {collection.Count(f => f.Status == FileStatus.Obfuscated)})。";
+        StatusMessage = DescribeLoad(collection, structure);
     }
 
-    private void AddSingleFile(string file, HashSet<string> existing, ObservableCollection<FileItemModel> collection)
+    /// <summary>加载完成后的状态摘要；混淆工作台会把"不支持"单列，不计入未加密</summary>
+    private static string DescribeLoad(ObservableCollection<FileItemModel> collection, bool structure)
+    {
+        int total = collection.Count;
+        int obfuscated = collection.Count(f => f.Status == FileStatus.Obfuscated);
+
+        if (!structure)
+            return $"已加载 {total} 个文件 (未加密: {total - obfuscated}, 已加密: {obfuscated})。";
+
+        int normal = collection.Count(f => f.Status == FileStatus.Normal);
+        int unsupported = collection.Count(f => f.Status == FileStatus.Unsupported);
+        string text = $"已加载 {total} 个文件（可混淆 {normal}，已混淆 {obfuscated}";
+        if (unsupported > 0)
+            text += $"，不支持 {unsupported} 个（请改用“加密”工作台）";
+        return text + "）。";
+    }
+
+    private void AddSingleFile(string file, HashSet<string> existing,
+        ObservableCollection<FileItemModel> collection, bool structureWorkspace)
     {
         string full = Path.GetFullPath(file);
         if (existing.Contains(full)) return;
 
-        var insp = _obfuscator.Inspect(full, _sessionMasterKey);
+        var insp = _obfuscator.Inspect(full, _sessionMasterKey, forStructureWorkspace: structureWorkspace);
         var item = new FileItemModel
         {
             FilePath = full,
@@ -143,12 +208,14 @@ public partial class MainViewModel : ObservableObject
             OriginalFileName = insp.OriginalFileName,
             StatusText = insp.Status switch
             {
-                FileStatus.Obfuscated => "已加密",
-                FileStatus.Normal => "未加密",
+                FileStatus.Obfuscated => "已混淆",
+                FileStatus.Normal => "未混淆",
+                FileStatus.Unsupported => "不支持",
                 FileStatus.Corrupted => "损坏",
                 FileStatus.Locked => "已占用",
                 _ => "未知"
-            }
+            },
+            ErrorMessage = insp.Status == FileStatus.Unsupported ? insp.ErrorMessage : null
         };
         collection.Add(item);
         existing.Add(full);
@@ -199,8 +266,98 @@ public partial class MainViewModel : ObservableObject
     private void CopyRecoveryCode()
     {
         if (string.IsNullOrEmpty(RecoveryCodeDisplay)) return;
-        Clipboard.SetText(RecoveryCodeDisplay);
-        StatusMessage = "恢复码已复制到剪贴板。";
+
+        // 恢复码等同主密钥：尽量不进 Win11 剪贴板历史/云同步，并在 60 秒后自动清空
+        if (!TrySetClipboardSensitive(RecoveryCodeDisplay))
+        {
+            try { Clipboard.SetText(RecoveryCodeDisplay); }
+            catch (Exception ex) { StatusMessage = $"复制恢复码失败: {ex.Message}"; return; }
+        }
+
+        StatusMessage = "恢复码已复制到剪贴板，60 秒后自动清空。";
+        ScheduleClipboardClear(RecoveryCodeDisplay);
+    }
+
+    /// <summary>
+    /// 写入剪贴板并标记为敏感内容，阻止进入剪贴板历史与云同步。
+    /// 这些是 Windows 10 1809+ 约定的剪贴板格式；系统不认识时会被忽略，不影响文本本身。
+    /// 返回 false 表示该路径不可用，调用方应退回普通 SetText。
+    /// </summary>
+    private static bool TrySetClipboardSensitive(string text)
+    {
+        try
+        {
+            var data = new DataObject();
+            data.SetText(text);
+            data.SetData("ExcludeClipboardContentFromMonitorProcessing", DwordBytes(1));
+            data.SetData("CanIncludeInClipboardHistory", DwordBytes(0));
+            data.SetData("CanUploadToCloudClipboard", DwordBytes(0));
+            Clipboard.SetDataObject(data, copy: true);
+            return true;
+        }
+        catch
+        {
+            return false;   // 保持普通剪贴板行为，不让密码复制失败
+        }
+
+        static byte[] DwordBytes(int value) => BitConverter.GetBytes(value);
+    }
+
+    /// <summary>60 秒后若剪贴板仍是这段恢复码则清空，避免覆盖用户后来复制的内容。</summary>
+    private void ScheduleClipboardClear(string expected)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(60));
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+
+            try
+            {
+                dispatcher.Invoke(() =>
+                {
+                    if (Clipboard.ContainsText() && Clipboard.GetText() == expected)
+                    {
+                        Clipboard.Clear();
+                        StatusMessage = "恢复码已从剪贴板自动清空。";
+                    }
+                });
+            }
+            catch
+            {
+                // 应用正在退出或剪贴板被其它进程占用：忽略即可
+            }
+        });
+    }
+
+    /// <summary>把最近一次批量处理的失败清单导出为 txt，便于排查长列表失败原因</summary>
+    [RelayCommand]
+    private void ExportFailureReport()
+    {
+        if (string.IsNullOrEmpty(LastFailureReport))
+        {
+            StatusMessage = "本次没有失败记录可导出。";
+            return;
+        }
+
+        var dlg = new SaveFileDialog
+        {
+            Title = "导出失败清单",
+            FileName = $"{AppBrand.Name}-失败清单-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            Filter = "文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*"
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        try
+        {
+            File.WriteAllText(dlg.FileName,
+                $"{AppBrand.Name} 失败清单  {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}" +
+                new string('-', 60) + Environment.NewLine +
+                LastFailureReport + Environment.NewLine,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            StatusMessage = $"失败清单已导出：{dlg.FileName}";
+        }
+        catch (Exception ex) { StatusMessage = $"导出失败清单失败: {ex.Message}"; }
     }
 
     /// <summary>部署模式与数据目录（支持标准漫游与便携模式）</summary>
@@ -209,7 +366,7 @@ public partial class MainViewModel : ObservableObject
     public bool IsPortableMode => HideFilesConfig.IsPortableMode;
 
     /// <summary>关于界面展示信息</summary>
-    public string AppVersionDisplay => $"HideFiles v{BuildInfo.Version}";
+    public string AppVersionDisplay => $"{AppBrand.Name} {AppBrand.NameZh} v{BuildInfo.Version}";
     public string GitHashDisplay => BuildInfo.GitHash;
     public string BuildTimeDisplay => BuildInfo.BuildTime;
 
@@ -232,6 +389,44 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>弹出安全验证对话框，记录本会话凭据（allowRecovery 控制是否允许使用恢复码）</summary>
+    /// <summary>
+    /// 直接用已有密码解锁会话，不弹窗。
+    /// 供自动化测试与将来的"记住密码/静默解锁"使用；密码错误时返回 false 且不改动会话。
+    /// </summary>
+    public bool TryUnlockSession(string pin)
+    {
+        if (string.IsNullOrWhiteSpace(pin)) return false;
+
+        if (Config.HasKeyMaterial)
+        {
+            try { Config.UnwrapMasterKeyWithPin(pin); }
+            catch { return false; }
+        }
+        else if (!Config.VerifyPin(pin))
+        {
+            return false;
+        }
+
+        _sessionPin = pin.Trim();
+        _sessionRecoveryCode = null;
+        Config.SessionPin = _sessionPin;
+        RefreshSessionMasterKey();
+        return true;
+    }
+
+    /// <summary>用恢复码解锁会话，不弹窗。</summary>
+    public bool TryUnlockSessionWithRecoveryCode(string recoveryCode)
+    {
+        try { V2Crypto.RecoveryCodeToMasterKey(recoveryCode); }
+        catch (FormatException) { return false; }
+
+        _sessionRecoveryCode = recoveryCode;
+        _sessionPin = null;
+        Config.SessionPin = null;
+        RefreshSessionMasterKey();
+        return true;
+    }
+
     private bool TryPromptCredential(bool allowRecovery = true)
     {
         var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Verify, allowRecovery: allowRecovery)
@@ -277,6 +472,18 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void PromptSetPin()
     {
+        // 配置损坏后重设密码 = 生成新主密钥，历史文件用新密码再也打不开。
+        // 这是不可逆操作，必须先让用户确认已知情。
+        if (_configCorruptedOnLoad)
+        {
+            var warn = MessageBox.Show(
+                "本次启动时配置文件已损坏并回退为默认设置，原有主密钥不在内存中。\n\n" +
+                "现在设置密码会生成全新的主密钥，此前加密的文件将无法用这个新密码解密，" +
+                "只能靠原恢复码还原。\n\n确认继续设置新密码吗？",
+                "配置已损坏 — 谨慎继续", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (warn != MessageBoxResult.OK) return;
+        }
+
         var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Set)
         {
             Owner = Application.Current?.MainWindow
@@ -408,7 +615,7 @@ public partial class MainViewModel : ObservableObject
         return true;
     }
 
-    // ---------- 结构加密工作台 ----------
+    // ---------- 混淆工作台 ----------
     [RelayCommand]
     private async Task ObfuscateSelectedAsync()
         => await ProcessSelectedAsync(Files, ProtectionMode.StructureLock, isObfuscate: true);
@@ -420,7 +627,7 @@ public partial class MainViewModel : ObservableObject
         await ProcessSelectedAsync(Files, ProtectionMode.StructureLock, isObfuscate: false);
     }
 
-    // ---------- 整体加密工作台 ----------
+    // ---------- 加密工作台 ----------
     [RelayCommand]
     private async Task EncryptSelectedAsync()
         => await ProcessSelectedAsync(SecureFiles, ProtectionMode.FullEncrypt, isObfuscate: true);
@@ -439,7 +646,12 @@ public partial class MainViewModel : ObservableObject
             (isObfuscate ? f.Status == FileStatus.Normal : f.Status == FileStatus.Obfuscated)).ToList();
         if (targets.Count == 0)
         {
-            StatusMessage = isObfuscate ? "未选择未加密的文件。" : "未选择已加密的文件。";
+            int unsupported = collection.Count(f => f.IsSelected && f.Status == FileStatus.Unsupported);
+            StatusMessage = isObfuscate
+                ? (unsupported > 0
+                    ? $"选中的 {unsupported} 个文件格式不支持混淆，请改用“加密”工作台。"
+                    : "未选择未混淆的文件。")
+                : "未选择已混淆的文件。";
             return;
         }
         if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "加密")) return;
@@ -459,6 +671,48 @@ public partial class MainViewModel : ObservableObject
             (isObfuscate ? f.Status == FileStatus.Normal : f.Status == FileStatus.Obfuscated)).ToList(), isObfuscate, mode);
     }
 
+    /// <summary>
+    /// 供新的右键菜单调用：一个入口同时覆盖"做"与"还原"。
+    /// 按每个文件的实际容器状态分派方向：未加密 → 加密/混淆，已加密 → 解密/还原。
+    /// 目标集合固定为指定工作台，避免"简单动词"带来的模式错配。
+    /// </summary>
+    public async Task AutoProcessSmartAsync(IEnumerable<string> paths, ProtectionMode mode)
+    {
+        string m = mode == ProtectionMode.FullEncrypt ? "secure" : "struct";
+        bool structure = mode == ProtectionMode.StructureLock;
+        AddPaths(paths, m);
+        var collection = CollectionFor(m);
+
+        var toProtect = collection
+            .Where(f => f.Status == FileStatus.Normal && f.IsSelected).ToList();
+        var toRestore = collection
+            .Where(f => f.Status == FileStatus.Obfuscated && f.IsSelected).ToList();
+
+        string verb = structure ? "混淆" : "加密";
+        string undo = structure ? "还原" : "解密";
+
+        if (toProtect.Count == 0 && toRestore.Count == 0)
+        {
+            int unsupported = collection.Count(f => f.Status == FileStatus.Unsupported);
+            StatusMessage = unsupported > 0
+                ? $"选中的 {unsupported} 个文件格式不支持混淆，请改用“加密”工作台。"
+                : "没有可处理的文件（已全部处理或处于其它状态）。";
+            return;
+        }
+
+        if (toProtect.Count > 0)
+        {
+            if (!EnsureEncryptionReady(verb)) return;
+            await ProcessAsync(toProtect, isObfuscate: true, mode);
+        }
+
+        if (toRestore.Count > 0)
+        {
+            if (!EnsureRestoreCredential()) return;
+            await ProcessAsync(toRestore, isObfuscate: false, mode);
+        }
+    }
+
     private async Task ProcessAsync(List<FileItemModel> targetItems, bool isObfuscate,
         ProtectionMode? modeOverride = null)
     {
@@ -471,7 +725,11 @@ public partial class MainViewModel : ObservableObject
         ProgressValue = 0;
         int total = targetItems.Count;
         int successCount = 0;
+        int unsupportedCount = 0;
         var failures = new List<string>();
+
+        // 每轮都从 UI 线程取 Dispatcher，后台线程不直接触碰可观察属性
+        var dispatcher = Application.Current?.Dispatcher;
 
         try
         {
@@ -480,7 +738,9 @@ public partial class MainViewModel : ObservableObject
                 for (int i = 0; i < total; i++)
                 {
                     var item = targetItems[i];
-                    StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}";
+                    dispatcher?.Invoke(() =>
+                        StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}");
+
                     ProcessFileResult res = isObfuscate
                         ? _obfuscator.ObfuscateFile(item.FilePath, Config)
                         : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey, modeOverride ?? Config.ProtectionMode);
@@ -488,25 +748,47 @@ public partial class MainViewModel : ObservableObject
                     if (res.Success)
                     {
                         successCount++;
-                        var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey);
-                        Application.Current.Dispatcher.Invoke(() =>
+                        bool structWorkspace = (modeOverride ?? Config.ProtectionMode) == ProtectionMode.StructureLock;
+                        var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey, structWorkspace);
+                        dispatcher?.Invoke(() =>
                         {
                             item.FilePath = res.FinalPath;
                             item.FileName = Path.GetFileName(res.FinalPath);
                             item.Status = insp.Status;
                             item.OriginalFileName = insp.OriginalFileName;
+                            item.ErrorMessage = null;
                             item.StatusText = isObfuscate
-                                ? "已加密"
-                                : "未加密";
+                                ? (structWorkspace ? "已混淆" : "已加密")
+                                : (structWorkspace ? "未混淆" : "未加密");
+                        });
+                    }
+                    else if (res.ErrorKind == ProcessErrorKind.UnsupportedFormat)
+                    {
+                        // 格式不支持不是"处理失败"：标成独立状态并引导用户换模式，不计入失败数
+                        unsupportedCount++;
+                        dispatcher?.Invoke(() =>
+                        {
+                            item.Status = FileStatus.Unsupported;
+                            item.StatusText = "不支持";
+                            item.ErrorMessage = res.ErrorMessage;
                         });
                     }
                     else
                     {
-                        failures.Add($"{item.FileName}: {res.ErrorMessage}");
+                        string reason = string.IsNullOrWhiteSpace(res.ErrorMessage ?? null)
+                            ? "未知错误"
+                            : res.ErrorMessage!;
+                        failures.Add($"{item.FileName}: {reason}");
+                        // 失败原因落到行内，长列表不再只能看到状态栏的前 3 条
+                        dispatcher?.Invoke(() =>
+                        {
+                            item.ErrorMessage = reason;
+                            item.StatusText = "失败";
+                        });
                     }
 
                     double pct = (double)(i + 1) / total * 100.0;
-                    Application.Current.Dispatcher.Invoke(() => ProgressValue = pct);
+                    dispatcher?.Invoke(() => ProgressValue = pct);
                 }
             });
         }
@@ -517,10 +799,15 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateCounts();
+        LastFailureReport = failures.Count > 0 ? string.Join(Environment.NewLine, failures) : null;
+
+        string unsupportedNote = unsupportedCount > 0
+            ? $"，{unsupportedCount} 个格式不支持请改用“加密”工作台"
+            : string.Empty;
+
         StatusMessage = failures.Count == 0
-            ? $"处理完成：成功 {successCount}/{total}。"
-            : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count} —— "
-              + string.Join("；", failures.Take(3)) + (failures.Count > 3 ? " …" : string.Empty);
+            ? $"处理完成：成功 {successCount}/{total}{unsupportedNote}。"
+            : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count}{unsupportedNote}（失败原因见列表“状态”列，可点“导出失败清单”）";
     }
 
 
@@ -583,7 +870,7 @@ public partial class MainViewModel : ObservableObject
         if (!OperatingSystem.IsWindows()) return;
         try
         {
-            string appExe = Environment.ProcessPath ?? "HideFilesApp.exe";
+            string appExe = Environment.ProcessPath ?? "CarroCasket.exe";
             if (IsContextMenuInstalled)
             {
                 ShellContextMenu.Uninstall();

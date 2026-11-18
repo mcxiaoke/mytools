@@ -83,7 +83,7 @@ public static class Program
                 return ExecuteHide(targetArgs, config, dryRun);
 
             case "encrypt":
-                if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.FullEncrypt;   // 加密 = 整体加密
+                if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.FullEncrypt;   // 加密 = 整体加密模式
                 return ExecuteHide(targetArgs, config, dryRun);
 
             case "unhide":
@@ -124,7 +124,7 @@ public static class Program
         if (args.Count == 0)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[错误] 用法：hidefiles setpin <新密码> [--current <当前密码>]");
+            Console.WriteLine("[错误] 用法：CarroCasketCli setpin <新密码> [--current <当前密码>]");
             Console.ResetColor();
             return 1;
         }
@@ -165,14 +165,14 @@ public static class Program
         }
 
         var processor = new BatchProcessor();
-        // 结构锁只处理规则内的媒体格式；整体加密对任意文件都有效，不做扩展名过滤
+        // 混淆只处理规则内的媒体格式；加密对任意文件都有效，不做扩展名过滤
         bool filterByRules = config.ProtectionMode == ProtectionMode.StructureLock;
         var files = processor.CollectFiles(paths, config, forObfuscate: true, filterByExtensionRules: filterByRules);
 
         if (files.Count == 0)
         {
             Console.WriteLine(filterByRules
-                ? "[提示] 没有符合扩展名规则的文件（结构锁仅支持 mp4/mkv/jpg/png 等）。"
+                ? "[提示] 没有可混淆的文件（混淆仅支持 mp4 / mkv / jpg / png 等媒体格式）。其它格式请改用 encrypt。"
                 : "[提示] 没有找到可处理的文件。");
             return 0;
         }
@@ -334,12 +334,12 @@ public static class Program
             {
                 case FileStatus.Obfuscated:
                     obfuscated++;
-                    statusStr = "已加密";
+                    statusStr = "已混淆/加密";
                     col = ConsoleColor.Yellow;
                     break;
                 case FileStatus.Normal:
                     normal++;
-                    statusStr = "未加密";
+                    statusStr = "未处理";
                     col = ConsoleColor.Gray;
                     break;
                 default:
@@ -362,7 +362,7 @@ public static class Program
         }
 
         Console.WriteLine(new string('-', 88));
-        Console.WriteLine($"汇总：共 {files.Count}，未加密 {normal}，已加密 {obfuscated}，异常 {corrupted}。");
+        Console.WriteLine($"汇总：共 {files.Count}，未处理 {normal}，已混淆/加密 {obfuscated}，异常 {corrupted}。");
         return 0;
     }
 
@@ -388,7 +388,7 @@ public static class Program
     {
         if (paths.Count == 0)
         {
-            Console.WriteLine($"[错误] 请指定目录：hidefiles {(obfuscate ? "dir-hide" : "dir-unhide")} <目录...>");
+            Console.WriteLine($"[错误] 请指定目录：CarroCasketCli {(obfuscate ? "dir-hide" : "dir-unhide")} <目录...>");
             return 1;
         }
 
@@ -416,24 +416,24 @@ public static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("HideFiles - 文件加密工具");
+        Console.WriteLine($"{AppBrand.Name} {AppBrand.NameZh} - {AppBrand.Tagline}");
         Console.WriteLine(new string('=', 60));
         Console.WriteLine("用法：");
-        Console.WriteLine("  hidefiles setpin <密码> [--current <当前密码>]");
+        Console.WriteLine("  CarroCasketCli setpin <密码> [--current <当前密码>]");
         Console.WriteLine("      设置密码并输出恢复码；修改密码需提供当前密码。");
-        Console.WriteLine("  hidefiles hide <路径...> --pin <密码> [--dry-run]");
-        Console.WriteLine("      结构加密：原地加密头部与关键结构。");
-        Console.WriteLine("  hidefiles encrypt <路径...> --pin <密码> [--dry-run]");
-        Console.WriteLine("      整体加密：全文件分块 AES-256-GCM 加密。");
-        Console.WriteLine("  hidefiles unhide <路径...> (--pin <密码> | --recovery <恢复码>) [--dry-run]");
-        Console.WriteLine("      解密文件：自动识别容器格式（unhide / restore / decrypt 等价）。");
-        Console.WriteLine("  hidefiles scan [路径...]");
-        Console.WriteLine("      查看文件状态（未加密 / 已加密）。");
-        Console.WriteLine("  hidefiles dir-hide <目录...>");
+        Console.WriteLine("  CarroCasketCli hide <路径...> --pin <密码> [--dry-run]");
+        Console.WriteLine("      混淆：原地混淆文件头部与关键结构（仅媒体格式）。");
+        Console.WriteLine("  CarroCasketCli encrypt <路径...> --pin <密码> [--dry-run]");
+        Console.WriteLine("      加密：全文件分块 AES-256-GCM 加密（任意格式）。");
+        Console.WriteLine("  CarroCasketCli unhide <路径...> (--pin <密码> | --recovery <恢复码>) [--dry-run]");
+        Console.WriteLine("      还原/解密：自动识别容器格式（unhide / restore / decrypt 等价）。");
+        Console.WriteLine("  CarroCasketCli scan [路径...]");
+        Console.WriteLine("      查看文件状态（可混淆 / 已混淆 / 不支持 / 已加密）。");
+        Console.WriteLine("  CarroCasketCli dir-hide <目录...>");
         Console.WriteLine("      伪装子目录名（添加 _hf_ 前缀）。");
-        Console.WriteLine("  hidefiles dir-unhide <目录...>");
+        Console.WriteLine("  CarroCasketCli dir-unhide <目录...>");
         Console.WriteLine("      还原子目录名。");
-        Console.WriteLine("  hidefiles --help");
+        Console.WriteLine("  CarroCasketCli --help");
         Console.WriteLine("      显示本帮助。");
         Console.WriteLine();
     }

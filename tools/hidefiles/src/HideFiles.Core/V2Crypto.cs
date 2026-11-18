@@ -205,7 +205,14 @@ public static class Base32
     }
 
     /// <summary>解码任意长度的 Base32 文本（供目录名混淆等场景使用）</summary>
-    public static byte[] DecodeVariableLength(string text)
+    public static byte[] DecodeVariableLength(string text) => DecodeDetailed(text).Bytes;
+
+    /// <summary>
+    /// 解码并返回尾部冗余位信息，供调用方判断是否为"规范编码"。
+    /// 规范的 Base32 编码在最后一个字节之后不会留下非零冗余位；
+    /// 用户随手起的 `_hf_xxx` 名字解码后通常残留非零位，可据此低成本排除误判。
+    /// </summary>
+    public static (byte[] Bytes, int LeftoverBits, int LeftoverValue) DecodeDetailed(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) throw new FormatException("Base32 input is empty.");
         string s = text.Trim().ToUpperInvariant().Replace("-", "").Replace(" ", "");
@@ -223,6 +230,7 @@ public static class Base32
                 bits -= 8;
             }
         }
-        return ms.ToArray();
+        int leftover = bits > 0 ? (value & ((1 << bits) - 1)) : 0;
+        return (ms.ToArray(), bits, leftover);
     }
 }

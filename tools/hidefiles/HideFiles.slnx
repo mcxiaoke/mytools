@@ -1,7 +1,5 @@
 <Solution>
   <Configurations>
-    <Platform Name="Any CPU" />
-    <Platform Name="x64" />
   </Configurations>
   <Folder Name="/src/">
     <Project Path="src/HideFiles.Core/HideFiles.Core.csproj" />
@@ -10,5 +8,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/HideFiles.Tests/HideFiles.Tests.csproj" />
+    <Project Path="tests/HideFiles.UiQa/HideFiles.UiQa.csproj" />
   </Folder>
 </Solution>
