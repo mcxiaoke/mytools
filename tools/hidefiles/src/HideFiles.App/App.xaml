@@ -13,6 +13,78 @@
             <converters:StatusToColorConverter x:Key="StatusToColorConverter" />
             <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <converters:ListToStringConverter x:Key="ListToStringConverter" />
+
+            <!--
+                顶部标签：未选中=次要文字色+透明底，选中=主题色填充+反白文字。
+                WPF-UI 默认只画一条细下划线，选中态几乎看不出来，故自带模板。
+                注意：只在模板内部给 TabText 设颜色，不动 TabItem.Foreground —— 
+                否则内容区无显式 Foreground 的 TextBlock 会继承白色而“消失”。
+            -->
+            <Style x:Key="MainTabItemStyle" TargetType="{x:Type TabItem}">
+                <Setter Property="Padding" Value="20,8" />
+                <Setter Property="Margin" Value="0,0,0,0" />
+                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type TabItem}">
+                            <!-- 外层负责标签之间的水平间距：用 Margin 会挤压圆角，改为在内容宿主上留白 -->
+                            <Border x:Name="TabGap" Background="Transparent" Padding="6,0,0,0">
+                                <Border x:Name="TabBorder" Background="Transparent" CornerRadius="6"
+                                        Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                                    <TextBlock x:Name="TabText" Text="{TemplateBinding Header}"
+                                               FontSize="13.5" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="TabBorder" Property="Background"
+                                            Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                    <Setter TargetName="TabText" Property="Foreground"
+                                            Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="TabBorder" Property="Background"
+                                            Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <Setter TargetName="TabText" Property="Foreground"
+                                            Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 设置页卡片：统一内边距与间距，避免每张卡自己写一套 -->
+            <Style x:Key="SettingsCardStyle" TargetType="{x:Type Border}">
+                <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="16,12" />
+                <Setter Property="Margin" Value="0,0,0,12" />
+            </Style>
+
+            <Style x:Key="SettingsCardTitleStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="FontWeight" Value="Bold" />
+                <Setter Property="FontSize" Value="13.5" />
+                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <Style x:Key="SettingsHintStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="FontSize" Value="11.5" />
+                <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <Style x:Key="SettingsFieldLabelStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="FontSize" Value="12.5" />
+                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,0,8,0" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

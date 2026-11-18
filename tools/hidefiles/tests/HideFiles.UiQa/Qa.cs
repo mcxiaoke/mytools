@@ -26,6 +26,12 @@ internal static class Program
     private static readonly List<string> Failures = new();
     private static string _outDir = string.Empty;
 
+    /// <summary>默认配置里的格式规则分组名（断言“名称完整显示”时用来定位）</summary>
+    private static readonly HashSet<string> ConfigGroupNames = new()
+    {
+        "Videos", "Images", "Audio", "Archives", "Documents", "Others"
+    };
+
     [STAThread]
     private static int Main()
     {
@@ -70,7 +76,7 @@ internal static class Program
         var app = new App();
         app.InitializeComponent();
 
-        var win = new MainWindow { Width = 1120, Height = 780 };
+        var win = new MainWindow { Width = 1140, Height = 740 };
         win.Show();
         Pump();
         var vm = (MainViewModel)win.DataContext;
@@ -205,6 +211,185 @@ internal static class Program
         Check(grouped.StartsWith("QC66 KCM5"), $"分组应以 4 字符为一组，实际：{grouped}");
         Check(grouped.Replace(" ", "").Length == 52, $"分组后去掉空格应为 52 字符，实际 {grouped.Replace(" ", "").Length}");
         Check(grouped.Split(' ').All(g => g.Length == 4), "每组应为 4 字符");
+
+        // ---------- H. 顶部标签激活态：必须与未激活有明显差异 ----------
+        tab.SelectedIndex = 0;
+        Pump();
+        var tabItems = tab.Items.OfType<TabItem>().ToArray();
+
+        Console.WriteLine($"       主窗口宽度: {win.Width}，最小宽度: {win.MinWidth}");
+        Check(win.Width >= 1100, $"主界面应加宽到 >=1100，实际 {win.Width}");
+        Check(win.MinWidth >= 900, $"最小宽度应 >=900，实际 {win.MinWidth}");
+        Check(win.Width > win.MinWidth + 200, "默认宽度应明显大于最小宽度");
+
+        var activeBackdrop = FindVisualByName<Border>(tabItems[0], "TabBorder");
+        var idleBackdrop = FindVisualByName<Border>(tabItems[1], "TabBorder");
+        Check(activeBackdrop != null && idleBackdrop != null, "Tab 应使用自定义模板（TabBorder 存在）");
+        if (activeBackdrop != null && idleBackdrop != null)
+        {
+            Check(activeBackdrop.Background is SolidColorBrush { Color.A: > 200 },
+                $"激活 Tab 应有实心底色，实际 {activeBackdrop.Background}");
+            Check(idleBackdrop.Background is SolidColorBrush { Color.A: 0 },
+                $"未激活 Tab 应为透明底，实际 {idleBackdrop.Background}");
+            Check(activeBackdrop.Padding.Left >= 16,
+                $"激活 Tab 内边距应足够形成可见色块，实际 {activeBackdrop.Padding}");
+        }
+        var activeText = FindVisualByName<TextBlock>(tabItems[0], "TabText");
+        var idleText = FindVisualByName<TextBlock>(tabItems[1], "TabText");
+        Check(activeText?.Foreground is SolidColorBrush ac && idleText?.Foreground is SolidColorBrush ic
+              && ac.Color != ic.Color,
+            $"激活/未激活 Tab 文字应为不同颜色，实际 {activeText?.Foreground} / {idleText?.Foreground}");
+
+        // Tab 四角必须左右对称：Margin 会挤压 CornerRadius，导致“左圆右直角”
+        Check(tabItems.All(t => t.Margin.Right == 0),
+            "TabItem 不应使用右侧 Margin 制造间距（会挤压圆角变成直角）");
+        if (activeBackdrop != null)
+        {
+            var sym = MeasureCornerSymmetry(win, activeBackdrop, tabItems[0]);
+            Console.WriteLine($"       Tab 圆角对称性: 左内缩={sym.leftSlope:F1} 右内缩={sym.rightSlope:F1}");
+            Check(sym.leftSlope > 2 && sym.rightSlope > 2,
+                $"激活 Tab 左右都应有圆弧过渡，实际 左={sym.leftSlope:F1} 右={sym.rightSlope:F1}");
+            Check(Math.Abs(sym.leftSlope - sym.rightSlope) <= 2.5,
+                $"激活 Tab 左右圆角应大致对称，实际 左={sym.leftSlope:F1} 右={sym.rightSlope:F1}");
+        }
+
+        // ---------- I. 设置页紧凑度：分组齐全且滚动量受控 ----------
+        tab.SelectedIndex = 2;
+        Pump();
+        Snap(win, "e_settings.png");
+
+        var settingsTexts = TextOf(win);
+        foreach (var title in new[] { "密码设置", "数据存储", "混淆文件名", "目录名伪装", "右键菜单", "格式规则" })
+            Check(settingsTexts.Contains(title), $"设置页应包含分组「{title}」");
+        Check(!settingsTexts.Any(t => t.Contains("格式伪装规则") || t.Contains("格式伪装规格")),
+            "设置页标题应已改为「格式规则」，不应残留旧名");
+        Check(!settingsTexts.Any(t => t.Contains("运行模式与数据存储")), "设置页标题应为「数据存储」");
+        Check(!settingsTexts.Any(t => t.Contains("资源管理器右键菜单")), "设置页标题应为「右键菜单」");
+
+        var scroller = Descendants<ScrollViewer>(win)
+            .FirstOrDefault(s => s.ScrollableHeight > 0 || s.ExtentHeight > s.ViewportHeight);
+        var settingsScroller = Descendants<ScrollViewer>(win)
+            .OrderByDescending(s => s.ExtentHeight).FirstOrDefault();
+        double ratio = 1.0;
+        if (settingsScroller != null && settingsScroller.ViewportHeight > 0)
+            ratio = settingsScroller.ExtentHeight / settingsScroller.ViewportHeight;
+        Console.WriteLine($"       设置页滚动比: {ratio:F2}（1.00 = 一屏放得下）");
+        Check(ratio <= 1.15,
+            $"设置页内容应基本一屏可见，实际滚动比 {ratio:F2}");
+
+        // 注意：TabItem 的内容挂在 TabControl 的 ContentPresenter 上，不在 TabItem 可视树内，
+        // 必须从 ScrollViewer 的内容根往下找，否则永远统计到 0。
+        DependencyObject? settingsRoot = settingsScroller?.Content as DependencyObject;
+        Check(settingsRoot != null, "设置页应有可测量的内容根");
+
+        // 内容区文字颜色不能被 Tab 顶部样式带偏（曾导致设置页标题变白“消失”）
+        var contentTitle = Descendants<TextBlock>(win).FirstOrDefault(t => t.Text == "密码设置");
+        Check(contentTitle != null && contentTitle.Foreground is SolidColorBrush { Color.R: < 120, Color.G: < 120, Color.B: < 120 },
+            $"Tab 内容区标题应为深色，实际 {contentTitle?.Foreground}");
+
+        if (settingsRoot != null)
+        {
+            var cards = Descendants<Border>(settingsRoot)
+                .Where(b => Math.Abs(b.CornerRadius.TopLeft - 8) < 0.1 && b.ActualHeight > 0)
+                .ToList();
+            Console.WriteLine("       设置卡片高度: " + string.Join(", ", cards.Select(c => $"{c.ActualHeight:F0}")));
+            Check(cards.Count >= 6, $"设置页应有 6 个分组的卡片，实际 {cards.Count}");
+
+            // 用户要求：密码设置、数据存储、混淆文件名、目录名伪装、右键菜单 全部为单行。
+            // 单行卡片的高度由内容撑开（按钮 30 + 上下 padding 24 + 边框 2 ≈ 56），放宽到 72 留出字体差异。
+            var simpleCards = cards.Take(cards.Count - 1).ToList();
+            Check(simpleCards.All(c => c.ActualHeight <= 72),
+                "前 5 个设置分组都应精简为单行（<=72px），实际 "
+                + string.Join("/", simpleCards.Select(c => $"{c.ActualHeight:F0}")));
+
+            // 格式规则：标题行 + 两列三行，行距已放宽，不再强压高度
+            Check(cards.Last().ActualHeight <= 190,
+                $"格式规则卡片高度应合理（<=190px），实际 {cards.Last().ActualHeight:F0}");
+
+            // 分组之间的间距要稍微大一些
+            Check(cards.Take(cards.Count - 1).All(c => c.Margin.Bottom >= 10),
+                "设置分组之间的间距应 >=10px，实际 "
+                + string.Join("/", cards.Take(cards.Count - 1).Select(c => $"{c.Margin.Bottom:F0}")));
+            Check(cards.All(c => c.Padding.Left >= 14 && c.Padding.Top >= 10),
+                "设置卡片内 padding 应更宽松（左右>=14，上下>=10），实际 "
+                + string.Join("/", cards.Select(c => $"{c.Padding.Left:F0},{c.Padding.Top:F0}")));
+
+            var extBoxes = Descendants<TextBox>(settingsRoot)
+                .Where(t => t.Text.StartsWith(".", StringComparison.Ordinal)).ToList();
+            Console.WriteLine($"       格式规则后缀输入框: {extBoxes.Count} 个");
+            Check(extBoxes.Count >= 6, $"格式规则应显示 6 个分组的伪装后缀，实际 {extBoxes.Count}");
+
+            // 分组名必须完整显示（曾因固定列宽被裁成 Video/Docu/Archiv）
+            var ruleNames = Descendants<CheckBox>(settingsRoot)
+                .Where(c => c.Content is string s && ConfigGroupNames.Contains(s))
+                .ToList();
+            Console.WriteLine("       格式规则分组: " + string.Join(" / ", ruleNames.Select(c => c.Content)));
+            Check(ruleNames.Count == 6, $"格式规则应有 6 个分组，实际 {ruleNames.Count}");
+            foreach (var cb in ruleNames)
+            {
+                var text = (string)cb.Content!;
+                Check(IsTextFullyVisible(cb, text), $"格式规则分组名「{text}」应完整显示，不应被裁切");
+            }
+
+            // 紧凑性：分组标题在卡片内必须明显小于卡片高度（1~2 行内容）
+            var titles = Descendants<TextBlock>(settingsRoot)
+                .Where(t => t.Style == app.Resources["SettingsCardTitleStyle"] as Style)
+                .Select(t => t.Text).ToList();
+            Console.WriteLine("       分组标题: " + string.Join(" / ", titles));
+            Check(titles.Count == 6, $"设置页应有 6 个分组标题，实际 {titles.Count}");
+
+            // 格式规则行间距：两列布局下必须按“行”分桶（X 相近视为同一行），
+            // 直接按 Y 排序会得到 0，测不出真实行距。
+            var ruleRows = Descendants<CheckBox>(settingsRoot)
+                .Where(c => c.Content is string s2 && ConfigGroupNames.Contains(s2))
+                .Select(c => c.TransformToAncestor((Visual)settingsRoot).Transform(new Point(0, 0)))
+                .ToList();
+            var rowTops = ruleRows.Select(p => p.Y).OrderBy(y => y)
+                .Aggregate(new List<double>(), (acc, y) =>
+                {
+                    if (acc.Count == 0 || y - acc[^1] > 6) acc.Add(y);
+                    return acc;
+                });
+            var gaps = new List<double>();
+            for (int i = 1; i < rowTops.Count; i++) gaps.Add(rowTops[i] - rowTops[i - 1]);
+            Console.WriteLine($"       格式规则行数={rowTops.Count}，行距={string.Join("/", gaps.Select(g => g.ToString("F1")))}");
+            Check(rowTops.Count == 3, $"两列布局应有 3 行，实际 {rowTops.Count}");
+            Check(gaps.Count > 0 && gaps.Min() >= 26,
+                $"格式规则行距不应过挤（>=26px），实际 {(gaps.Count > 0 ? gaps.Min() : 0):F1}px");
+
+            // 恢复码展示态：同一行内换成恢复码输入框，且不能把页面撑高
+            const string hintText = "忘记密码时可用恢复码解密";
+            // 用 Visibility 判断“是否被恢复码取代”，不依赖布局宽度（该行可能正好被压缩）
+            bool HintVisible() => Descendants<TextBlock>(settingsRoot)
+                .Any(t => t.Text.Contains(hintText) && t.Visibility == Visibility.Visible);
+            // 前面测分组排版时曾临时赋值恢复码，这里先复位，才能验证“正常态显示提示”
+            vm.RecoveryCodeDisplay = string.Empty;
+            Pump();
+            win.UpdateLayout();
+            Check(HintVisible(), "未显示恢复码时应显示密码说明文案");
+
+            vm.RecoveryCodeDisplay = "QC66KCM5Y4MHJ5H5JBJOO6CSEMSMKJO4Z7KIHCTK72YPQ5RFOKWQ";
+            Pump();
+            win.UpdateLayout();
+            var recoveryBox = Descendants<TextBox>(settingsRoot)
+                .FirstOrDefault(t => t.Text.Replace(" ", "").Length == 52);
+            Check(recoveryBox != null, "显示恢复码时设置页应出现恢复码输入框");
+            Check(!HintVisible(), "显示恢复码时提示文案应让位给恢复码");
+
+            double ratioWithCode = settingsScroller!.ViewportHeight > 0
+                ? settingsScroller.ExtentHeight / settingsScroller.ViewportHeight
+                : 1.0;
+            Console.WriteLine($"       显示恢复码后滚动比: {ratioWithCode:F2}");
+            Check(ratioWithCode <= 1.0, $"显示恢复码后设置页仍应一屏可见，实际 {ratioWithCode:F2}");
+            Snap(win, "f_settings_recovery.png");
+
+            vm.RecoveryCodeDisplay = string.Empty;
+            Pump();
+            win.UpdateLayout();
+        }
+
+        tab.SelectedIndex = 3;
+        Pump();
 
         win.Close();
 
@@ -347,6 +532,73 @@ internal static class Program
             list.AddRange(Descendants<T>(child));
         }
         return list;
+    }
+
+    /// <summary>
+    /// 量化 Tab 左右圆角是否都在：把元素渲染成位图，找出强调色的外接区域，
+    /// 比较「顶部第一行」与「中线」的左右内缩差值。有圆弧则内缩明显，直角则恒为 0。
+    /// </summary>
+    private static (double leftSlope, double rightSlope) MeasureCornerSymmetry(
+        Window win, Border border, TabItem item)
+    {
+        double scale = VisualTreeHelper.GetDpi(win).PixelsPerDip;
+        var rtb = new RenderTargetBitmap((int)(win.Width * scale), (int)(win.Height * scale),
+            96 * scale, 96 * scale, PixelFormats.Pbgra32);
+        rtb.Render(win);
+
+        int stride = rtb.PixelWidth * 4;
+        var buf = new byte[stride * rtb.PixelHeight];
+        rtb.CopyPixels(buf, stride, 0);
+
+        var origin = border.TransformToAncestor(win).Transform(new Point(0, 0));
+        int left = (int)Math.Round(origin.X * scale);
+        int right = (int)Math.Round((origin.X + border.ActualWidth) * scale);
+        int top = (int)Math.Round(origin.Y * scale);
+        int mid = (int)Math.Round((origin.Y + border.ActualHeight / 2) * scale);
+
+        bool Accent(int x, int y)
+        {
+            int i = y * stride + x * 4;
+            // 强调色 #004275：蓝高、红低
+            return buf[i] > 95 && buf[i + 2] < 60 && buf[i + 1] > 40 && buf[i + 1] < 95;
+        }
+
+        (int lo, int hi) Scan(int y)
+        {
+            int lo = -1, hi = -1;
+            for (int x = Math.Max(0, left - 4); x <= Math.Min(rtb.PixelWidth - 1, right + 4); x++)
+                if (Accent(x, y)) { if (lo < 0) lo = x; hi = x; }
+            return (lo, hi);
+        }
+
+        var topRow = Scan(top + 1);
+        var midRow = Scan(mid);
+        if (topRow.lo < 0 || midRow.lo < 0) return (0, 0);
+
+        double leftSlope = topRow.lo - midRow.lo;
+        double rightSlope = midRow.hi - topRow.hi;
+        return (leftSlope, rightSlope);
+    }
+
+    /// <summary>按模板内部名字取元素（用于断言自定义 Tab 模板里的色块）</summary>
+    private static T? FindVisualByName<T>(DependencyObject root, string name) where T : FrameworkElement =>
+        Descendants<T>(root).FirstOrDefault(x => x.Name == name);
+
+    /// <summary>
+    /// 判断控件内的文字是否完整可见：用实际字体测量文本宽度，
+    /// 再与控件可用内容宽度比较，避免“靠肉眼判断裁切”。
+    /// </summary>
+    private static bool IsTextFullyVisible(ContentControl host, string text)
+    {
+        var tb = Descendants<TextBlock>(host).FirstOrDefault();
+        if (tb == null) return false;
+        var dpi = VisualTreeHelper.GetDpi(tb);
+        var typeface = new Typeface(tb.FontFamily, tb.FontStyle, tb.FontWeight, tb.FontStretch);
+        var formatted = new FormattedText(text, System.Globalization.CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight, typeface, tb.FontSize, Brushes.Black, dpi.PixelsPerDip);
+        double contentWidth = host.ActualWidth - host.Padding.Left - host.Padding.Right
+                              - host.BorderThickness.Left - host.BorderThickness.Right;
+        return contentWidth >= formatted.WidthIncludingTrailingWhitespace - 0.5;
     }
 
     /// <summary>最小合法 PNG（1x1），供混淆流程走通</summary>

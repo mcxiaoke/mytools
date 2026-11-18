@@ -4,8 +4,8 @@
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:vm="clr-namespace:HideFiles.App.ViewModels"
                  Title="{Binding Title}"
-                 Height="720" Width="980"
-                 MinHeight="580" MinWidth="780"
+                 Height="740" Width="1140"
+                 MinHeight="620" MinWidth="900"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
                  ExtendsContentIntoTitleBar="True"
@@ -34,7 +34,10 @@
         </ui:TitleBar>
 
         <!-- 主内容多标签页 -->
-        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12" SelectedIndex="{Binding SelectedTabIndex}">
+        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12"
+                    SelectedIndex="{Binding SelectedTabIndex}"
+                    ItemContainerStyle="{StaticResource MainTabItemStyle}"
+                    Background="Transparent" BorderThickness="0">
             <!-- TAB 1: 混淆（结构模式，只处理媒体格式） -->
             <TabItem Header="混淆">
                 <Grid Margin="0,12,0,0">
@@ -301,183 +304,205 @@
             <TabItem Header="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
                     <StackPanel>
-                        <!-- 卡片 1: 密码与恢复码 -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="密码设置" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                <TextBlock Text="设置保护与解密文件的主密码。" 
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
+                        <!-- 卡片 1: 密码与恢复码（1 行） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <TextBlock Text="当前状态: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <Border Background="#1A10B981" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
-                                            Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <TextBlock Text="已设置密码" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    </Border>
-                                    <Border Background="#1A6B7280" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
-                                            Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
-                                        <TextBlock Text="未设置密码" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
-                                    </Border>
-                                </StackPanel>
+                                <TextBlock Grid.Column="0" Text="密码设置" Style="{StaticResource SettingsCardTitleStyle}" />
+                                <Border Grid.Column="1" Background="#1A10B981" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="已设置" Foreground="#10B981" FontSize="11" FontWeight="SemiBold" />
+                                </Border>
+                                <Border Grid.Column="1" Background="#1A6B7280" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                    <TextBlock Text="未设置" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </Border>
 
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                    <!-- 未设置密码时：显示“设置密码”按钮 -->
-                                    <ui:Button Content="设置密码" Command="{Binding PromptSetPinCommand}" Appearance="Primary" Margin="0,0,10,0"
-                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}" />
+                                <!-- 中间弹性区：平时放说明；刚设完密码时整行换成恢复码 -->
+                                <TextBlock Grid.Column="2" Margin="16,0,16,0"
+                                           Text="忘记密码时可用恢复码解密；修改密码不影响已加密文件"
+                                           Style="{StaticResource SettingsHintStyle}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}" />
 
-                                    <!-- 已设置密码时：显示“修改密码”和“清除密码”按钮 -->
-                                    <ui:Button Content="修改密码" Command="{Binding PromptChangePinCommand}" Appearance="Secondary" Margin="0,0,10,0"
-                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                    <ui:Button Content="清除密码" Command="{Binding PromptClearPinCommand}" Appearance="Danger"
-                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,4,0,8"
-                                            Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}}">
-                                    <Grid Margin="0,0,0,4">
-                                        <TextBlock Text="恢复码（请妥善保存，仅显示一次）：" FontSize="12" Foreground="#BA7517" VerticalAlignment="Center" />
-                                        <ui:Button Content="复制恢复码" Command="{Binding CopyRecoveryCodeCommand}" HorizontalAlignment="Right" Height="26" Padding="8,2" />
-                                    </Grid>
-                                    <TextBox Text="{Binding RecoveryCodeGroupedDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                                             FontFamily="Consolas" FontSize="13" Background="#14000000" Padding="8" />
-                                </StackPanel>
-
-                                <TextBlock Text="提示：忘记密码时可使用恢复码解密文件。请务必妥善保存密码与恢复码。"
-                                           FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- 卡片: 运行模式与数据存储 (便携模式支持) -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="运行模式与数据存储" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                <TextBlock Text="支持 Windows 标准漫游模式与纯绿色便携模式。" 
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap" />
-
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <TextBlock Text="当前模式: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <Border Background="#1A3B82F6" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
-                                            Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <TextBlock Text="便携模式 (Portable)" Foreground="#3B82F6" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    </Border>
-                                    <Border Background="#1A10B981" CornerRadius="4" Padding="8,3" Margin="4,0,0,0"
-                                            Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
-                                        <TextBlock Text="标准模式 (Roaming)" Foreground="#10B981" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    </Border>
-                                </StackPanel>
-
-                                <Grid Margin="0,0,0,8">
+                                <Grid Grid.Column="2" Margin="16,0,16,0"
+                                      Visibility="{Binding HasRecoveryCode, Converter={StaticResource BoolToVisibilityConverter}}">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="数据目录: " VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,8,0" />
-                                    <TextBox Grid.Column="1" Text="{Binding DataDirectoryDisplay, Mode=OneWay}" IsReadOnly="True"
-                                             VerticalContentAlignment="Center" Height="32" Margin="0,0,10,0"
-                                             Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <ui:Button Grid.Column="2" Content="打开目录" Command="{Binding OpenDataDirectoryCommand}" Appearance="Secondary" />
+                                    <TextBox Grid.Column="0" Text="{Binding RecoveryCodeGroupedDisplay, Mode=OneWay}" IsReadOnly="True"
+                                             FontFamily="Consolas" FontSize="12" Height="28" Padding="6,2"
+                                             VerticalContentAlignment="Center" Background="#2ABA7517"
+                                             Foreground="#8A4B08"
+                                             ToolTip="恢复码仅显示一次，请立即妥善保存"
+                                             AutomationProperties.AutomationId="RecoveryCodeBox" />
+                                    <ui:Button Grid.Column="1" Content="复制" Command="{Binding CopyRecoveryCodeCommand}"
+                                               Height="28" Padding="10,2" FontSize="12" Margin="8,0,0,0" />
                                 </Grid>
 
-                                <TextBlock Text="便携说明：在程序同级目录下放置 portable.ini 标志文件或 app_data 文件夹，配置数据将存储在本地 app_data 目录，实现纯绿色免安装便携运行。"
-                                           FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
-                            </StackPanel>
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Content="设置密码" Command="{Binding PromptSetPinCommand}" Appearance="Primary" Height="30" Padding="10,3" FontSize="12.5" Margin="0,0,8,0"
+                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}" />
+                                    <ui:Button Content="修改密码" Command="{Binding PromptChangePinCommand}" Appearance="Secondary" Height="30" Padding="10,3" FontSize="12.5" Margin="0,0,8,0"
+                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    <ui:Button Content="清除密码" Command="{Binding PromptClearPinCommand}" Appearance="Danger" Height="30" Padding="10,3" FontSize="12.5"
+                                               Visibility="{Binding HasPinConfigured, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </StackPanel>
+                            </Grid>
                         </Border>
 
-                        <!-- 卡片 2: 混淆与文件名设置 -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="混淆与文件名" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
-                                <Grid Margin="0,0,0,12">
+                        <!-- 卡片 2: 数据存储（1 行） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Text="数据存储" Style="{StaticResource SettingsCardTitleStyle}" />
+                                <Border Grid.Column="1" Background="#1A3B82F6" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="便携模式" Foreground="#3B82F6" FontSize="11" FontWeight="SemiBold" />
+                                </Border>
+                                <Border Grid.Column="1" Background="#1A10B981" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                    <TextBlock Text="标准模式" Foreground="#10B981" FontSize="11" FontWeight="SemiBold" />
+                                </Border>
+
+                                <!-- 中间：目录路径（可选中复制）；完整路径见 ToolTip，便携说明压到按钮左侧 -->
+                                <Grid Grid.Column="2" Margin="16,0,16,0" VerticalAlignment="Center">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="头部加密长度:" VerticalAlignment="Center" />
-                                    <ComboBox Grid.Column="1" SelectedValuePath="Tag" SelectedValue="{Binding Config.HeadObfuscateSize}" Width="260" HorizontalAlignment="Left">
+                                    <TextBlock Text="目录" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                    <TextBox Grid.Column="1" Text="{Binding DataDirectoryDisplay, Mode=OneWay}" IsReadOnly="True"
+                                             FontSize="12" Height="28" Padding="6,2" VerticalContentAlignment="Center"
+                                             Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                             AutomationProperties.AutomationId="DataDirectoryBox"
+                                             ToolTip="{Binding DataDirectoryDisplay}" />
+                                    <TextBlock Grid.Column="2" Text="放 portable.ini 可切换" Margin="10,0,0,0"
+                                               Style="{StaticResource SettingsHintStyle}"
+                                               Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}" />
+                                    <TextBlock Grid.Column="2" Text="可随程序拷贝" Margin="10,0,0,0"
+                                               Style="{StaticResource SettingsHintStyle}"
+                                               Visibility="{Binding IsPortableMode, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </Grid>
+
+                                <ui:Button Grid.Column="3" Content="打开目录" Command="{Binding OpenDataDirectoryCommand}"
+                                           Appearance="Secondary" Height="30" Padding="10,3" FontSize="12.5"
+                                           VerticalAlignment="Center" HorizontalAlignment="Right"
+                                           AutomationProperties.AutomationId="OpenDataDir" />
+                            </Grid>
+                        </Border>
+
+                        <!-- 卡片 3: 混淆文件名（1 行） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Text="混淆文件名" Style="{StaticResource SettingsCardTitleStyle}" />
+
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="头部加密长度" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                    <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding Config.HeadObfuscateSize}"
+                                              Width="150" FontSize="12.5" VerticalContentAlignment="Center"
+                                              AutomationProperties.AutomationId="HeadSizeCombo">
                                         <ComboBoxItem Content="4 KB" Tag="4096" />
                                         <ComboBoxItem Content="64 KB（默认）" Tag="65536" IsSelected="True" />
                                         <ComboBoxItem Content="256 KB" Tag="262144" />
                                         <ComboBoxItem Content="1 MB" Tag="1048576" />
                                     </ComboBox>
-                                </Grid>
-
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="文件名:" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Column="1" Content="修改文件名（添加 hf_ 前缀）" 
-                                              IsChecked="{Binding Config.ObfuscateFileName}" />
-                                </Grid>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="扫描范围:" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Column="1" Content="包含子目录" 
-                                              IsChecked="{Binding Config.IncludeSubdirectories}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- 卡片 3: 目录名伪装（独立操作） -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
-                            <StackPanel>
-                                <TextBlock Text="目录名伪装" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                <TextBlock Text="将文件夹内的子目录名添加 _hf_ 前缀，可原样还原。仅降低可读性，不进行加密。"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
-                                <StackPanel Orientation="Horizontal">
-                                    <ui:Button Content="伪装目录名" Command="{Binding ObfuscateDirNamesCommand}"
-                                               Appearance="Primary" Margin="0,0,8,0" AutomationProperties.AutomationId="DirObfuscate" />
-                                    <ui:Button Content="还原目录名" Command="{Binding RestoreDirNamesCommand}"
-                                               Appearance="Secondary" AutomationProperties.AutomationId="DirRestore" />
+                                    <CheckBox Content="文件名加 hf_ 前缀" Margin="24,0,0,0"
+                                              VerticalAlignment="Center" IsChecked="{Binding Config.ObfuscateFileName}"
+                                              AutomationProperties.AutomationId="ObfuscateFileNameCheck" />
+                                    <CheckBox Content="扫描含子目录" Margin="24,0,0,0"
+                                              VerticalAlignment="Center" IsChecked="{Binding Config.IncludeSubdirectories}"
+                                              AutomationProperties.AutomationId="IncludeSubdirsCheck" />
                                 </StackPanel>
-                            </StackPanel>
+                            </Grid>
                         </Border>
 
-                        <!-- 卡片 4: Windows 资源管理器右键菜单 -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,0,14">
+                        <!-- 卡片 4: 目录名伪装（1 行） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <StackPanel>
-                                    <TextBlock Text="资源管理器右键菜单" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
-                                    <TextBlock Text="在文件、文件夹右键菜单中添加快捷操作。" 
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <TextBlock Text="当前状态: 已安装" Foreground="#10B981" FontWeight="SemiBold" Margin="0,8,0,0"
-                                               Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                    <TextBlock Text="当前状态: 未安装" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,8,0,0"
-                                               Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}" />
-                                </StackPanel>
+                                <TextBlock Text="目录名伪装" Style="{StaticResource SettingsCardTitleStyle}" />
+                                <TextBlock Grid.Column="1" Text="子目录名加 _hf_ 前缀，可原样还原；仅降低可读性"
+                                           Margin="12,0,12,0" Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" />
 
-                                <ui:Button Grid.Column="1" 
+                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                    <ui:Button Content="伪装" Command="{Binding ObfuscateDirNamesCommand}"
+                                               Appearance="Primary" Height="30" Padding="12,3" FontSize="12.5" Margin="0,0,8,0"
+                                               AutomationProperties.AutomationId="DirObfuscate" />
+                                    <ui:Button Content="还原" Command="{Binding RestoreDirNamesCommand}"
+                                               Appearance="Secondary" Height="30" Padding="12,3" FontSize="12.5"
+                                               AutomationProperties.AutomationId="DirRestore" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- 卡片 5: Windows 资源管理器右键菜单（1 行） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" Text="右键菜单" Style="{StaticResource SettingsCardTitleStyle}" />
+                                <Border Grid.Column="1" Background="#1A10B981" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="已安装" Foreground="#10B981" FontSize="11" FontWeight="SemiBold" />
+                                </Border>
+                                <Border Grid.Column="1" Background="#1A6B7280" CornerRadius="4" Padding="7,2" Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding IsContextMenuInstalled, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=invert}">
+                                    <TextBlock Text="未安装" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </Border>
+
+                                <TextBlock Grid.Column="2" Margin="16,0,16,0"
+                                           Text="含 混淆/还原、加密/解密、打开工作台，自动判断当前状态"
+                                           Style="{StaticResource SettingsHintStyle}"
+                                           TextTrimming="CharacterEllipsis" />
+
+                                <ui:Button Grid.Column="3"
                                            Command="{Binding ToggleContextMenuCommand}"
-                                           Width="150" Height="36" Margin="16,0,0,0"
-                                           VerticalAlignment="Center">
+                                           Height="30" Padding="12,3" FontSize="12.5"
+                                           VerticalAlignment="Center" HorizontalAlignment="Right"
+                                           AutomationProperties.AutomationId="ToggleContextMenu">
                                     <ui:Button.Style>
                                         <Style TargetType="ui:Button">
-                                            <Setter Property="Content" Value="添加右键菜单" />
+                                            <Setter Property="Content" Value="添加" />
                                             <Setter Property="Appearance" Value="Primary" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding IsContextMenuInstalled}" Value="True">
-                                                    <Setter Property="Content" Value="移除右键菜单" />
+                                                    <Setter Property="Content" Value="移除" />
                                                     <Setter Property="Appearance" Value="Danger" />
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -487,44 +512,61 @@
                             </Grid>
                         </Border>
 
-                        <!-- 卡片 5: 格式伪装规则 -->
-                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="8" Padding="20">
+                        <!-- 卡片 6: 格式规则（紧凑两列表格） -->
+                        <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel>
-                                <TextBlock Text="格式伪装规则" FontWeight="Bold" FontSize="14" Margin="0,0,0,12" />
-                                <ItemsControl ItemsSource="{Binding Config.Groups}">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="格式规则" Style="{StaticResource SettingsCardTitleStyle}" />
+                                    <TextBlock Grid.Column="1" Text="勾选启用分组；方框为伪装后缀"
+                                               Margin="12,0,12,0" HorizontalAlignment="Left"
+                                               Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                        <Button Content="恢复默认" Command="{Binding ResetConfigCommand}" Height="26" Padding="10,2" FontSize="12" Margin="0,0,6,0" />
+                                        <ui:Button Content="保存设置" Command="{Binding SaveConfigCommand}" Appearance="Primary"
+                                                   Height="26" Padding="12,2" FontSize="12" AutomationProperties.AutomationId="SaveConfig" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding Config.Groups}" AutomationProperties.AutomationId="FormatRuleList">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="2" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,8">
+                                            <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                                    BorderThickness="0,1,0,0" Padding="0,7" Margin="0,0,12,0">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="120" />
-                                                        <ColumnDefinition Width="140" />
-                                                        <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
-                                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding Enabled}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <TextBlock Text="伪装后缀: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-                                                        <TextBox Text="{Binding FakeExtension, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="4,0,0,0" />
-                                                    </StackPanel>
-                                                    <TextBlock Grid.Column="2" 
-                                                               Text="{Binding Extensions, Converter={StaticResource ListToStringConverter}}" 
-                                                               VerticalAlignment="Center" 
+                                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding Enabled}"
+                                                              FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                              MinHeight="0" Padding="0" />
+                                                    <TextBox Grid.Column="1" Text="{Binding FakeExtension, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="60" Height="24" MinHeight="0" FontSize="11.5" Padding="6,0" Margin="8,0,0,0"
+                                                             VerticalContentAlignment="Center"
+                                                             AutomationProperties.AutomationId="FakeExtBox"
+                                                             ToolTip="伪装后缀，如 .dat" />
+                                                    <TextBlock Grid.Column="2" Margin="8,0,0,0"
+                                                               Text="{Binding Extensions, Converter={StaticResource ListToStringConverter}}"
+                                                               FontSize="11" VerticalAlignment="Center"
                                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                                               Margin="12,0,0,0"
-                                                               TextTrimming="CharacterEllipsis" />
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTip="{Binding Extensions, Converter={StaticResource ListToStringConverter}}" />
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                                    <Button Content="恢复默认" Command="{Binding ResetConfigCommand}" Margin="0,0,8,0" />
-                                    <ui:Button Content="保存设置" Command="{Binding SaveConfigCommand}" Appearance="Primary" />
-                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
