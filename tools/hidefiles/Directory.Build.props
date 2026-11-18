@@ -24,7 +24,7 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
-  <Target Name="GenerateCustomVersion" BeforeTargets="GetAssemblyVersion">
+  <Target Name="GenerateCustomVersion" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo">
     <PropertyGroup>
       <Today>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd"))</Today>
       <TodayCompact>$([System.DateTime]::UtcNow.ToString("yyyyMMdd"))</TodayCompact>
@@ -39,6 +39,26 @@
       <FileVersion Condition="'$(Configuration)' != 'Debug'">$(Major).$(Minor).$(Patch).0</FileVersion>
       <Version Condition="'$(Configuration)' != 'Debug'">$(VersionPrefix)</Version>
     </PropertyGroup>
+
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
+    </Exec>
+
+    <PropertyGroup>
+      <GitCommitHash Condition="'$(GitCommitHash)' == ''">dev</GitCommitHash>
+      <BuildTimestamp>$([System.DateTime]::Now.ToString("yyyy-MM-dd HH:mm:ss"))</BuildTimestamp>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>GitHash</_Parameter1>
+        <_Parameter2>$(GitCommitHash)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>BuildTime</_Parameter1>
+        <_Parameter2>$(BuildTimestamp)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
   </Target>
 
 </Project>

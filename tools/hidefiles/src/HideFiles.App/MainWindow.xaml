@@ -506,7 +506,7 @@
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <Image Source="pack://application:,,,/HideFilesApp;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
                             <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="HideFiles v1.0.0" FontSize="18" FontWeight="Bold" />
+                                <TextBlock Text="{Binding AppVersionDisplay}" FontSize="18" FontWeight="Bold" />
                                 <TextBlock Text="Windows 文件加密工具" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </StackPanel>
@@ -517,10 +517,26 @@
                         <TextBlock Text="3. 密码与恢复码：支持密码保护与紧急恢复码解密，修改密码不影响已加密文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="4. 安全机制：失败自动回滚，目标重名自动编号，不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <Separator Margin="0,8,0,10" />
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="运行环境: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Text="{Binding DeploymentModeDisplay}" FontWeight="SemiBold" />
-                        </StackPanel>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="运行环境: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,12,6" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DeploymentModeDisplay}" FontWeight="SemiBold" Margin="0,0,0,6" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="提交版本: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,12,6" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding GitHashDisplay}" FontFamily="Consolas, Cascadia Code, monospace" FontWeight="SemiBold" Margin="0,0,0,6" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="构建时间: " Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,12,6" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BuildTimeDisplay}" Margin="0,0,0,6" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </TabItem>

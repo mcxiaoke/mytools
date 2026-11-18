@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -90,7 +91,9 @@ public static class V2Container
                 fs.Write(fileSalt);
                 fs.Write(fileNonce);
                 fs.Write(emkBlob);
-                fs.Write(BitConverter.GetBytes(metaCipher.Length));
+                Span<byte> metaLenBytes = stackalloc byte[4];
+                BinaryPrimitives.WriteInt32LittleEndian(metaLenBytes, metaCipher.Length);
+                fs.Write(metaLenBytes);
 
                 fs.Write(metaCipher);
 
@@ -132,7 +135,7 @@ public static class V2Container
         byte[] fileSalt = head.AsSpan(28, CoreConstants.SaltSize).ToArray();
         byte[] fileNonce = head.AsSpan(44, CoreConstants.NonceSize).ToArray();
         byte[] emkBlob = head.AsSpan(56, CoreConstants.EmkBlobSize).ToArray();
-        int metaLen = BitConverter.ToInt32(head, 116);
+        int metaLen = BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(116, 4));
         if (metaLen < CoreConstants.GcmTagSize || metaLen > fs.Length - CoreConstants.V2HeaderSize)
             throw new InvalidDataException("Corrupted metadata length.");
 

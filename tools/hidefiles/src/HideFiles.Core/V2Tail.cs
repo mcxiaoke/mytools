@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -142,7 +143,9 @@ public static class V2Tail
 
         using var ms = new MemoryStream(FixedTailSize + metaCipher.Length);
         ms.Write(metaCipher);
-        ms.Write(BitConverter.GetBytes(metaCipher.Length));
+        Span<byte> metaLenBytes = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(metaLenBytes, metaCipher.Length);
+        ms.Write(metaLenBytes);
         ms.Write(configSalt);
         ms.Write(fileSalt);
         ms.Write(fileNonce);
@@ -211,7 +214,7 @@ public static class V2Tail
         byte[] fileNonce = tail.AsSpan(FileNonceOffset, CoreConstants.NonceSize).ToArray();
         byte[] fileSalt = tail.AsSpan(FileSaltOffset, CoreConstants.SaltSize).ToArray();
         byte[] configSalt = tail.AsSpan(ConfigSaltOffset, CoreConstants.SaltSize).ToArray();
-        int metaLen = BitConverter.ToInt32(tail, MetaLenOffset);
+        int metaLen = BinaryPrimitives.ReadInt32LittleEndian(tail.AsSpan(MetaLenOffset, 4));
 
         long metaCipherPos = len - FixedTailSize - metaLen;
         if (metaLen < CoreConstants.GcmTagSize || metaCipherPos < 0)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -63,7 +64,7 @@ public sealed class HideFilesConfig
     public string? WrappedMasterKey { get; set; }
     public int KdfIterations { get; set; } = CoreConstants.DefaultKdfIterations;
 
-    /// <summary>恢复码哈希（Base64 SHA256），仅用于校验用户输入格式是否正确；恢复码明文不落盘</summary>
+    /// <summary>恢复码哈希（SHA-256 小写 Hex，64位），仅用于校验用户输入格式是否正确；恢复码明文不落盘</summary>
     public string? RecoveryCodeHash { get; set; }
 
     /// <summary>运行时会话 PIN（内存，不序列化）：加密新文件时用于解 WrappedMasterKey</summary>
@@ -158,6 +159,9 @@ public sealed class HideFilesConfig
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPin + PinSalt))).ToLowerInvariant();
 
     private static string HashRecoveryCode(string recoveryCode) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeRecoveryCode(recoveryCode)))).ToLowerInvariant();
+
+    private static string HashRecoveryCodeLegacyBase64(string recoveryCode) =>
         Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeRecoveryCode(recoveryCode))));
 
     private static string NormalizeRecoveryCode(string code) =>
@@ -177,10 +181,23 @@ public sealed class HideFilesConfig
     public bool VerifyRecoveryCode(string? code)
     {
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrEmpty(RecoveryCodeHash)) return false;
-        string expected = RecoveryCodeHash;
-        string actual = HashRecoveryCode(code);
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(actual));
+        string actualHex = HashRecoveryCode(code);
+        if (CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(RecoveryCodeHash), Encoding.UTF8.GetBytes(actualHex)))
+        {
+            return true;
+        }
+
+        // 向后兼容旧配置中的 Base64 格式
+        string actualLegacy = HashRecoveryCodeLegacyBase64(code);
+        if (CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(RecoveryCodeHash), Encoding.UTF8.GetBytes(actualLegacy)))
+        {
+            RecoveryCodeHash = actualHex; // 验证通过后自动就地平滑升级为 Hex
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -191,7 +208,9 @@ public sealed class HideFilesConfig
     {
         if (!HasPin) return true;
         if (string.IsNullOrWhiteSpace(pin)) return false;
-        return string.Equals(PinHash, HashPin(pin.Trim()), StringComparison.OrdinalIgnoreCase);
+        string actual = HashPin(pin.Trim());
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(PinHash!), Encoding.UTF8.GetBytes(actual));
     }
 
     public static HideFilesConfig CreateDefault()
@@ -292,6 +311,7 @@ public sealed class HideFilesConfig
             {
                 PropertyNameCaseInsensitive = true,
                 WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                 Converters = { new JsonStringEnumConverter() }
             };
             var loaded = JsonSerializer.Deserialize<HideFilesConfig>(json, opt);
@@ -332,10 +352,11 @@ public sealed class HideFilesConfig
         var opt = new JsonSerializerOptions
         {
             WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
             Converters = { new JsonStringEnumConverter() }
         };
         string json = JsonSerializer.Serialize(this, opt);
-        File.WriteAllText(filePath, json);
+        File.WriteAllText(filePath, json, Encoding.UTF8);
     }
 
     public bool MatchExtension(string fileExt, out string fakeExt)

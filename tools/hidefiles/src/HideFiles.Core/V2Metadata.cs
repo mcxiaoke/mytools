@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 
 namespace HideFiles.Core;
@@ -49,7 +50,9 @@ public sealed class V2Metadata
         WriteStr(2, OriginalExtension);
 
         ms.WriteByte(3); WriteVarInt(ms, 8);
-        ms.Write(BitConverter.GetBytes(OriginalLength));
+        Span<byte> lenBytes = stackalloc byte[8];
+        BinaryPrimitives.WriteInt64LittleEndian(lenBytes, OriginalLength);
+        ms.Write(lenBytes);
 
         ms.WriteByte(4);
         using (var rms = new MemoryStream())
@@ -69,7 +72,9 @@ public sealed class V2Metadata
         }
 
         ms.WriteByte(5); WriteVarInt(ms, 4);
-        ms.Write(BitConverter.GetBytes(KdfIterations));
+        Span<byte> iterBytes = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32LittleEndian(iterBytes, KdfIterations);
+        ms.Write(iterBytes);
 
         ms.WriteByte(6); WriteVarInt(ms, (ulong)OriginalSha256.Length);
         ms.Write(OriginalSha256);
@@ -82,7 +87,12 @@ public sealed class V2Metadata
             ms.WriteByte(8);
             using var cms = new MemoryStream();
             WriteVarInt(cms, (ulong)RegionCrcs.Count);
-            foreach (uint crc in RegionCrcs) cms.Write(BitConverter.GetBytes(crc));
+            Span<byte> crcBuf = stackalloc byte[4];
+            foreach (uint crc in RegionCrcs)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(crcBuf, crc);
+                cms.Write(crcBuf);
+            }
             byte[] cb = cms.ToArray();
             WriteVarInt(ms, (ulong)cb.Length);
             ms.Write(cb);
@@ -107,9 +117,9 @@ public sealed class V2Metadata
             {
                 case 1: meta.OriginalFileName = Encoding.UTF8.GetString(val); break;
                 case 2: meta.OriginalExtension = Encoding.UTF8.GetString(val); break;
-                case 3: if (val.Length == 8) meta.OriginalLength = BitConverter.ToInt64(val); break;
+                case 3: if (val.Length == 8) meta.OriginalLength = BinaryPrimitives.ReadInt64LittleEndian(val); break;
                 case 4: ParseRegions(val, meta.LockRegions); break;
-                case 5: if (val.Length == 4) meta.KdfIterations = BitConverter.ToInt32(val); break;
+                case 5: if (val.Length == 4) meta.KdfIterations = BinaryPrimitives.ReadInt32LittleEndian(val); break;
                 case 6: meta.OriginalSha256 = val.ToArray(); break;
                 case 7: if (val.Length >= 1) meta.Mode = (ProtectionMode)val[0]; break;
                 case 8: ParseCrcs(val, meta); break;
@@ -127,7 +137,7 @@ public sealed class V2Metadata
         for (ulong i = 0; i < count; i++)
         {
             if (p + 4 > val.Length) return;
-            list.Add(BitConverter.ToUInt32(val.Slice(p, 4)));
+            list.Add(BinaryPrimitives.ReadUInt32LittleEndian(val.Slice(p, 4)));
             p += 4;
         }
         meta.RegionCrcs = list;

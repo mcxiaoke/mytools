@@ -208,6 +208,11 @@ public partial class MainViewModel : ObservableObject
     public string DataDirectoryDisplay => HideFilesConfig.DirPath;
     public bool IsPortableMode => HideFilesConfig.IsPortableMode;
 
+    /// <summary>关于界面展示信息</summary>
+    public string AppVersionDisplay => $"HideFiles v{BuildInfo.Version}";
+    public string GitHashDisplay => BuildInfo.GitHash;
+    public string BuildTimeDisplay => BuildInfo.BuildTime;
+
     [RelayCommand]
     private void OpenDataDirectory()
     {

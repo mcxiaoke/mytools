@@ -21,14 +21,15 @@ public static class V2Crypto
         return pbkdf2.GetBytes(CoreConstants.MasterKeySize);
     }
 
+    private static readonly byte[] FileKeyPrefix = "HF2-FILEKEY"u8.ToArray();
+
     /// <summary>HKDF-SHA256：从 MK 派生每文件 fileKey（MK 已高熵，此步极快）</summary>
     public static byte[] DeriveFileKey(byte[] masterKey, byte[] fileSalt)
     {
         // 使用 HMAC-SHA256 做一次性派生：fileKey = HMAC(MK, "HF2-FILEKEY" || fileSalt)
-        byte[] prefix = "HF2-FILEKEY"u8.ToArray();
-        byte[] data = new byte[prefix.Length + fileSalt.Length];
-        Buffer.BlockCopy(prefix, 0, data, 0, prefix.Length);
-        Buffer.BlockCopy(fileSalt, 0, data, prefix.Length, fileSalt.Length);
+        Span<byte> data = stackalloc byte[FileKeyPrefix.Length + fileSalt.Length];
+        FileKeyPrefix.CopyTo(data);
+        fileSalt.CopyTo(data.Slice(FileKeyPrefix.Length));
         return HMACSHA256.HashData(masterKey, data);
     }
 

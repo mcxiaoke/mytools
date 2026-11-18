@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
@@ -352,7 +353,7 @@ public sealed class FileObfuscator
             byte[] nonce = V2Crypto.BlockNonce(fileNonce, idx);
             gcm.Encrypt(nonce, plain.AsSpan(0, n), cipher.AsSpan(0, n), tag);
 
-            BitConverter.TryWriteBytes(lenBuf, n);    // 明文长度（末块可能不足 64KB）
+            BinaryPrimitives.WriteInt32LittleEndian(lenBuf, n);    // 明文长度（末块可能不足 64KB）
             outFs.Write(lenBuf, 0, 4);
             outFs.Write(cipher, 0, n);
             outFs.Write(tag, 0, tag.Length);
@@ -373,7 +374,7 @@ public sealed class FileObfuscator
         while (remaining > 0)
         {
             inFs.ReadExactly(lenBuf, 0, 4);
-            int n = BitConverter.ToInt32(lenBuf);
+            int n = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
 
             // 长度前缀不在 GCM 认证范围内，必须先做范围校验再分配/读取
             if (n <= 0 || n > CoreConstants.FullChunkSize)
@@ -398,12 +399,12 @@ public sealed class FileObfuscator
         return config.DefaultFakeExtension;
     }
 
-    /// <summary>文件名混淆：主文件名 + 长度的 SHA-256 前 8 位十六进制</summary>
+    /// <summary>文件名混淆：主文件名 + 分隔符 + 长度的 SHA-256 前 16 位十六进制（64位熵，防止碰撞与拼接粘连）</summary>
     private static string BuildNameHash(string fileName, long length)
     {
         string stem = Path.GetFileNameWithoutExtension(fileName);
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(stem + length));
-        return Convert.ToHexString(hash, 0, 4).ToLowerInvariant();
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{stem}\0{length}"));
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
 
     /// <summary>
