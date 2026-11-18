@@ -203,10 +203,36 @@ public partial class MainViewModel : ObservableObject
         StatusMessage = "恢复码已复制到剪贴板。";
     }
 
-    /// <summary>弹出安全验证对话框，记录本会话凭据（PIN 或恢复码）</summary>
-    private bool TryPromptCredential()
+    /// <summary>部署模式与数据目录（支持标准漫游与便携模式）</summary>
+    public string DeploymentModeDisplay => HideFilesConfig.DeploymentModeName;
+    public string DataDirectoryDisplay => HideFilesConfig.DirPath;
+    public bool IsPortableMode => HideFilesConfig.IsPortableMode;
+
+    [RelayCommand]
+    private void OpenDataDirectory()
     {
-        var dlg = new Views.PinVerifyDialog(Config) { Owner = Application.Current?.MainWindow };
+        try
+        {
+            string dir = HideFilesConfig.DirPath;
+            if (Directory.Exists(dir))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = dir,
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>弹出安全验证对话框，记录本会话凭据（allowRecovery 控制是否允许使用恢复码）</summary>
+    private bool TryPromptCredential(bool allowRecovery = true)
+    {
+        var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Verify, allowRecovery: allowRecovery)
+        {
+            Owner = Application.Current?.MainWindow
+        };
         if (dlg.ShowDialog() != true || !dlg.IsVerified) return false;
 
         _sessionPin = string.IsNullOrEmpty(dlg.EnteredPin) ? null : dlg.EnteredPin;
@@ -232,7 +258,7 @@ public partial class MainViewModel : ObservableObject
     public bool EnsureRestoreCredential()
     {
         if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode)) return true;
-        return TryPromptCredential();
+        return TryPromptCredential(allowRecovery: true);
     }
 
     /// <summary>管理类操作（清除/修改密码）的身份验证：未设置密码时无需验证</summary>
@@ -240,49 +266,87 @@ public partial class MainViewModel : ObservableObject
     {
         if (!Config.HasPin) return true;
         if (!string.IsNullOrEmpty(_sessionPin) && Config.VerifyPin(_sessionPin)) return true;
-        return TryPromptCredential();
+        return TryPromptCredential(allowRecovery: false);
     }
 
     [RelayCommand]
-    private void SavePin()
+    private void PromptSetPin()
     {
-        if (string.IsNullOrWhiteSpace(NewPinInput)) { StatusMessage = "请输入有效密码。"; return; }
-
-        string? currentPin = null;
-        if (Config.HasKeyMaterial)
+        var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Set)
         {
-            // 修改已有密码：先验证当前密码
-            if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码才能修改。"; return; }
-            currentPin = _sessionPin;
-        }
+            Owner = Application.Current?.MainWindow
+        };
+        if (dlg.ShowDialog() != true || !dlg.IsVerified) return;
 
-        var result = Config.ChangePin(NewPinInput, currentPin);
-        if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置密码失败。"; return; }
+        var result = Config.ChangePin(dlg.EnteredPin, currentPin: null);
+        if (!result.Success)
+        {
+            StatusMessage = result.ErrorMessage ?? "设置密码失败。";
+            return;
+        }
 
         Config.Save();
         HasPinConfigured = Config.HasPin;
         _sessionPin = Config.SessionPin;
         RefreshSessionMasterKey();
-        NewPinInput = string.Empty;
         if (result.MasterKeyRecreated)
         {
             RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
-            StatusMessage = "密码已设置，请妥善保存恢复码（仅显示一次）。";
+            StatusMessage = "主密码已设置成功，请妥善保存恢复码（仅显示一次）。";
         }
         else
         {
-            StatusMessage = "密码已更新。";
+            StatusMessage = "主密码已设置成功。";
         }
     }
 
     [RelayCommand]
-    private void ClearPin()
+    private void PromptChangePin()
     {
-        if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码后方可清除。"; return; }
+        if (!Config.HasPin)
+        {
+            PromptSetPin();
+            return;
+        }
+
+        var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Change)
+        {
+            Owner = Application.Current?.MainWindow
+        };
+        if (dlg.ShowDialog() != true || !dlg.IsVerified) return;
+
+        var result = Config.ChangePin(dlg.EnteredPin, dlg.CurrentPin);
+        if (!result.Success)
+        {
+            StatusMessage = result.ErrorMessage ?? "修改密码失败。";
+            return;
+        }
+
+        Config.Save();
+        HasPinConfigured = Config.HasPin;
+        _sessionPin = Config.SessionPin;
+        RefreshSessionMasterKey();
+        StatusMessage = "主密码修改成功。历史文件仍可使用新密码正常解密。";
+    }
+
+    [RelayCommand]
+    private void PromptClearPin()
+    {
+        if (!Config.HasPin) return;
+
+        var dlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Verify)
+        {
+            Owner = Application.Current?.MainWindow
+        };
+        if (dlg.ShowDialog() != true || !dlg.IsVerified)
+        {
+            StatusMessage = "验证未通过，密码未清除。";
+            return;
+        }
 
         var confirm = MessageBox.Show(
-            "清除密码将删除本机保存的密钥，此前加密的文件将只能通过恢复码解密。\n\n确认清除？",
-            "清除密码", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "清除密码将删除本机保存的密钥材料，此前加密的文件将只能通过恢复码解密。\n\n确定要清除当前密码吗？",
+            "清除密码确认", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.OK) return;
 
         Config.ClearKeyMaterial();
@@ -291,30 +355,51 @@ public partial class MainViewModel : ObservableObject
         _sessionPin = null;
         _sessionRecoveryCode = null;
         _sessionMasterKey = null;
-        NewPinInput = string.Empty;
-        StatusMessage = "密码已清除。";
+        RecoveryCodeDisplay = string.Empty;
+        StatusMessage = "主密码已清除。历史加密文件需使用恢复码解密。";
     }
 
-    /// <summary>确保加密所需的密码会话已解锁</summary>
+    /// <summary>确保加密所需的密码会话已解锁（加密强制需要密码，禁用恢复码）</summary>
     private bool EnsureEncryptionReady(string action)
     {
         if (!Config.HasPin || !Config.HasKeyMaterial)
         {
-            MessageBox.Show("尚未设置密码。请先设置密码后再执行加密。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            SelectedTabIndex = 2; // 自动跳转至“设置”Tab
-            StatusMessage = $"请先设置密码，{action}已中止。";
-            return false;
+            var setDlg = new Views.PasswordDialog(Config, Views.PasswordDialogMode.Set)
+            {
+                Owner = Application.Current?.MainWindow
+            };
+            if (setDlg.ShowDialog() != true || !setDlg.IsVerified)
+            {
+                StatusMessage = $"未设置密码，{action}已中止。";
+                return false;
+            }
+
+            var result = Config.ChangePin(setDlg.EnteredPin, currentPin: null);
+            if (!result.Success)
+            {
+                StatusMessage = result.ErrorMessage ?? "设置密码失败。";
+                return false;
+            }
+
+            Config.Save();
+            HasPinConfigured = Config.HasPin;
+            _sessionPin = Config.SessionPin;
+            RefreshSessionMasterKey();
+            if (result.MasterKeyRecreated)
+                RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
+
+            StatusMessage = "主密码已设置，请在设置中查看并保存恢复码。";
         }
-        if (string.IsNullOrEmpty(Config.SessionPin) && !EnsurePinVerified())
+
+        if (!string.IsNullOrEmpty(Config.SessionPin) && Config.VerifyPin(Config.SessionPin))
+            return true;
+
+        if (!TryPromptCredential(allowRecovery: false) || string.IsNullOrEmpty(Config.SessionPin))
         {
             StatusMessage = $"需要输入密码解锁，{action}已中止。";
             return false;
         }
-        if (string.IsNullOrEmpty(Config.SessionPin))
-        {
-            StatusMessage = $"{action}需要密码，已中止。";
-            return false;
-        }
+
         return true;
     }
 
@@ -393,7 +478,7 @@ public partial class MainViewModel : ObservableObject
                     StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}";
                     ProcessFileResult res = isObfuscate
                         ? _obfuscator.ObfuscateFile(item.FilePath, Config)
-                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey);
+                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey, modeOverride ?? Config.ProtectionMode);
 
                     if (res.Success)
                     {
@@ -439,24 +524,6 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(NewPinInput))
-            {
-                string? currentPin = null;
-                if (Config.HasKeyMaterial)
-                {
-                    if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码才能修改，设置未保存。"; return; }
-                    currentPin = _sessionPin;
-                }
-
-                var result = Config.ChangePin(NewPinInput, currentPin);
-                if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置密码失败。"; return; }
-
-                HasPinConfigured = Config.HasPin;
-                _sessionPin = Config.SessionPin;
-                RefreshSessionMasterKey();
-                NewPinInput = string.Empty;
-                if (result.MasterKeyRecreated) RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
-            }
             Config.Save();
             StatusMessage = "设置已保存。";
         }

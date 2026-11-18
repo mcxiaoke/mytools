@@ -5,7 +5,7 @@ namespace HideFiles.Core;
 
 /// <summary>
 /// 格式关键结构定位器：找出"解码必需"的小块区域，供结构锁模式原地加密。
-/// 纯 BCL 实现，无第三方依赖；无法识别或解析失败时返回空清单（调用方升级为整体加密兜底）。
+/// 纯 BCL 实现，无第三方依赖；无法识别或解析失败时返回空清单（结构加密模式直接报错拒绝处理，不自动降级）。
 ///
 /// MP4: 递归 box 树，锁定 moov 下 stco/co64/stsc/stsz/stss/avcC/hvcC 的载荷
 /// MKV: EBML VINT 解析，锁定 CodecPrivate / Cues 载荷 + SeekHead

@@ -160,12 +160,11 @@ public sealed class FileObfuscator
 
             if (config.ProtectionMode == ProtectionMode.StructureLock)
             {
-                // 结构锁：定位关键结构；找不到则直接报错，文件不动
+                // 结构锁：定位关键结构；找不到则直接报错，文件不动，不自动降级
                 meta.LockRegions = StructureLocator.Locate(filePath, originalExt);
                 if (meta.LockRegions.Count == 0)
                     throw new InvalidDataException(
-                        $"结构锁模式无法识别该文件的关键结构（扩展名 {originalExt}）。" +
-                        "请在设置中改用“整体加密”模式后重试，文件未被修改。");
+                        $"结构加密模式不支持该文件格式或关键结构（扩展名 {originalExt}）。若需加密请使用“整体加密”工作台，文件未被修改。");
 
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
                 V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt,
@@ -236,9 +235,10 @@ public sealed class FileObfuscator
     /// <summary>
     /// 还原文件。pin 与 recoveryCode 二选一；fallbackMasterKey 为本机 config 中当前 PIN 对应的
     /// 主密钥，用于"用户改过 PIN、文件内 emkBlob 仍是旧 PIN 封装"的情形。
+    /// expectedMode 指定期望的保护模式，当文件与当前工作台模式不匹配时直接报错拒绝处理，避免模式混淆。
     /// </summary>
     public ProcessFileResult RestoreFile(string filePath, string? pin, string? recoveryCode = null,
-        byte[]? fallbackMasterKey = null)
+        byte[]? fallbackMasterKey = null, ProtectionMode? expectedMode = null)
     {
         var sw = Stopwatch.StartNew();
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
@@ -250,6 +250,12 @@ public sealed class FileObfuscator
 
             string dir = Path.GetDirectoryName(filePath)!;
             bool isTail = V2Tail.IsTailFile(filePath);
+
+            if (expectedMode == ProtectionMode.StructureLock && !isTail)
+                throw new InvalidDataException("该文件不是结构加密文件（可能是整体加密文件，请在“整体加密”工作台解密）。");
+
+            if (expectedMode == ProtectionMode.FullEncrypt && isTail)
+                throw new InvalidDataException("该文件不是整体加密文件（是结构加密文件，请在“结构加密”工作台解密）。");
 
             if (isTail)
             {

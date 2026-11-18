@@ -214,23 +214,65 @@ public sealed class HideFilesConfig
                 new ExtensionRuleGroup("Videos", ".dat", new[] { ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".ts", ".m4v" }),
                 new ExtensionRuleGroup("Images", ".tmp", new[] { ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".heic", ".raw" }),
                 new ExtensionRuleGroup("Audio", ".bin", new[] { ".flac", ".mp3", ".wav", ".aac", ".ogg", ".m4a" }),
-                new ExtensionRuleGroup("Archives", ".bak", new[] { ".zip", ".rar", ".7z", ".tar", ".gz" })
+                new ExtensionRuleGroup("Archives", ".bak", new[] { ".zip", ".rar", ".7z", ".tar", ".gz" }),
+                new ExtensionRuleGroup("Documents", ".dat", new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".md" }),
+                new ExtensionRuleGroup("Others", ".dat", new[] { ".exe", ".dll", ".iso", ".bin", ".apk", ".dmg", ".db" })
             }
         };
         return cfg;
     }
 
+    /// <summary>数据目录覆盖（自动化测试 / CI 隔离用，优先级最高）。</summary>
+    public static string? DataDirOverride { get; set; }
+
+    /// <summary>环境变量名：设置后覆盖数据目录（便携部署 / 自动化测试用）。</summary>
+    public const string DataDirEnvVarName = "HIDEFILES_DATA_DIR";
+
+    public static string PortableFlagPath =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "portable.ini");
+
+    public static string PortableDataDirPath =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_data");
+
+    public static string AppDataDirPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HideFiles");
+
+    public static bool IsPortableMode =>
+        File.Exists(PortableFlagPath) || Directory.Exists(PortableDataDirPath);
+
+    public static string DeploymentModeName =>
+        IsPortableMode ? "便携模式 (Portable)" : "标准模式 (Roaming)";
+
+    public static string DirPath
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(DataDirOverride))
+                return DataDirOverride;
+
+            try
+            {
+                var env = Environment.GetEnvironmentVariable(DataDirEnvVarName);
+                if (!string.IsNullOrWhiteSpace(env)) return env;
+            }
+            catch { }
+
+            if (IsPortableMode)
+                return PortableDataDirPath;
+
+            string localConfig = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
+            if (File.Exists(localConfig))
+                return AppDomain.CurrentDomain.BaseDirectory;
+
+            return AppDataDirPath;
+        }
+    }
+
     public static string GetDefaultConfigPath()
     {
-        string localConfig = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
-        if (File.Exists(localConfig))
-        {
-            return localConfig;
-        }
-
-        string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HideFiles");
-        Directory.CreateDirectory(appData);
-        return Path.Combine(appData, "config.json");
+        string dir = DirPath;
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "config.json");
     }
 
     public static HideFilesConfig Load(string? path = null)
@@ -253,11 +295,31 @@ public sealed class HideFilesConfig
                 Converters = { new JsonStringEnumConverter() }
             };
             var loaded = JsonSerializer.Deserialize<HideFilesConfig>(json, opt);
-            return loaded ?? CreateDefault();
+            if (loaded != null)
+            {
+                EnsureDefaultGroups(loaded);
+                return loaded;
+            }
+            return CreateDefault();
         }
         catch
         {
             return CreateDefault();
+        }
+    }
+
+    public static void EnsureDefaultGroups(HideFilesConfig config)
+    {
+        if (!config.Groups.Any(g => g.Name.Equals("Documents", StringComparison.OrdinalIgnoreCase)))
+        {
+            config.Groups.Add(new ExtensionRuleGroup("Documents", ".dat",
+                new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".md" }));
+        }
+        if (!config.Groups.Any(g => g.Name.Equals("Others", StringComparison.OrdinalIgnoreCase) ||
+                                    g.Name.Equals("其它", StringComparison.OrdinalIgnoreCase)))
+        {
+            config.Groups.Add(new ExtensionRuleGroup("Others", ".dat",
+                new[] { ".exe", ".dll", ".iso", ".bin", ".apk", ".dmg", ".db" }));
         }
     }
 
@@ -279,6 +341,7 @@ public sealed class HideFilesConfig
     public bool MatchExtension(string fileExt, out string fakeExt)
     {
         string ext = fileExt.StartsWith('.') ? fileExt.ToLowerInvariant() : "." + fileExt.ToLowerInvariant();
+        // 1. 匹配启用的规则组
         foreach (var g in Groups)
         {
             if (g.Enabled && g.Extensions.Contains(ext))
@@ -287,7 +350,12 @@ public sealed class HideFilesConfig
                 return true;
             }
         }
-        fakeExt = DefaultFakeExtension;
+
+        // 2. 未匹配特定规则组时，若“其它/Others”组启用，则取其伪装扩展名
+        var otherGroup = Groups.FirstOrDefault(g => g.Enabled && (
+            g.Name.Equals("Others", StringComparison.OrdinalIgnoreCase) ||
+            g.Name.Equals("其它", StringComparison.OrdinalIgnoreCase)));
+        fakeExt = otherGroup?.FakeExtension ?? DefaultFakeExtension;
         return false;
     }
 }

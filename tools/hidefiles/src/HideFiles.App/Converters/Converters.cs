@@ -53,7 +53,8 @@ public class ListToStringConverter : IValueConverter
     {
         if (value is IEnumerable<string> list)
         {
-            return string.Join(", ", list);
+            var items = list.Select(s => s == "*" ? "* (所有未匹配格式)" : s);
+            return string.Join(", ", items);
         }
         return string.Empty;
     }
