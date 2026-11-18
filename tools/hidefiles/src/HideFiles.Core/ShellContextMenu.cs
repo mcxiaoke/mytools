@@ -128,46 +128,46 @@ public static class ShellContextMenu
 
         string targetParam = isBackground ? "\"%V\"" : "\"%1\"";
 
-        // 子菜单 1: 混淆文件（结构锁，原地加密关键结构，极速）
+        // 子菜单 1: 结构加密
         using (var hideKey = subShell.CreateSubKey("1_Hide"))
         {
-            hideKey.SetValue("MUIVerb", "混淆文件（结构锁）");
+            hideKey.SetValue("MUIVerb", "结构加密");
             hideKey.SetValue("Icon", iconPath);
             using var cmdKey = hideKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --hide {targetParam}");
         }
 
-        // 子菜单 2: 还原文件（结构锁还原）
+        // 子菜单 2: 结构解密
         using (var unhideKey = subShell.CreateSubKey("2_Unhide"))
         {
-            unhideKey.SetValue("MUIVerb", "还原文件（结构锁）");
+            unhideKey.SetValue("MUIVerb", "结构解密");
             unhideKey.SetValue("Icon", iconPath);
             using var cmdKey = unhideKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --unhide {targetParam}");
         }
 
-        // 子菜单 3: 加密文件（整体加密，最强保护）
+        // 子菜单 3: 整体加密
         using (var encKey = subShell.CreateSubKey("3_Encrypt"))
         {
-            encKey.SetValue("MUIVerb", "加密文件（整体加密）");
+            encKey.SetValue("MUIVerb", "整体加密");
             encKey.SetValue("Icon", iconPath);
             using var cmdKey = encKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --encrypt {targetParam}");
         }
 
-        // 子菜单 4: 解密文件（整体加密还原）
+        // 子菜单 4: 整体解密
         using (var decKey = subShell.CreateSubKey("4_Decrypt"))
         {
-            decKey.SetValue("MUIVerb", "解密文件（整体加密）");
+            decKey.SetValue("MUIVerb", "整体解密");
             decKey.SetValue("Icon", iconPath);
             using var cmdKey = decKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --decrypt {targetParam}");
         }
 
-        // 子菜单 5: 在 HideFiles 中打开
+        // 子菜单 5: 打开 HideFiles
         using (var openKey = subShell.CreateSubKey("5_OpenApp"))
         {
-            openKey.SetValue("MUIVerb", "在 HideFiles 中管理...");
+            openKey.SetValue("MUIVerb", "打开 HideFiles");
             openKey.SetValue("Icon", iconPath);
             using var cmdKey = openKey.CreateSubKey("command");
             cmdKey.SetValue("", $"\"{appExe}\" --open {targetParam}");

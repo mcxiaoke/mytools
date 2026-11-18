@@ -24,7 +24,7 @@ public partial class MainViewModel : ObservableObject
     private byte[]? _sessionMasterKey;
 
     [ObservableProperty]
-    private string _title = "HideFiles - 极速文件自包含混淆保护工具";
+    private string _title = "HideFiles - 文件加密工具";
 
     [ObservableProperty]
     private HideFilesConfig _config;
@@ -36,7 +36,7 @@ public partial class MainViewModel : ObservableObject
     private double _progressValue;
 
     [ObservableProperty]
-    private string _statusMessage = "就绪。拖拽文件或文件夹到窗口开始处理。";
+    private string _statusMessage = "就绪。支持拖拽文件或文件夹到窗口。";
 
     [ObservableProperty]
     private bool _isContextMenuInstalled;
@@ -54,13 +54,13 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ConfiguredPinDisplay))]
     private bool _hasPinConfigured;
 
-    public string ConfiguredPinDisplay => HasPinConfigured ? "已启用保护 (●●●●●●)" : "未设置";
+    public string ConfiguredPinDisplay => HasPinConfigured ? "已设置 (●●●●●●)" : "未设置";
 
     /// <summary>当前活动工作台：struct=结构锁 secure=整体加密（由 Tab 切换设置，决定拖拽目标）</summary>
     [ObservableProperty]
     private string _activeMode = "struct";
 
-    /// <summary>结构锁工作台文件列表</summary>
+    /// <summary>结构加密工作台文件列表</summary>
     public ObservableCollection<FileItemModel> Files { get; } = new();
     /// <summary>整体加密工作台文件列表</summary>
     public ObservableCollection<FileItemModel> SecureFiles { get; } = new();
@@ -117,7 +117,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateCounts();
-        StatusMessage = $"已加载 {collection.Count} 个文件 (普通: {collection.Count(f => f.Status == FileStatus.Normal)}, 已保护: {collection.Count(f => f.Status == FileStatus.Obfuscated)})。";
+        StatusMessage = $"已加载 {collection.Count} 个文件 (未加密: {collection.Count(f => f.Status == FileStatus.Normal)}, 已加密: {collection.Count(f => f.Status == FileStatus.Obfuscated)})。";
     }
 
     private void AddSingleFile(string file, HashSet<string> existing, ObservableCollection<FileItemModel> collection)
@@ -135,8 +135,8 @@ public partial class MainViewModel : ObservableObject
             OriginalFileName = insp.OriginalFileName,
             StatusText = insp.Status switch
             {
-                FileStatus.Obfuscated => insp.ProtectionMode == ProtectionMode.FullEncrypt ? "已加密" : "已混淆",
-                FileStatus.Normal => "普通",
+                FileStatus.Obfuscated => "已加密",
+                FileStatus.Normal => "未加密",
                 FileStatus.Corrupted => "损坏",
                 FileStatus.Locked => "已占用",
                 _ => "未知"
@@ -193,8 +193,8 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 还原所需凭据：PIN 或恢复码任一即可。
-    /// 即使本机已没有密钥材料（PIN 被清除），也允许用恢复码还原。
+    /// 还原所需凭据：密码或恢复码任一即可。
+    /// 即使本机已没有密钥材料（密码被清除），也允许用恢复码还原。
     /// </summary>
     public bool EnsureRestoreCredential()
     {
@@ -202,7 +202,7 @@ public partial class MainViewModel : ObservableObject
         return TryPromptCredential();
     }
 
-    /// <summary>管理类操作（清除/修改 PIN）的身份验证：未设置 PIN 时无需验证</summary>
+    /// <summary>管理类操作（清除/修改密码）的身份验证：未设置密码时无需验证</summary>
     public bool EnsurePinVerified()
     {
         if (!Config.HasPin) return true;
@@ -213,18 +213,18 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void SavePin()
     {
-        if (string.IsNullOrWhiteSpace(NewPinInput)) { StatusMessage = "请输入有效的 PIN 码。"; return; }
+        if (string.IsNullOrWhiteSpace(NewPinInput)) { StatusMessage = "请输入有效密码。"; return; }
 
         string? currentPin = null;
         if (Config.HasKeyMaterial)
         {
-            // 修改已有 PIN：先验证当前 PIN，只重新封装同一主密钥（恢复码不变、历史文件仍可用）
-            if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 才能修改。"; return; }
+            // 修改已有密码：先验证当前密码
+            if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码才能修改。"; return; }
             currentPin = _sessionPin;
         }
 
         var result = Config.ChangePin(NewPinInput, currentPin);
-        if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置 PIN 失败。"; return; }
+        if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置密码失败。"; return; }
 
         Config.Save();
         HasPinConfigured = Config.HasPin;
@@ -234,22 +234,22 @@ public partial class MainViewModel : ObservableObject
         if (result.MasterKeyRecreated)
         {
             RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
-            StatusMessage = "安全 PIN 已设置！请妥善保存生成的恢复码（仅显示一次）。";
+            StatusMessage = "密码已设置，请妥善保存恢复码（仅显示一次）。";
         }
         else
         {
-            StatusMessage = "PIN 已更新：主密钥与恢复码均未变，此前保护的文件仍可用新 PIN 还原。";
+            StatusMessage = "密码已更新。";
         }
     }
 
     [RelayCommand]
     private void ClearPin()
     {
-        if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 码后方可清除。"; return; }
+        if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码后方可清除。"; return; }
 
         var confirm = MessageBox.Show(
-            "清除 PIN 会删除本机保存的密钥材料，历史文件将只能用恢复码还原。\n\n请确认已离线保存恢复码。继续？",
-            "清除 PIN 保护", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "清除密码将删除本机保存的密钥，此前加密的文件将只能通过恢复码解密。\n\n确认清除？",
+            "清除密码", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.OK) return;
 
         Config.ClearKeyMaterial();
@@ -259,31 +259,31 @@ public partial class MainViewModel : ObservableObject
         _sessionRecoveryCode = null;
         _sessionMasterKey = null;
         NewPinInput = string.Empty;
-        StatusMessage = "PIN 已清除；历史文件仍可用恢复码还原。";
+        StatusMessage = "密码已清除。";
     }
 
-    /// <summary>确保加密所需的 PIN 会话已解锁（恢复码只能用于还原，不能用于加密新文件）</summary>
+    /// <summary>确保加密所需的密码会话已解锁</summary>
     private bool EnsureEncryptionReady(string action)
     {
         if (!Config.HasPin || !Config.HasKeyMaterial)
         {
-            StatusMessage = $"请先设置 PIN 码（v2 加密需要 PIN 保护密钥），{action}已中止。";
+            StatusMessage = $"请先设置密码，{action}已中止。";
             return false;
         }
         if (string.IsNullOrEmpty(Config.SessionPin) && !EnsurePinVerified())
         {
-            StatusMessage = $"需要输入 PIN 解锁加密密钥，{action}已中止。";
+            StatusMessage = $"需要输入密码解锁，{action}已中止。";
             return false;
         }
         if (string.IsNullOrEmpty(Config.SessionPin))
         {
-            StatusMessage = $"{action}需要 PIN（恢复码只能用于还原），已中止。";
+            StatusMessage = $"{action}需要密码，已中止。";
             return false;
         }
         return true;
     }
 
-    // ---------- 结构锁工作台 ----------
+    // ---------- 结构加密工作台 ----------
     [RelayCommand]
     private async Task ObfuscateSelectedAsync()
         => await ProcessSelectedAsync(Files, ProtectionMode.StructureLock, isObfuscate: true);
@@ -291,7 +291,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task RestoreSelectedAsync()
     {
-        if (!EnsureRestoreCredential()) { StatusMessage = "未提供可用的 PIN 或恢复码，还原已中止。"; return; }
+        if (!EnsureRestoreCredential()) { StatusMessage = "未提供密码或恢复码，解密已中止。"; return; }
         await ProcessSelectedAsync(Files, ProtectionMode.StructureLock, isObfuscate: false);
     }
 
@@ -303,7 +303,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task DecryptSelectedAsync()
     {
-        if (!EnsureRestoreCredential()) { StatusMessage = "未提供可用的 PIN 或恢复码，解密已中止。"; return; }
+        if (!EnsureRestoreCredential()) { StatusMessage = "未提供密码或恢复码，解密已中止。"; return; }
         await ProcessSelectedAsync(SecureFiles, ProtectionMode.FullEncrypt, isObfuscate: false);
     }
 
@@ -314,10 +314,10 @@ public partial class MainViewModel : ObservableObject
             (isObfuscate ? f.Status == FileStatus.Normal : f.Status == FileStatus.Obfuscated)).ToList();
         if (targets.Count == 0)
         {
-            StatusMessage = isObfuscate ? "未选择可处理的普通文件。" : "未选择已保护的文件。";
+            StatusMessage = isObfuscate ? "未选择未加密的文件。" : "未选择已加密的文件。";
             return;
         }
-        if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "混淆")) return;
+        if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "加密")) return;
 
         await ProcessAsync(targets, isObfuscate, mode);
     }
@@ -328,7 +328,7 @@ public partial class MainViewModel : ObservableObject
         string m = mode == ProtectionMode.FullEncrypt ? "secure" : "struct";
         AddPaths(paths, m);
         var collection = CollectionFor(m);
-        if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "混淆")) return;
+        if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "加密")) return;
         if (!isObfuscate && !EnsureRestoreCredential()) return;
         await ProcessAsync(collection.Where(f =>
             (isObfuscate ? f.Status == FileStatus.Normal : f.Status == FileStatus.Obfuscated)).ToList(), isObfuscate, mode);
@@ -338,7 +338,7 @@ public partial class MainViewModel : ObservableObject
         ProtectionMode? modeOverride = null)
     {
         // 防重入：批量任务串行执行，避免两次点击同时改写 Config.ProtectionMode 与同一批文件
-        if (IsProcessing) { StatusMessage = "已有任务正在处理，请等待完成。"; return; }
+        if (IsProcessing) { StatusMessage = "正在处理任务，请等待完成。"; return; }
 
         var prevMode = Config.ProtectionMode;
         if (modeOverride.HasValue) Config.ProtectionMode = modeOverride.Value;
@@ -347,7 +347,6 @@ public partial class MainViewModel : ObservableObject
         int total = targetItems.Count;
         int successCount = 0;
         var failures = new List<string>();
-        bool isFullEncrypt = Config.ProtectionMode == ProtectionMode.FullEncrypt;
 
         try
         {
@@ -372,8 +371,8 @@ public partial class MainViewModel : ObservableObject
                             item.Status = insp.Status;
                             item.OriginalFileName = insp.OriginalFileName;
                             item.StatusText = isObfuscate
-                                ? (isFullEncrypt ? "已加密" : "已混淆")
-                                : "普通";
+                                ? "已加密"
+                                : "未加密";
                         });
                     }
                     else
@@ -394,7 +393,7 @@ public partial class MainViewModel : ObservableObject
 
         UpdateCounts();
         StatusMessage = failures.Count == 0
-            ? $"处理完成！成功: {successCount}/{total}。"
+            ? $"处理完成：成功 {successCount}/{total}。"
             : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count} —— "
               + string.Join("；", failures.Take(3)) + (failures.Count > 3 ? " …" : string.Empty);
     }
@@ -410,12 +409,12 @@ public partial class MainViewModel : ObservableObject
                 string? currentPin = null;
                 if (Config.HasKeyMaterial)
                 {
-                    if (!EnsurePinVerified()) { StatusMessage = "需要验证当前 PIN 才能修改，配置未保存。"; return; }
+                    if (!EnsurePinVerified()) { StatusMessage = "需要验证当前密码才能修改，设置未保存。"; return; }
                     currentPin = _sessionPin;
                 }
 
                 var result = Config.ChangePin(NewPinInput, currentPin);
-                if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置 PIN 失败。"; return; }
+                if (!result.Success) { StatusMessage = result.ErrorMessage ?? "设置密码失败。"; return; }
 
                 HasPinConfigured = Config.HasPin;
                 _sessionPin = Config.SessionPin;
@@ -424,15 +423,15 @@ public partial class MainViewModel : ObservableObject
                 if (result.MasterKeyRecreated) RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
             }
             Config.Save();
-            StatusMessage = "所有配置变更已成功保存！";
+            StatusMessage = "设置已保存。";
         }
-        catch (Exception ex) { StatusMessage = $"保存配置失败: {ex.Message}"; }
+        catch (Exception ex) { StatusMessage = $"保存设置失败: {ex.Message}"; }
     }
 
     [RelayCommand]
     private void ResetConfig()
     {
-        // 只重置规则，保留密钥材料——"重置为默认配置"不应顺手销毁解密历史文件的能力
+        // 只重置规则，保留密钥材料
         var fresh = HideFilesConfig.CreateDefault();
         fresh.PinHash = Config.PinHash;
         fresh.ConfigSalt = Config.ConfigSalt;
@@ -445,10 +444,10 @@ public partial class MainViewModel : ObservableObject
         Config.Save();
         HasPinConfigured = Config.HasPin;
         RefreshSessionMasterKey();
-        StatusMessage = "已恢复默认规则（PIN 与密钥材料保持不变）。";
+        StatusMessage = "已恢复默认设置（密码保持不变）。";
     }
 
-    // ---------- 目录名混淆（独立操作） ----------
+    // ---------- 目录名伪装（独立操作） ----------
     [RelayCommand]
     private void ObfuscateDirNames() => ApplyDirectoryNames(obfuscate: true);
 
@@ -457,14 +456,14 @@ public partial class MainViewModel : ObservableObject
 
     private void ApplyDirectoryNames(bool obfuscate)
     {
-        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要混淆子目录名的文件夹" : "选择要还原子目录名的文件夹" };
+        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要伪装子目录名的文件夹" : "选择要还原子目录名的文件夹" };
         if (dlg.ShowDialog() != true || string.IsNullOrEmpty(dlg.FolderName)) return;
 
         var result = obfuscate
             ? DirectoryObfuscator.ObfuscateDirectory(dlg.FolderName)
             : DirectoryObfuscator.RestoreDirectory(dlg.FolderName);
 
-        string verb = obfuscate ? "混淆" : "还原";
+        string verb = obfuscate ? "伪装" : "还原";
         StatusMessage = result.Success
             ? $"目录名{verb}完成：改名 {result.Renamed}，跳过 {result.Skipped}。"
             : $"目录名{verb}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count} —— "
@@ -481,12 +480,12 @@ public partial class MainViewModel : ObservableObject
             if (IsContextMenuInstalled)
             {
                 ShellContextMenu.Uninstall();
-                StatusMessage = "已成功移除 Windows 右键菜单。";
+                StatusMessage = "已移除 Windows 右键菜单。";
             }
             else
             {
                 ShellContextMenu.Install(appExe);
-                StatusMessage = "已成功安装 Windows 四动作右键菜单！";
+                StatusMessage = "已添加 Windows 右键菜单。";
             }
             RefreshContextMenuStatus();
         }

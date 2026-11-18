@@ -46,8 +46,8 @@ public partial class PinVerifyDialog : FluentWindow
         PinBox.Visibility = recovery ? Visibility.Collapsed : Visibility.Visible;
         RecoveryBox.Visibility = recovery ? Visibility.Visible : Visibility.Collapsed;
         HintText.Text = recovery
-            ? "🔑 请输入恢复码（设置 PIN 时生成的那串字母数字）："
-            : "🔒 请输入安全 PIN 码以继续：";
+            ? "请输入恢复码："
+            : "请输入密码：";
         ErrorText.Visibility = Visibility.Collapsed;
 
         if (recovery) RecoveryBox.Focus();
@@ -72,7 +72,7 @@ public partial class PinVerifyDialog : FluentWindow
         }
         else
         {
-            ShowError("PIN 码不正确，请重新输入。");
+            ShowError("密码错误，请重新输入。");
             PinBox.SelectAll();
             PinBox.Focus();
         }
@@ -96,7 +96,7 @@ public partial class PinVerifyDialog : FluentWindow
         }
         catch (Exception)
         {
-            ShowError("恢复码格式不正确（应为 52 位 Base32 字符，可含空格或横线）。");
+            ShowError("恢复码格式错误（需为 52 位字符）。");
             RecoveryBox.Focus();
         }
     }

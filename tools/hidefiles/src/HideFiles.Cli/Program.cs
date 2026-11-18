@@ -124,7 +124,7 @@ public static class Program
         if (args.Count == 0)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[错误] 用法：hidefiles setpin <新PIN> [--current <当前PIN>]");
+            Console.WriteLine("[错误] 用法：hidefiles setpin <新密码> [--current <当前密码>]");
             Console.ResetColor();
             return 1;
         }
@@ -136,7 +136,7 @@ public static class Program
             Console.WriteLine($"[错误] {result.ErrorMessage}");
             Console.ResetColor();
             if (config.HasKeyMaterial && string.IsNullOrEmpty(currentPin))
-                Console.WriteLine("        改 PIN 需加 --current <当前PIN>；主密钥与恢复码都不变。");
+                Console.WriteLine("        修改密码需加 --current <当前密码>；主密钥与恢复码不变。");
             return 1;
         }
 
@@ -144,13 +144,13 @@ public static class Program
         Console.ForegroundColor = ConsoleColor.Green;
         if (result.MasterKeyRecreated)
         {
-            Console.WriteLine("[完成] PIN 已设置。请离线保存恢复码（忘记 PIN 时唯一的凭据）：");
+            Console.WriteLine("[完成] 密码已设置。请妥善保存恢复码（仅显示一次）：");
             Console.ResetColor();
             Console.WriteLine($"  恢复码：{result.RecoveryCode}");
         }
         else
         {
-            Console.WriteLine("[完成] PIN 已更新：主密钥与恢复码不变，历史文件仍可用新 PIN 还原。");
+            Console.WriteLine("[完成] 密码已更新：主密钥与恢复码不变，此前加密的文件仍可用新密码解密。");
             Console.ResetColor();
         }
         return 0;
@@ -225,13 +225,13 @@ public static class Program
     {
         if (paths.Count == 0)
         {
-            Console.WriteLine("[提示] 请指定要还原的文件或目录。");
+            Console.WriteLine("[提示] 请指定要解密的文件或目录。");
             return 1;
         }
         if (string.IsNullOrEmpty(pin) && string.IsNullOrEmpty(recovery))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[错误] 还原需要 --pin <PIN> 或 --recovery <恢复码>。");
+            Console.WriteLine("[错误] 解密需要 --pin <密码> 或 --recovery <恢复码>。");
             Console.ResetColor();
             return 1;
         }
@@ -241,13 +241,13 @@ public static class Program
         var allCandidates = processor.CollectFiles(paths, config, forObfuscate: false);
 
         var obfuscator = new FileObfuscator();
-        // 改过 PIN 时文件内的 emkBlob 仍是旧 PIN 封装，用本机 config 的主密钥兜底（只算一次 PBKDF2）
+        // 改过密码时文件内的 emkBlob 仍是旧密码封装，用本机 config 的主密钥兜底（只算一次 PBKDF2）
         byte[]? fallbackMasterKey = TryGetLocalMasterKey(pin);
         var obfuscatedFiles = new List<string>();
 
         foreach (var f in allCandidates)
         {
-            var insp = obfuscator.Inspect(f, fallbackMasterKey);   // 有 PIN 时顺带显示原始文件名
+            var insp = obfuscator.Inspect(f, fallbackMasterKey);   // 有密码时顺带显示原始文件名
             if (insp.Status == FileStatus.Obfuscated)
             {
                 obfuscatedFiles.Add(f);
@@ -256,14 +256,14 @@ public static class Program
 
         if (obfuscatedFiles.Count == 0)
         {
-            Console.WriteLine("[提示] 指定路径下没有已保护的文件。");
+            Console.WriteLine("[提示] 指定路径下没有已加密的文件。");
             return 0;
         }
 
-        Console.WriteLine($"找到 {obfuscatedFiles.Count} 个已保护文件。");
+        Console.WriteLine($"找到 {obfuscatedFiles.Count} 个已加密文件。");
         if (dryRun)
         {
-            Console.WriteLine("[预演] 将会还原：");
+            Console.WriteLine("[预演] 将会解密：");
             foreach (var f in obfuscatedFiles)
             {
                 var insp = obfuscator.Inspect(f);
@@ -334,12 +334,12 @@ public static class Program
             {
                 case FileStatus.Obfuscated:
                     obfuscated++;
-                    statusStr = "已保护";
+                    statusStr = "已加密";
                     col = ConsoleColor.Yellow;
                     break;
                 case FileStatus.Normal:
                     normal++;
-                    statusStr = "普通";
+                    statusStr = "未加密";
                     col = ConsoleColor.Gray;
                     break;
                 default:
@@ -362,7 +362,7 @@ public static class Program
         }
 
         Console.WriteLine(new string('-', 88));
-        Console.WriteLine($"汇总：共 {files.Count}，普通 {normal}，已保护 {obfuscated}，异常 {corrupted}。");
+        Console.WriteLine($"汇总：共 {files.Count}，未加密 {normal}，已加密 {obfuscated}，异常 {corrupted}。");
         return 0;
     }
 
@@ -380,7 +380,7 @@ public static class Program
             }
         }
 
-        // 如果包含已混淆文件，智能执行 unhide；否则执行 hide
+        // 如果包含已加密文件，智能执行 unhide；否则执行 hide
         return anyObfuscated ? ExecuteUnhide(paths, false, pin, recovery) : ExecuteHide(paths, config, false);
     }
 
@@ -402,7 +402,8 @@ public static class Program
             Console.ForegroundColor = result.Success ? ConsoleColor.Green : ConsoleColor.Yellow;
             Console.Write($"  [{(result.Success ? "OK" : "WARN")}] ");
             Console.ResetColor();
-            Console.WriteLine($"{path}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count}");
+            string verb = obfuscate ? "伪装" : "还原";
+            Console.WriteLine($"{path}：{verb} {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count}");
 
             foreach (string failure in result.Failures)
                 Console.WriteLine($"         {failure}");
@@ -415,23 +416,23 @@ public static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("HideFiles v2 - 自包含加密容器工具");
+        Console.WriteLine("HideFiles - 文件加密工具");
         Console.WriteLine(new string('=', 60));
         Console.WriteLine("用法：");
-        Console.WriteLine("  hidefiles setpin <PIN> [--current <旧PIN>]");
-        Console.WriteLine("      首次设置 PIN 并输出恢复码；修改 PIN 需提供当前 PIN（主密钥与恢复码不变）。");
-        Console.WriteLine("  hidefiles hide <路径...> --pin <PIN> [--dry-run]");
-        Console.WriteLine("      混淆（结构锁）：原地加密前 64KB 与格式关键结构，秒级完成。");
-        Console.WriteLine("  hidefiles encrypt <路径...> --pin <PIN> [--dry-run]");
-        Console.WriteLine("      加密（整体）：全文件分块 AES-256-GCM，支持任意文件类型。");
-        Console.WriteLine("  hidefiles unhide <路径...> (--pin <PIN> | --recovery <恢复码>) [--dry-run]");
-        Console.WriteLine("      还原/解密：按容器类型自动识别（unhide / restore / decrypt 等价）。");
+        Console.WriteLine("  hidefiles setpin <密码> [--current <当前密码>]");
+        Console.WriteLine("      设置密码并输出恢复码；修改密码需提供当前密码。");
+        Console.WriteLine("  hidefiles hide <路径...> --pin <密码> [--dry-run]");
+        Console.WriteLine("      结构加密：原地加密头部与关键结构。");
+        Console.WriteLine("  hidefiles encrypt <路径...> --pin <密码> [--dry-run]");
+        Console.WriteLine("      整体加密：全文件分块 AES-256-GCM 加密。");
+        Console.WriteLine("  hidefiles unhide <路径...> (--pin <密码> | --recovery <恢复码>) [--dry-run]");
+        Console.WriteLine("      解密文件：自动识别容器格式（unhide / restore / decrypt 等价）。");
         Console.WriteLine("  hidefiles scan [路径...]");
-        Console.WriteLine("      查看文件状态（普通 / 已混淆 / 已加密）。");
+        Console.WriteLine("      查看文件状态（未加密 / 已加密）。");
         Console.WriteLine("  hidefiles dir-hide <目录...>");
-        Console.WriteLine("      混淆目录内部的子目录名（可逆、幂等，仅降低可读性）。");
+        Console.WriteLine("      伪装子目录名（添加 _hf_ 前缀）。");
         Console.WriteLine("  hidefiles dir-unhide <目录...>");
-        Console.WriteLine("      还原目录内部的子目录名。");
+        Console.WriteLine("      还原子目录名。");
         Console.WriteLine("  hidefiles --help");
         Console.WriteLine("      显示本帮助。");
         Console.WriteLine();
