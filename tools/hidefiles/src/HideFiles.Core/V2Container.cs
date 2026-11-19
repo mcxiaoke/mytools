@@ -113,11 +113,10 @@ public static class V2Container
     }
 
     /// <summary>
-    /// 读取容器头与元数据并验证。pin 与 recoveryCode 二选一，
-    /// fallbackMasterKey 为本机 config 中当前 PIN 对应的主密钥（改过 PIN 时兜底，见 ResolveMasterKey）。
+    /// 读取容器头与元数据并验证。pin 与 recoveryCode 二选一。
     /// 返回后调用方按 Mode 与 LockRegions 处理主体。
     /// </summary>
-    public static V2ReadResult Read(string path, string? pin, string? recoveryCode, byte[]? fallbackMasterKey = null)
+    public static V2ReadResult Read(string path, string? pin, string? recoveryCode)
     {
         using var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (fs.Length < CoreConstants.V2MinSize) throw new InvalidDataException("File too small to be a v2 container.");
@@ -139,7 +138,7 @@ public static class V2Container
         if (metaLen < CoreConstants.GcmTagSize || metaLen > fs.Length - CoreConstants.V2HeaderSize)
             throw new InvalidDataException("Corrupted metadata length.");
 
-        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob, fallbackMasterKey);
+        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob);
 
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
         byte[] metaCipher = new byte[metaLen];

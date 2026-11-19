@@ -74,7 +74,8 @@ public sealed class BatchProcessor
 
     private static bool IsProtected(string path) => V2Container.IsV2File(path) || V2Tail.IsTailFile(path);
 
-    public BatchSummary ObfuscateBatch(IEnumerable<string> filePaths, HideFilesConfig config, IProgress<BatchProgress>? progress = null)
+    public BatchSummary ObfuscateBatch(IEnumerable<string> filePaths, HideFilesConfig config,
+        IProgress<BatchProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var files = new List<string>(filePaths);
         var summary = new BatchSummary { Total = files.Count };
@@ -84,10 +85,11 @@ public sealed class BatchProcessor
 
         for (int i = 0; i < files.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string f = files[i];
             prog.CurrentFile = Path.GetFileName(f);
 
-            var res = _obfuscator.ObfuscateFile(f, config);
+            var res = _obfuscator.ObfuscateFile(f, config, cancellationToken);
             summary.Results.Add(res);
 
             prog.ProcessedCount++;
@@ -111,8 +113,8 @@ public sealed class BatchProcessor
     }
 
     public BatchSummary RestoreBatch(IEnumerable<string> filePaths, string? pin, string? recoveryCode = null,
-        IProgress<BatchProgress>? progress = null, byte[]? fallbackMasterKey = null,
-        ProtectionMode? expectedMode = null)
+        IProgress<BatchProgress>? progress = null, ProtectionMode? expectedMode = null,
+        CancellationToken cancellationToken = default)
     {
         var files = new List<string>(filePaths);
         var summary = new BatchSummary { Total = files.Count };
@@ -122,10 +124,11 @@ public sealed class BatchProcessor
 
         for (int i = 0; i < files.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string f = files[i];
             prog.CurrentFile = Path.GetFileName(f);
 
-            var res = _obfuscator.RestoreFile(f, pin, recoveryCode, fallbackMasterKey, expectedMode);
+            var res = _obfuscator.RestoreFile(f, pin, recoveryCode, expectedMode, cancellationToken);
             summary.Results.Add(res);
 
             prog.ProcessedCount++;

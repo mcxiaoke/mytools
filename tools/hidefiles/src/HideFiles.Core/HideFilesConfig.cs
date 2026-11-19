@@ -42,18 +42,11 @@ public sealed class PinChangeResult
 
 public sealed class HideFilesConfig
 {
-    private const string PinSalt = "#HF_PIN_SALT_2026#";
-
     public int Version { get; set; } = 1;
     public int HeadObfuscateSize { get; set; } = CoreConstants.DefaultHeadSize;
     public string DefaultFakeExtension { get; set; } = ".dat";
     public bool ObfuscateFileName { get; set; } = true;
     public bool IncludeSubdirectories { get; set; } = false;
-
-    /// <summary>
-    /// PIN 码加盐哈希（仅用于快速验证输入是否正确，不参与数据加解密）
-    /// </summary>
-    public string? PinHash { get; set; }
 
     /// <summary>
     /// v2 密钥材料：用 PIN 派生的 KEK 加密主密钥 MK（Base64）。
@@ -72,7 +65,7 @@ public sealed class HideFilesConfig
     public string? SessionPin { get; set; }
 
     [JsonIgnore]
-    public bool HasPin => !string.IsNullOrEmpty(PinHash);
+    public bool HasPin => HasKeyMaterial;
 
     /// <summary>v2 默认保护模式（设置页可切换）</summary>
     public ProtectionMode ProtectionMode { get; set; } = ProtectionMode.StructureLock;
@@ -123,7 +116,6 @@ public sealed class HideFilesConfig
 
         ConfigSalt = Convert.ToBase64String(salt);
         WrappedMasterKey = Convert.ToBase64String(wrapped);
-        PinHash = HashPin(normalized);
         KdfIterations = CoreConstants.DefaultKdfIterations;
         SessionPin = normalized;
 
@@ -148,15 +140,11 @@ public sealed class HideFilesConfig
     /// </summary>
     public void ClearKeyMaterial()
     {
-        PinHash = null;
         ConfigSalt = null;
         WrappedMasterKey = null;
         RecoveryCodeHash = null;
         SessionPin = null;
     }
-
-    private static string HashPin(string normalizedPin) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPin + PinSalt))).ToLowerInvariant();
 
     private static string HashRecoveryCode(string recoveryCode) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeRecoveryCode(recoveryCode)))).ToLowerInvariant();
@@ -201,16 +189,22 @@ public sealed class HideFilesConfig
     }
 
     /// <summary>
-    /// 校验 PIN 是否与配置中的哈希一致。
-    /// 注意：未设置 PIN 时恒为 true，调用方应先判断 <see cref="HasPin"/>。
+    /// 校验 PIN 是否能正确解密当前主密钥材料。
+    /// 未设置 PIN 时恒为 true，调用方应先判断 <see cref="HasPin"/>。
     /// </summary>
     public bool VerifyPin(string? pin)
     {
         if (!HasPin) return true;
         if (string.IsNullOrWhiteSpace(pin)) return false;
-        string actual = HashPin(pin.Trim());
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(PinHash!), Encoding.UTF8.GetBytes(actual));
+        try
+        {
+            UnwrapMasterKeyWithPin(pin);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static HideFilesConfig CreateDefault()
@@ -222,7 +216,6 @@ public sealed class HideFilesConfig
             DefaultFakeExtension = ".dat",
             ObfuscateFileName = true,
             IncludeSubdirectories = false,
-            PinHash = null,
             ConfigSalt = null,
             WrappedMasterKey = null,
             RecoveryCodeHash = null,
@@ -254,7 +247,7 @@ public sealed class HideFilesConfig
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_data");
 
     public static string AppDataDirPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HideFiles");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "com.mcxiaoke", "CarroCasket");
 
     public static bool IsPortableMode =>
         File.Exists(PortableFlagPath) || Directory.Exists(PortableDataDirPath);
@@ -283,8 +276,36 @@ public sealed class HideFilesConfig
             if (File.Exists(localConfig))
                 return AppDomain.CurrentDomain.BaseDirectory;
 
+            MigrateLegacyAppDataIfNeeded();
             return AppDataDirPath;
         }
+    }
+
+    private static void MigrateLegacyAppDataIfNeeded()
+    {
+        try
+        {
+            string newConfig = Path.Combine(AppDataDirPath, "config.json");
+            if (File.Exists(newConfig)) return;
+
+            string[] legacyDirs = new[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HideFiles"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CarroCasket")
+            };
+
+            foreach (var legacyDir in legacyDirs)
+            {
+                string legacyConfig = Path.Combine(legacyDir, "config.json");
+                if (File.Exists(legacyConfig))
+                {
+                    Directory.CreateDirectory(AppDataDirPath);
+                    File.Copy(legacyConfig, newConfig, overwrite: false);
+                    break;
+                }
+            }
+        }
+        catch { }
     }
 
     public static string GetDefaultConfigPath()

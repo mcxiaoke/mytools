@@ -23,6 +23,7 @@ public partial class MainViewModel : ObservableObject
     private string? _sessionRecoveryCode;
     /// <summary>本机 config 中当前 PIN 对应的主密钥（改过 PIN 时兜底，避免每个文件都跑一次 PBKDF2）</summary>
     private byte[]? _sessionMasterKey;
+    private CancellationTokenSource? _processCts;
 
     [ObservableProperty]
     private string _title = $"{AppBrand.Name} - {AppBrand.Tagline}";
@@ -713,6 +714,16 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private void CancelProcessing()
+    {
+        if (IsProcessing && _processCts != null && !_processCts.IsCancellationRequested)
+        {
+            _processCts.Cancel();
+            StatusMessage = "正在取消操作...";
+        }
+    }
+
     private async Task ProcessAsync(List<FileItemModel> targetItems, bool isObfuscate,
         ProtectionMode? modeOverride = null)
     {
@@ -727,6 +738,10 @@ public partial class MainViewModel : ObservableObject
         int successCount = 0;
         int unsupportedCount = 0;
         var failures = new List<string>();
+        bool canceled = false;
+
+        _processCts = new CancellationTokenSource();
+        var token = _processCts.Token;
 
         // 每轮都从 UI 线程取 Dispatcher，后台线程不直接触碰可观察属性
         var dispatcher = Application.Current?.Dispatcher;
@@ -737,13 +752,25 @@ public partial class MainViewModel : ObservableObject
             {
                 for (int i = 0; i < total; i++)
                 {
+                    if (token.IsCancellationRequested)
+                    {
+                        canceled = true;
+                        break;
+                    }
+
                     var item = targetItems[i];
                     dispatcher?.Invoke(() =>
                         StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}");
 
                     ProcessFileResult res = isObfuscate
-                        ? _obfuscator.ObfuscateFile(item.FilePath, Config)
-                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, _sessionMasterKey, modeOverride ?? Config.ProtectionMode);
+                        ? _obfuscator.ObfuscateFile(item.FilePath, Config, token)
+                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, modeOverride ?? Config.ProtectionMode, token);
+
+                    if (token.IsCancellationRequested || res.ErrorKind == ProcessErrorKind.Canceled)
+                    {
+                        canceled = true;
+                        break;
+                    }
 
                     if (res.Success)
                     {
@@ -794,6 +821,8 @@ public partial class MainViewModel : ObservableObject
         }
         finally
         {
+            _processCts?.Dispose();
+            _processCts = null;
             Config.ProtectionMode = prevMode;
             IsProcessing = false;
         }
@@ -805,9 +834,16 @@ public partial class MainViewModel : ObservableObject
             ? $"，{unsupportedCount} 个格式不支持请改用“加密”工作台"
             : string.Empty;
 
-        StatusMessage = failures.Count == 0
-            ? $"处理完成：成功 {successCount}/{total}{unsupportedNote}。"
-            : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count}{unsupportedNote}（失败原因见列表“状态”列，可点“导出失败清单”）";
+        if (canceled)
+        {
+            StatusMessage = $"操作已取消：已完成 {successCount}/{total}{unsupportedNote}。";
+        }
+        else
+        {
+            StatusMessage = failures.Count == 0
+                ? $"处理完成：成功 {successCount}/{total}{unsupportedNote}。"
+                : $"处理完成：成功 {successCount}/{total}，失败 {failures.Count}{unsupportedNote}（失败原因见列表“状态”列，可点“导出失败清单”）";
+        }
     }
 
 
@@ -827,7 +863,6 @@ public partial class MainViewModel : ObservableObject
     {
         // 只重置规则，保留密钥材料
         var fresh = HideFilesConfig.CreateDefault();
-        fresh.PinHash = Config.PinHash;
         fresh.ConfigSalt = Config.ConfigSalt;
         fresh.WrappedMasterKey = Config.WrappedMasterKey;
         fresh.RecoveryCodeHash = Config.RecoveryCodeHash;

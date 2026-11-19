@@ -21,6 +21,14 @@ public static class Program
             catch { }
         }
 
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+            Console.WriteLine("\n[取消] 收到中断信号，正在安全中止...");
+        };
+
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
             PrintHelp();
@@ -80,17 +88,17 @@ public static class Program
         {
             case "hide":
                 if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.StructureLock; // 混淆 = 结构锁
-                return ExecuteHide(targetArgs, config, dryRun);
+                return ExecuteHide(targetArgs, config, dryRun, cts.Token);
 
             case "encrypt":
                 if (!modeOverride.HasValue) config.ProtectionMode = ProtectionMode.FullEncrypt;   // 加密 = 整体加密模式
-                return ExecuteHide(targetArgs, config, dryRun);
+                return ExecuteHide(targetArgs, config, dryRun, cts.Token);
 
             case "unhide":
             case "restore":
             case "decrypt":
                 // 还原/解密：容器自带模式标记，自动识别（结构锁尾容器 或 整体加密前置容器）
-                return ExecuteUnhide(targetArgs, dryRun, pin, recovery);
+                return ExecuteUnhide(targetArgs, dryRun, pin, recovery, cts.Token);
 
             case "setpin":
                 return ExecuteSetPin(targetArgs, config, currentPin);
@@ -109,7 +117,7 @@ public static class Program
                 if (File.Exists(args[0]) || Directory.Exists(args[0]))
                 {
                     targetArgs.Insert(0, args[0]);
-                    return ExecuteSmartAction(targetArgs, config, pin, recovery);
+                    return ExecuteSmartAction(targetArgs, config, pin, recovery, cts.Token);
                 }
 
                 Console.ForegroundColor = ConsoleColor.Red;
@@ -156,7 +164,7 @@ public static class Program
         return 0;
     }
 
-    private static int ExecuteHide(List<string> paths, HideFilesConfig config, bool dryRun)
+    private static int ExecuteHide(List<string> paths, HideFilesConfig config, bool dryRun, CancellationToken cancellationToken = default)
     {
         if (paths.Count == 0)
         {
@@ -196,7 +204,13 @@ public static class Program
 
         foreach (var f in files)
         {
-            var res = obfuscator.ObfuscateFile(f, config);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Console.WriteLine("\n[取消] 批量处理已中止。");
+                break;
+            }
+
+            var res = obfuscator.ObfuscateFile(f, config, cancellationToken);
             if (res.Success)
             {
                 success++;
@@ -221,7 +235,7 @@ public static class Program
         return failed == 0 ? 0 : 2;
     }
 
-    private static int ExecuteUnhide(List<string> paths, bool dryRun, string? pin, string? recovery)
+    private static int ExecuteUnhide(List<string> paths, bool dryRun, string? pin, string? recovery, CancellationToken cancellationToken = default)
     {
         if (paths.Count == 0)
         {
@@ -241,13 +255,12 @@ public static class Program
         var allCandidates = processor.CollectFiles(paths, config, forObfuscate: false);
 
         var obfuscator = new FileObfuscator();
-        // 改过密码时文件内的 emkBlob 仍是旧密码封装，用本机 config 的主密钥兜底（只算一次 PBKDF2）
-        byte[]? fallbackMasterKey = TryGetLocalMasterKey(pin);
+        byte[]? masterKey = TryGetLocalMasterKey(pin);
         var obfuscatedFiles = new List<string>();
 
         foreach (var f in allCandidates)
         {
-            var insp = obfuscator.Inspect(f, fallbackMasterKey);   // 有密码时顺带显示原始文件名
+            var insp = obfuscator.Inspect(f, masterKey);
             if (insp.Status == FileStatus.Obfuscated)
             {
                 obfuscatedFiles.Add(f);
@@ -278,7 +291,13 @@ public static class Program
 
         foreach (var f in obfuscatedFiles)
         {
-            var res = obfuscator.RestoreFile(f, pin, recovery, fallbackMasterKey);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Console.WriteLine("\n[取消] 批量解密已中止。");
+                break;
+            }
+
+            var res = obfuscator.RestoreFile(f, pin, recovery, cancellationToken: cancellationToken);
             if (res.Success)
             {
                 success++;
@@ -366,7 +385,7 @@ public static class Program
         return 0;
     }
 
-    private static int ExecuteSmartAction(List<string> paths, HideFilesConfig config, string? pin, string? recovery)
+    private static int ExecuteSmartAction(List<string> paths, HideFilesConfig config, string? pin, string? recovery, CancellationToken cancellationToken = default)
     {
         var obfuscator = new FileObfuscator();
         bool anyObfuscated = false;
@@ -381,7 +400,7 @@ public static class Program
         }
 
         // 如果包含已加密文件，智能执行 unhide；否则执行 hide
-        return anyObfuscated ? ExecuteUnhide(paths, false, pin, recovery) : ExecuteHide(paths, config, false);
+        return anyObfuscated ? ExecuteUnhide(paths, false, pin, recovery, cancellationToken) : ExecuteHide(paths, config, false, cancellationToken);
     }
 
     private static int ExecuteDirectoryNames(List<string> paths, bool obfuscate)
@@ -416,7 +435,7 @@ public static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine($"{AppBrand.Name} {AppBrand.NameZh} - {AppBrand.Tagline}");
+        Console.WriteLine($"{AppBrand.Name} - {AppBrand.Tagline}");
         Console.WriteLine(new string('=', 60));
         Console.WriteLine("用法：");
         Console.WriteLine("  CarroCasketCli setpin <密码> [--current <当前密码>]");

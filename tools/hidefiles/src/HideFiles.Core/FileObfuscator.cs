@@ -47,6 +47,8 @@ public enum ProcessErrorKind
     NotFound,
     /// <summary>文件已经处理过（重复操作）</summary>
     AlreadyProcessed,
+    /// <summary>操作被取消</summary>
+    Canceled,
     /// <summary>其它失败</summary>
     Failed
 }
@@ -143,9 +145,10 @@ public sealed class FileObfuscator
         if (masterKey == null || masterKey.Length != CoreConstants.MasterKeySize) return;
         try
         {
+            string recoveryCode = V2Crypto.MasterKeyToRecoveryCode(masterKey);
             V2Metadata meta = isTail
-                ? V2Tail.ReadFooter(path, null, null, masterKey).Metadata
-                : V2Container.Read(path, null, null, masterKey).Metadata;
+                ? V2Tail.ReadFooter(path, null, recoveryCode).Metadata
+                : V2Container.Read(path, null, recoveryCode).Metadata;
             info.OriginalFileName = meta.OriginalFileName;
             info.OriginalExtension = meta.OriginalExtension;
         }
@@ -158,12 +161,13 @@ public sealed class FileObfuscator
     /// <summary>
     /// 混淆文件到 v2 容器。要求 config 已设置 PIN（config.SessionPin 有效）。
     /// </summary>
-    public ProcessFileResult ObfuscateFile(string filePath, HideFilesConfig config)
+    public ProcessFileResult ObfuscateFile(string filePath, HideFilesConfig config, CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(filePath)) { res.ErrorMessage = "文件不存在。"; res.ErrorKind = ProcessErrorKind.NotFound; return res; }
             if (string.IsNullOrEmpty(config.SessionPin))
                 throw new InvalidOperationException("请先设置 PIN 码（v2 加密需要 PIN 保护主密钥）。");
@@ -211,6 +215,7 @@ public sealed class FileObfuscator
                     return res;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
                 V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt,
                     config.HeadObfuscateSize);
@@ -237,7 +242,7 @@ public sealed class FileObfuscator
                 void WriteBody(Stream outFs, byte[] fileKey, byte[] fileNonce)
                 {
                     using var inFs = File.OpenRead(filePath);
-                    WriteFullEncryptBody(inFs, outFs, fileKey, fileNonce);
+                    WriteFullEncryptBody(inFs, outFs, fileKey, fileNonce, cancellationToken);
                 }
                 try
                 {
@@ -282,17 +287,17 @@ public sealed class FileObfuscator
     }
 
     /// <summary>
-    /// 还原文件。pin 与 recoveryCode 二选一；fallbackMasterKey 为本机 config 中当前 PIN 对应的
-    /// 主密钥，用于"用户改过 PIN、文件内 emkBlob 仍是旧 PIN 封装"的情形。
+    /// 还原文件。pin 与 recoveryCode 二选一。
     /// expectedMode 指定期望的保护模式，当文件与当前工作台模式不匹配时直接报错拒绝处理，避免模式混淆。
     /// </summary>
     public ProcessFileResult RestoreFile(string filePath, string? pin, string? recoveryCode = null,
-        byte[]? fallbackMasterKey = null, ProtectionMode? expectedMode = null)
+        ProtectionMode? expectedMode = null, CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
         var res = new ProcessFileResult { OriginalPath = filePath, FinalPath = filePath };
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(filePath))
             { res.ErrorMessage = "文件不存在。"; res.ErrorKind = ProcessErrorKind.NotFound; return res; }
             if (string.IsNullOrEmpty(pin) && string.IsNullOrEmpty(recoveryCode))
@@ -318,7 +323,8 @@ public sealed class FileObfuscator
             if (isTail)
             {
                 // 结构锁尾部容器：原地解密各区 + 校验 CRC + 截断 footer，不重写整体
-                var read = V2Tail.ReadFooter(filePath, pin, recoveryCode, fallbackMasterKey);
+                var read = V2Tail.ReadFooter(filePath, pin, recoveryCode);
+                cancellationToken.ThrowIfCancellationRequested();
                 V2Tail.RestoreInPlace(filePath, read);
 
                 string tailName = RequireOriginalName(read.Metadata);
@@ -336,7 +342,7 @@ public sealed class FileObfuscator
             }
 
             // 前置容器（整体加密）：读出主体 + 校验
-            var front = V2Container.Read(filePath, pin, recoveryCode, fallbackMasterKey);
+            var front = V2Container.Read(filePath, pin, recoveryCode);
             var meta = front.Metadata;
             string frontName = RequireOriginalName(meta);
             string tmpOut = Path.Combine(dir, $"hf_rst_{Guid.NewGuid():N}.tmp");
@@ -344,20 +350,22 @@ public sealed class FileObfuscator
 
             try
             {
+                byte[] restoredSha;
                 using (var inFs = File.OpenRead(filePath))
                 using (var outFs = new FileStream(tmpOut, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
                     inFs.Seek(front.BodyOffset, SeekOrigin.Begin);
-                    ReadFullEncryptBody(inFs, outFs, front.FileKey, front.FileNonce, meta.OriginalLength);
+                    // 流式同步计算明文 SHA-256，消除解密完成后重新读一遍磁盘
+                    restoredSha = ReadFullEncryptBody(inFs, outFs, front.FileKey, front.FileNonce, meta.OriginalLength, cancellationToken);
                 }
 
                 if (new FileInfo(tmpOut).Length != meta.OriginalLength)
                     throw new InvalidDataException("还原后文件长度不符。");
-                byte[] restoredSha;
-                using (var fs = File.OpenRead(tmpOut)) restoredSha = SHA256.HashData(fs);
                 if (meta.OriginalSha256.Length > 0 &&
                     !CryptographicOperations.FixedTimeEquals(restoredSha, meta.OriginalSha256))
                     throw new InvalidDataException("还原后 SHA-256 校验失败，文件可能已损坏或被篡改。");
+
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (string.Equals(filePath, Path.Combine(dir, frontName), StringComparison.OrdinalIgnoreCase))
                 {
@@ -397,7 +405,7 @@ public sealed class FileObfuscator
     }
 
     // ==================== 整体加密主体 ====================
-    private static void WriteFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce)
+    private static void WriteFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce, CancellationToken cancellationToken = default)
     {
         byte[] plain = new byte[CoreConstants.FullChunkSize];
         byte[] cipher = new byte[CoreConstants.FullChunkSize];
@@ -408,6 +416,7 @@ public sealed class FileObfuscator
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int n = inFs.Read(plain, 0, plain.Length);
             if (n <= 0) break;
 
@@ -422,7 +431,7 @@ public sealed class FileObfuscator
         }
     }
 
-    private static void ReadFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce, long originalLength)
+    private static byte[] ReadFullEncryptBody(Stream inFs, Stream outFs, byte[] fileKey, byte[] fileNonce, long originalLength, CancellationToken cancellationToken = default)
     {
         byte[] lenBuf = new byte[4];
         byte[] cipher = new byte[CoreConstants.FullChunkSize];
@@ -431,9 +440,11 @@ public sealed class FileObfuscator
         ulong idx = 0;
         long remaining = originalLength;
         using var gcm = new AesGcm(fileKey, CoreConstants.GcmTagSize);
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         while (remaining > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             inFs.ReadExactly(lenBuf, 0, 4);
             int n = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
 
@@ -449,9 +460,12 @@ public sealed class FileObfuscator
             byte[] nonce = V2Crypto.BlockNonce(fileNonce, idx);
             gcm.Decrypt(nonce, cipher.AsSpan(0, n), tag, plain.AsSpan(0, n));
             outFs.Write(plain, 0, n);
+            hasher.AppendData(plain.AsSpan(0, n));
             remaining -= n;
             idx++;
         }
+
+        return hasher.GetHashAndReset();
     }
 
     private static string GetFakeExtension(HideFilesConfig config, string originalExt)
@@ -489,6 +503,7 @@ public sealed class FileObfuscator
     /// <summary>把异常映射为界面可区分的错误类别，避免把"缺少凭据"也算成处理失败</summary>
     private static ProcessErrorKind ClassifyException(Exception ex) => ex switch
     {
+        OperationCanceledException => ProcessErrorKind.Canceled,
         InvalidOperationException when ex.Message.Contains("PIN") || ex.Message.Contains("密码")
             => ProcessErrorKind.CredentialRequired,
         UnauthorizedAccessException => ProcessErrorKind.Locked,

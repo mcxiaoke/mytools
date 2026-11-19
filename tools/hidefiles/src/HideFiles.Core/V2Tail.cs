@@ -191,9 +191,8 @@ public static class V2Tail
         }
     }
 
-    /// <summary>读取尾部 footer 并解密元数据（fallbackMasterKey 语义见 V2Crypto.ResolveMasterKey）</summary>
-    public static V2TailReadResult ReadFooter(string path, string? pin, string? recoveryCode,
-        byte[]? fallbackMasterKey = null)
+    /// <summary>读取尾部 footer 并解密元数据</summary>
+    public static V2TailReadResult ReadFooter(string path, string? pin, string? recoveryCode)
     {
         using var fs = File.OpenRead(path);
         long len = fs.Length;
@@ -223,7 +222,7 @@ public static class V2Tail
         fs.Seek(metaCipherPos, SeekOrigin.Begin);
         fs.ReadExactly(metaCipher, 0, metaLen);
 
-        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob, fallbackMasterKey);
+        byte[] masterKey = V2Crypto.ResolveMasterKey(pin, recoveryCode, configSalt, emkBlob);
 
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
         byte[] metaNonce = V2Crypto.BlockNonce(fileNonce, ulong.MaxValue);

@@ -64,7 +64,7 @@ public static class ShellContextMenu
     {
         try
         {
-            string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CarroCasket");
+            string appDataDir = HideFilesConfig.AppDataDirPath;
             Directory.CreateDirectory(appDataDir);
             string appDataIco = Path.Combine(appDataDir, "AppIcon.ico");
 

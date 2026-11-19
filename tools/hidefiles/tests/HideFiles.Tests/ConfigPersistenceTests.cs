@@ -144,7 +144,7 @@ public class ConfigPersistenceTests : IDisposable
         Assert.False(fallback.HasKeyMaterial);
 
         // 恢复码仍可解密（容器自包含）
-        var dec = obf.RestoreFile(enc.FinalPath, null, recovery, null, null);
+        var dec = obf.RestoreFile(enc.FinalPath, null, recovery);
         Assert.True(dec.Success, dec.ErrorMessage);
         Assert.Equal("content", File.ReadAllText(dec.FinalPath));
     }

@@ -9,9 +9,9 @@ namespace HideFiles.Core;
 public static class AppBrand
 {
     /// <summary>产品显示名（界面标题、右键菜单、关于页、导出文件名）</summary>
-    public const string Name = "CarroCasket";
+    public const string Name = "Carro Casket";
 
-    /// <summary>中文名，用于需要中文表述的位置</summary>
+    /// <summary>中文名（保留但不用）</summary>
     public const string NameZh = "萝卜密匣";
 
     /// <summary>一句话定位，用来说明"混淆"与"加密"的分工</summary>

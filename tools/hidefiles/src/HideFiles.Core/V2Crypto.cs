@@ -147,11 +147,10 @@ public static class V2Crypto
     /// 解析出用于解开某个文件的主密钥。优先顺序：
     /// 1. 恢复码（直接就是 MK）；
     /// 2. 文件自带的 emkBlob + 用户 PIN（文件可脱离本机搬运）；
-    /// 3. 本机 config 中当前 PIN 对应的主密钥（用户改过 PIN 后的兜底，文件里的 emkBlob 仍是旧 PIN 封装的）。
     /// 拿到的密钥是否正确，最终由元数据的 GCM 认证标签判定。
     /// </summary>
     public static byte[] ResolveMasterKey(string? pin, string? recoveryCode, byte[] configSalt,
-        byte[] emkBlob, byte[]? fallbackMasterKey)
+        byte[] emkBlob)
     {
         if (!string.IsNullOrEmpty(recoveryCode))
             return RecoveryCodeToMasterKey(recoveryCode);
@@ -161,9 +160,6 @@ public static class V2Crypto
             byte[] kek = DeriveKek(pin, configSalt, CoreConstants.DefaultKdfIterations);
             if (TryUnwrapMasterKey(kek, emkBlob, out byte[] mk)) return mk;
         }
-
-        if (fallbackMasterKey != null && fallbackMasterKey.Length == CoreConstants.MasterKeySize)
-            return fallbackMasterKey;
 
         if (string.IsNullOrEmpty(pin))
             throw new ArgumentException("PIN or recovery code is required.");

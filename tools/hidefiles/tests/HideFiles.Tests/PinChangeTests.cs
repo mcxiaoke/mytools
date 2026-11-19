@@ -89,9 +89,8 @@ public class PinChangeTests : IDisposable
         Assert.Null(changed.RecoveryCode);
         Assert.True(cfg.VerifyRecoveryCode(recovery), "主密钥未变，恢复码必须保持有效");
 
-        // 新 PIN 能解老文件：文件内 emkBlob 仍是旧 PIN 封装，由本机 config 的主密钥兜底
-        byte[] fallback = cfg.UnwrapMasterKeyWithPin("new-pin");
-        var rest = new FileObfuscator().RestoreFile(obf.FinalPath, "new-pin", null, fallback);
+        // 去掉 fallback 后：历史文件自包含，可用原 PIN 或恢复码解密
+        var rest = new FileObfuscator().RestoreFile(obf.FinalPath, "old-pin");
         Assert.True(rest.Success, rest.ErrorMessage);
         Assert.Equal(hash, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(rest.FinalPath))));
     }

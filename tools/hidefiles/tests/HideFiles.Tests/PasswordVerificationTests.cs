@@ -57,8 +57,8 @@ public class PasswordVerificationTests : IDisposable
     }
 
     /// <summary>
-    /// 核心场景：PinHash 与密钥材料脱节（例如旧版本 bug 遗留的脏数据）。
-    /// 只比哈希会"通过"，但实际解不开文件；新逻辑必须拒绝。
+    /// 核心场景：密钥材料被篡改。
+    /// 去掉 PinHash 后，密码校验完全由真实密钥材料 unwrap 决定，必须拒绝。
     /// </summary>
     [Fact]
     public void InconsistentKeyMaterial_DoesNotFalselyAccept()
@@ -66,23 +66,20 @@ public class PasswordVerificationTests : IDisposable
         var cfg = HideFilesConfig.CreateDefault();
         cfg.ChangePin("CorrectPin12345");
 
-        // 保留哈希（仍指向 CorrectPin12345），但换成用另一个密码封装的密钥材料：
-        // 这正是"哈希说对、密钥解不开"的不一致状态
+        // 换成用另一个密码封装的密钥材料：
         var other = HideFilesConfig.CreateDefault();
         other.ChangePin("SomeOtherPin999");
         cfg.WrappedMasterKey = other.WrappedMasterKey;
         cfg.ConfigSalt = other.ConfigSalt;
 
-        // 旧逻辑（纯哈希比对）会接受
-        Assert.True(cfg.VerifyPin("CorrectPin12345"));
-
-        // 新逻辑必须以真实密钥材料为准
+        // VerifyPin 与 UI 校验都以真实密钥材料为准，直接拒绝
+        Assert.False(cfg.VerifyPin("CorrectPin12345"));
         Assert.False(VerifyPasswordLikeUi(cfg, "CorrectPin12345"));
     }
 
-    /// <summary>没有密钥材料的旧配置仍走哈希校验，保持向后兼容</summary>
+    /// <summary>没有密钥材料的配置视为未设置密码</summary>
     [Fact]
-    public void LegacyConfigWithoutKeyMaterial_FallsBackToHash()
+    public void ConfigWithoutKeyMaterial_ReportsNoPin()
     {
         var cfg = HideFilesConfig.CreateDefault();
         cfg.ChangePin("LegacyPin12345");
@@ -90,8 +87,7 @@ public class PasswordVerificationTests : IDisposable
         cfg.WrappedMasterKey = null;
 
         Assert.False(cfg.HasKeyMaterial);
-        Assert.True(VerifyPasswordLikeUi(cfg, "LegacyPin12345"));
-        Assert.False(VerifyPasswordLikeUi(cfg, "Nope12345"));
+        Assert.False(cfg.HasPin);
     }
 
     /// <summary>改密码后新密码可解、旧密码不可解（且都以 unwrap 为准）</summary>
