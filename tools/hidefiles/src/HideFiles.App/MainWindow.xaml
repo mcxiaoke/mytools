@@ -110,6 +110,10 @@
                             <DataGrid x:Name="StructFileGrid" ItemsSource="{Binding Files}" AutoGenerateColumns="False" CanUserAddRows="False"
                                       GridLinesVisibility="Horizontal" HeadersVisibility="Column"
                                       Background="Transparent" BorderThickness="0"
+                                      EnableRowVirtualization="True"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling"
+                                      VirtualizingPanel.ScrollUnit="Pixel"
                                       Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="50">
@@ -239,6 +243,10 @@
                             <DataGrid x:Name="SecureFileGrid" ItemsSource="{Binding SecureFiles}" AutoGenerateColumns="False" CanUserAddRows="False"
                                       GridLinesVisibility="Horizontal" HeadersVisibility="Column"
                                       Background="Transparent" BorderThickness="0"
+                                      EnableRowVirtualization="True"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling"
+                                      VirtualizingPanel.ScrollUnit="Pixel"
                                       Visibility="{Binding HasSecureFiles, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="50">

@@ -24,7 +24,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void FileList_Drop(object sender, DragEventArgs e)
+    private async void FileList_Drop(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(DataFormats.FileDrop))
         {
@@ -33,7 +33,7 @@ public partial class MainWindow : FluentWindow
             {
                 // 根据拖放目标 DataGrid 决定加入哪个工作台（命名元素 > 当前 Tab）
                 string mode = ReferenceEquals(sender, SecureFileGrid) ? "secure" : "struct";
-                vm.AddPaths(paths, mode);
+                await vm.AddPathsAsync(paths, mode);
             }
         }
     }

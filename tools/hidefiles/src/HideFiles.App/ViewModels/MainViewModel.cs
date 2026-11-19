@@ -9,6 +9,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HideFiles.App.Models;
+using HideFiles.App.Views;
 using HideFiles.Core;
 using Microsoft.Win32;
 
@@ -91,9 +92,9 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>混淆工作台文件列表</summary>
-    public ObservableCollection<FileItemModel> Files { get; } = new();
+    public ObservableRangeCollection<FileItemModel> Files { get; } = new();
     /// <summary>加密工作台文件列表</summary>
-    public ObservableCollection<FileItemModel> SecureFiles { get; } = new();
+    public ObservableRangeCollection<FileItemModel> SecureFiles { get; } = new();
 
     public int TotalCount => Files.Count;
     public int NormalCount => Files.Count(f => f.Status == FileStatus.Normal);
@@ -129,7 +130,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>本次启动时配置文件损坏（用于在设置密码前拦截）</summary>
     private readonly bool _configCorruptedOnLoad;
 
-    private ObservableCollection<FileItemModel> CollectionFor(string mode)
+    private ObservableRangeCollection<FileItemModel> CollectionFor(string mode)
         => mode == "secure" ? SecureFiles : Files;
 
     public void RefreshContextMenuStatus()
@@ -155,25 +156,161 @@ public partial class MainViewModel : ObservableObject
     /// <summary>添加路径到指定工作台（mode: struct/secure）</summary>
     public void AddPaths(IEnumerable<string> paths, string? mode = null)
     {
+        _ = AddPathsAsync(paths, mode);
+    }
+
+    /// <summary>异步添加路径到指定工作台，支持深层目录扫描进度展示与并发元数据分析</summary>
+    public async Task AddPathsAsync(IEnumerable<string> paths, string? mode = null)
+    {
+        var pathList = paths?.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        if (pathList == null || pathList.Count == 0) return;
+
         var collection = CollectionFor(mode ?? ActiveMode);
         var existing = new HashSet<string>(collection.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
-
         bool structure = ReferenceEquals(collection, Files);
 
-        foreach (var p in paths)
+        // 如果存在目录或批量文件大于等于 20 个，且主窗口可见，则弹出扫描进度对话框
+        bool hasDirectory = pathList.Any(Directory.Exists);
+        bool shouldShowDialog = hasDirectory || pathList.Count >= 20;
+
+        using var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        ScanProgressDialog? dialog = null;
+
+        if (shouldShowDialog && Application.Current?.MainWindow is Window mainWindow && mainWindow.IsVisible)
         {
-            if (File.Exists(p))
-                AddSingleFile(p, existing, collection, structure);
-            else if (Directory.Exists(p))
+            dialog = new ScanProgressDialog(cts) { Owner = mainWindow };
+        }
+
+        var newItems = new System.Collections.Concurrent.ConcurrentBag<FileItemModel>();
+        bool canceled = false;
+
+        Task workerTask = Task.Run(async () =>
+        {
+            try
             {
-                var opt = Config.IncludeSubdirectories ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                foreach (var f in Directory.EnumerateFiles(p, "*.*", opt))
-                    AddSingleFile(f, existing, collection, structure);
+                // 阶段 1：枚举文件
+                var candidateFiles = new List<string>();
+                var opt = new EnumerationOptions
+                {
+                    RecurseSubdirectories = Config.IncludeSubdirectories,
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint
+                };
+
+                long lastReportTick = 0;
+                foreach (var p in pathList)
+                {
+                    if (token.IsCancellationRequested) break;
+                    if (File.Exists(p))
+                    {
+                        string full = Path.GetFullPath(p);
+                        if (!existing.Contains(full))
+                        {
+                            candidateFiles.Add(full);
+                        }
+                    }
+                    else if (Directory.Exists(p))
+                    {
+                        try
+                        {
+                            foreach (var f in Directory.EnumerateFiles(p, "*.*", opt))
+                            {
+                                if (token.IsCancellationRequested) break;
+                                string full = Path.GetFullPath(f);
+                                if (!existing.Contains(full))
+                                {
+                                    candidateFiles.Add(full);
+                                }
+
+                                long now = Environment.TickCount64;
+                                if (now - lastReportTick > 100)
+                                {
+                                    lastReportTick = now;
+                                    dialog?.ReportSearch(candidateFiles.Count, Path.GetDirectoryName(full) ?? full);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Enumerate files error: {ex.Message}");
+                        }
+                    }
+                }
+
+                if (token.IsCancellationRequested)
+                {
+                    canceled = true;
+                    return;
+                }
+
+                int totalCandidates = candidateFiles.Count;
+                if (totalCandidates == 0) return;
+
+                // 阶段 2：并发 Inspect
+                int processedCount = 0;
+                int maxConcurrency = Math.Clamp(Environment.ProcessorCount, 2, 8);
+                var parallelOptions = new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = maxConcurrency,
+                    CancellationToken = token
+                };
+
+                await Parallel.ForEachAsync(candidateFiles, parallelOptions, (file, ct) =>
+                {
+                    if (ct.IsCancellationRequested) return ValueTask.CompletedTask;
+
+                    var item = InspectSingleFile(file, structure);
+                    newItems.Add(item);
+
+                    int current = Interlocked.Increment(ref processedCount);
+                    long now = Environment.TickCount64;
+                    if (now - lastReportTick > 80 || current == totalCandidates)
+                    {
+                        lastReportTick = now;
+                        dialog?.ReportInspect(current, totalCandidates, item.FileName);
+                    }
+
+                    return ValueTask.CompletedTask;
+                });
             }
+            catch (OperationCanceledException)
+            {
+                canceled = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Scan files error: {ex.Message}");
+            }
+            finally
+            {
+                dialog?.CloseDialog();
+            }
+        });
+
+        if (dialog != null)
+        {
+            dialog.ShowDialog();
+        }
+
+        await workerTask;
+
+        // 阶段 3：批量回填 UI
+        if (!newItems.IsEmpty)
+        {
+            var ordered = newItems.OrderBy(i => i.FilePath, StringComparer.OrdinalIgnoreCase).ToList();
+            collection.AddRange(ordered);
         }
 
         UpdateCounts();
-        StatusMessage = DescribeLoad(collection, structure);
+        if (canceled)
+        {
+            StatusMessage = $"扫描已取消，保留已加载的 {newItems.Count} 个文件。";
+        }
+        else
+        {
+            StatusMessage = DescribeLoad(collection, structure);
+        }
     }
 
     /// <summary>加载完成后的状态摘要；混淆工作台会把"不支持"单列，不计入未加密</summary>
@@ -193,14 +330,10 @@ public partial class MainViewModel : ObservableObject
         return text + "）。";
     }
 
-    private void AddSingleFile(string file, HashSet<string> existing,
-        ObservableCollection<FileItemModel> collection, bool structureWorkspace)
+    private FileItemModel InspectSingleFile(string full, bool structureWorkspace)
     {
-        string full = Path.GetFullPath(file);
-        if (existing.Contains(full)) return;
-
         var insp = _obfuscator.Inspect(full, _sessionMasterKey, forStructureWorkspace: structureWorkspace);
-        var item = new FileItemModel
+        return new FileItemModel
         {
             FilePath = full,
             FileName = Path.GetFileName(full),
@@ -218,23 +351,21 @@ public partial class MainViewModel : ObservableObject
             },
             ErrorMessage = insp.Status == FileStatus.Unsupported ? insp.ErrorMessage : null
         };
-        collection.Add(item);
-        existing.Add(full);
     }
 
     [RelayCommand]
-    private void SelectFiles(string mode)
+    private async Task SelectFiles(string mode)
     {
         var dlg = new OpenFileDialog { Multiselect = true, Title = "选择要处理的文件" };
-        if (dlg.ShowDialog() == true) AddPaths(dlg.FileNames, mode);
+        if (dlg.ShowDialog() == true) await AddPathsAsync(dlg.FileNames, mode);
     }
 
     [RelayCommand]
-    private void SelectFolder(string mode)
+    private async Task SelectFolder(string mode)
     {
         var dlg = new OpenFolderDialog { Title = "选择包含目标文件的文件夹", Multiselect = false };
         if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.FolderName))
-            AddPaths(new[] { dlg.FolderName }, mode);
+            await AddPathsAsync(new[] { dlg.FolderName }, mode);
     }
 
     [RelayCommand]
@@ -664,7 +795,7 @@ public partial class MainViewModel : ObservableObject
     public async Task AutoProcessPathsAsync(IEnumerable<string> paths, ProtectionMode mode, bool isObfuscate)
     {
         string m = mode == ProtectionMode.FullEncrypt ? "secure" : "struct";
-        AddPaths(paths, m);
+        await AddPathsAsync(paths, m);
         var collection = CollectionFor(m);
         if (isObfuscate && !EnsureEncryptionReady(mode == ProtectionMode.FullEncrypt ? "加密" : "加密")) return;
         if (!isObfuscate && !EnsureRestoreCredential()) return;
@@ -681,7 +812,7 @@ public partial class MainViewModel : ObservableObject
     {
         string m = mode == ProtectionMode.FullEncrypt ? "secure" : "struct";
         bool structure = mode == ProtectionMode.StructureLock;
-        AddPaths(paths, m);
+        await AddPathsAsync(paths, m);
         var collection = CollectionFor(m);
 
         var toProtect = collection
