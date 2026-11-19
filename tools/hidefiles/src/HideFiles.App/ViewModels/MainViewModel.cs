@@ -366,7 +366,7 @@ public partial class MainViewModel : ObservableObject
     public bool IsPortableMode => HideFilesConfig.IsPortableMode;
 
     /// <summary>关于界面展示信息</summary>
-    public string AppVersionDisplay => $"{AppBrand.Name} {AppBrand.NameZh} v{BuildInfo.Version}";
+    public string AppVersionDisplay => $"{AppBrand.Name} v{BuildInfo.Version}";
     public string GitHashDisplay => BuildInfo.GitHash;
     public string BuildTimeDisplay => BuildInfo.BuildTime;
 

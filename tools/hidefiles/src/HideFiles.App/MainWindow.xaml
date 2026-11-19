@@ -34,7 +34,7 @@
         </ui:TitleBar>
 
         <!-- 主内容多标签页 -->
-        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="16,4,16,12"
+        <TabControl x:Name="RootTabControl" Grid.Row="1" Margin="24"
                     SelectedIndex="{Binding SelectedTabIndex}"
                     ItemContainerStyle="{StaticResource MainTabItemStyle}"
                     Background="Transparent" BorderThickness="0">
@@ -582,14 +582,14 @@
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <Image Source="pack://application:,,,/CarroCasket;component/Assets/Icon/AppIcon.png" Width="40" Height="40" Margin="0,0,12,0" />
                             <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="{Binding AppVersionDisplay}" FontSize="18" FontWeight="Bold" />
-                                <TextBlock Text="Windows 文件混淆与加密工具" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding AppVersionDisplay}" FontSize="16" FontWeight="Bold" />
+                                <TextBlock Text="Windows 文件混淆与加密工具" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </StackPanel>
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="功能说明：" FontWeight="Bold" Margin="0,0,0,8" />
-                        <TextBlock Text="1. 混淆：原地混淆文件头部与关键结构，耗时极短，适合大体积音视频与图片。主体仍为明文，防打开不防提取。" TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="2. 加密：使用 AES-256-GCM 加密完整文件，适合任意格式文件，提供密码学级保护。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="1. 混淆：混淆文件头部与关键结构，耗时极短，适合大体积音视频与图片。" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <TextBlock Text="2. 加密：加密完整文件，适合任意格式文件，提供密码学级保护。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="3. 密码与恢复码：支持密码保护与紧急恢复码解密，修改密码不影响已加密文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <TextBlock Text="4. 安全机制：失败自动回滚，目标重名自动编号，不覆盖已有文件。" TextWrapping="Wrap" Margin="0,0,0,6" />
                         <Separator Margin="0,8,0,10" />
