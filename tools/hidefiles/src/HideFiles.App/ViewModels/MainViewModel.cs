@@ -868,87 +868,142 @@ public partial class MainViewModel : ObservableObject
         int total = targetItems.Count;
         int successCount = 0;
         int unsupportedCount = 0;
-        var failures = new List<string>();
+        var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
         bool canceled = false;
 
         _processCts = new CancellationTokenSource();
         var token = _processCts.Token;
 
-        // 每轮都从 UI 线程取 Dispatcher，后台线程不直接触碰可观察属性
         var dispatcher = Application.Current?.Dispatcher;
+
+        bool structWorkspace = (modeOverride ?? Config.ProtectionMode) == ProtectionMode.StructureLock;
+        string actionVerb = isObfuscate
+            ? (structWorkspace ? "混淆" : "加密")
+            : (structWorkspace ? "还原" : "解密");
+        string actionTitle = $"正在{actionVerb}文件...";
+
+        // 大于等于 10 个文件且主窗口可见时，弹出模态处理进度对话框
+        bool shouldShowDialog = total >= 10 && Application.Current?.MainWindow is Window mw && mw.IsVisible;
+        OperationProgressDialog? dialog = null;
+        if (shouldShowDialog && Application.Current?.MainWindow is Window mainWindow)
+        {
+            dialog = new OperationProgressDialog(actionTitle, _processCts) { Owner = mainWindow };
+        }
 
         try
         {
-            await Task.Run(() =>
+            int maxConcurrency = total <= 3 ? 1 : (structWorkspace ? 4 : Math.Clamp(Environment.ProcessorCount, 2, 8));
+            var parallelOptions = new ParallelOptions
             {
-                for (int i = 0; i < total; i++)
+                MaxDegreeOfParallelism = maxConcurrency,
+                CancellationToken = token
+            };
+
+            int processedCount = 0;
+            long lastReportTick = 0;
+
+            Task workerTask = Task.Run(async () =>
+            {
+                try
                 {
-                    if (token.IsCancellationRequested)
+                    await Parallel.ForEachAsync(targetItems, parallelOptions, (item, ct) =>
                     {
-                        canceled = true;
-                        break;
-                    }
-
-                    var item = targetItems[i];
-                    dispatcher?.Invoke(() =>
-                        StatusMessage = $"正在处理 ({i + 1}/{total}): {item.FileName}");
-
-                    ProcessFileResult res = isObfuscate
-                        ? _obfuscator.ObfuscateFile(item.FilePath, Config, token)
-                        : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, modeOverride ?? Config.ProtectionMode, token);
-
-                    if (token.IsCancellationRequested || res.ErrorKind == ProcessErrorKind.Canceled)
-                    {
-                        canceled = true;
-                        break;
-                    }
-
-                    if (res.Success)
-                    {
-                        successCount++;
-                        bool structWorkspace = (modeOverride ?? Config.ProtectionMode) == ProtectionMode.StructureLock;
-                        var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey, structWorkspace);
-                        dispatcher?.Invoke(() =>
+                        if (ct.IsCancellationRequested)
                         {
-                            item.FilePath = res.FinalPath;
-                            item.FileName = Path.GetFileName(res.FinalPath);
-                            item.Status = insp.Status;
-                            item.OriginalFileName = insp.OriginalFileName;
-                            item.ErrorMessage = null;
-                            item.StatusText = isObfuscate
-                                ? (structWorkspace ? "已混淆" : "已加密")
-                                : (structWorkspace ? "未混淆" : "未加密");
-                        });
-                    }
-                    else if (res.ErrorKind == ProcessErrorKind.UnsupportedFormat)
-                    {
-                        // 格式不支持不是"处理失败"：标成独立状态并引导用户换模式，不计入失败数
-                        unsupportedCount++;
-                        dispatcher?.Invoke(() =>
-                        {
-                            item.Status = FileStatus.Unsupported;
-                            item.StatusText = "不支持";
-                            item.ErrorMessage = res.ErrorMessage;
-                        });
-                    }
-                    else
-                    {
-                        string reason = string.IsNullOrWhiteSpace(res.ErrorMessage ?? null)
-                            ? "未知错误"
-                            : res.ErrorMessage!;
-                        failures.Add($"{item.FileName}: {reason}");
-                        // 失败原因落到行内，长列表不再只能看到状态栏的前 3 条
-                        dispatcher?.Invoke(() =>
-                        {
-                            item.ErrorMessage = reason;
-                            item.StatusText = "失败";
-                        });
-                    }
+                            canceled = true;
+                            return ValueTask.CompletedTask;
+                        }
 
-                    double pct = (double)(i + 1) / total * 100.0;
-                    dispatcher?.Invoke(() => ProgressValue = pct);
+                        ProcessFileResult res = isObfuscate
+                            ? _obfuscator.ObfuscateFile(item.FilePath, Config, ct)
+                            : _obfuscator.RestoreFile(item.FilePath, _sessionPin, _sessionRecoveryCode, modeOverride ?? Config.ProtectionMode, ct);
+
+                        if (ct.IsCancellationRequested || res.ErrorKind == ProcessErrorKind.Canceled)
+                        {
+                            canceled = true;
+                            return ValueTask.CompletedTask;
+                        }
+
+                        if (res.Success)
+                        {
+                            Interlocked.Increment(ref successCount);
+                            var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey, structWorkspace);
+                            dispatcher?.InvokeAsync(() =>
+                            {
+                                item.FilePath = res.FinalPath;
+                                item.FileName = Path.GetFileName(res.FinalPath);
+                                item.Status = insp.Status;
+                                item.OriginalFileName = insp.OriginalFileName;
+                                item.ErrorMessage = null;
+                                item.StatusText = isObfuscate
+                                    ? (structWorkspace ? "已混淆" : "已加密")
+                                    : (structWorkspace ? "未混淆" : "未加密");
+                            }, System.Windows.Threading.DispatcherPriority.Background);
+                        }
+                        else if (res.ErrorKind == ProcessErrorKind.UnsupportedFormat)
+                        {
+                            Interlocked.Increment(ref unsupportedCount);
+                            dispatcher?.InvokeAsync(() =>
+                            {
+                                item.Status = FileStatus.Unsupported;
+                                item.StatusText = "不支持";
+                                item.ErrorMessage = res.ErrorMessage;
+                            }, System.Windows.Threading.DispatcherPriority.Background);
+                        }
+                        else
+                        {
+                            string reason = string.IsNullOrWhiteSpace(res.ErrorMessage ?? null)
+                                ? "未知错误"
+                                : res.ErrorMessage!;
+                            failures.Add($"{item.FileName}: {reason}");
+                            dispatcher?.InvokeAsync(() =>
+                            {
+                                item.ErrorMessage = reason;
+                                item.StatusText = "失败";
+                            }, System.Windows.Threading.DispatcherPriority.Background);
+                        }
+
+                        int current = Interlocked.Increment(ref processedCount);
+                        long now = Environment.TickCount64;
+                        if ((now - lastReportTick > 80 && current < total) || current == total)
+                        {
+                            lastReportTick = now;
+                            double pct = (double)current / total * 100.0;
+                            if (current < total)
+                            {
+                                dispatcher?.InvokeAsync(() =>
+                                {
+                                    ProgressValue = pct;
+                                    StatusMessage = $"正在处理 ({current}/{total}): {item.FileName}";
+                                }, System.Windows.Threading.DispatcherPriority.Background);
+                            }
+
+                            dialog?.ReportProgress(current, total, successCount, failures.Count, item.FileName);
+                        }
+
+                        return ValueTask.CompletedTask;
+                    });
+                }
+                catch (OperationCanceledException)
+                {
+                    canceled = true;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"ProcessAsync error: {ex.Message}");
+                }
+                finally
+                {
+                    dialog?.CloseDialog();
                 }
             });
+
+            if (dialog != null)
+            {
+                dialog.ShowDialog();
+            }
+
+            await workerTask;
         }
         finally
         {
