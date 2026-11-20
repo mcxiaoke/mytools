@@ -70,15 +70,18 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # 尝试导入 Rich 增强终端交互展示
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.table import Table
     from rich.panel import Panel
     from rich.text import Text
+    from rich.rule import Rule
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
     console = Console()
     HAS_RICH = True
 except ImportError:
     console = None
+    Group = None
+    Rule = None
     HAS_RICH = False
 
 # 尝试导入 send2trash 用于回收站安全删除
@@ -580,10 +583,13 @@ def resolve_destination(
     item: FileItem,
     output_dir: Path,
     preserve_tree: bool,
-    conflict_policy: str
+    conflict_policy: str,
+    reserved_destinations: Optional[set] = None,
+    dest_lock: Optional[threading.Lock] = None
 ) -> Optional[Path]:
     """
-    为移动操作计算目标输出路径，并按照冲突策略处理重名
+    为移动操作计算目标输出路径，并按照冲突策略处理重名。
+    支持传入 reserved_destinations 集合与 dest_lock 实现高并发环境下的绝对线程安全。
     """
     if preserve_tree:
         dest_path = output_dir / item.rel_path
@@ -591,27 +597,48 @@ def resolve_destination(
         dest_path = output_dir / item.path.name
 
     dest_dir = dest_path.parent
-    dest_dir.mkdir(parents=True, exist_ok=True)
 
-    if not dest_path.exists():
-        return dest_path
+    # 构造轻量无锁上下文，兼容单线程直接调用
+    class _NullContext:
+        def __enter__(self): return self
+        def __exit__(self, exc_type, exc_val, exc_tb): pass
 
-    # 处理目标文件已存在冲突
-    if conflict_policy == 'overwrite':
-        return dest_path
-    elif conflict_policy == 'skip':
-        return None
-    elif conflict_policy == 'rename':
-        stem = dest_path.stem
-        suffix = dest_path.suffix
-        counter = 1
-        while True:
-            candidate = dest_dir / f"{stem}_{counter}{suffix}"
-            if not candidate.exists():
-                return candidate
-            counter += 1
-    else:
-        return dest_path
+    ctx = dest_lock if dest_lock else _NullContext()
+
+    with ctx:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_key = os.path.normcase(os.path.abspath(str(dest_path)))
+
+        already_reserved = (reserved_destinations is not None and dest_key in reserved_destinations)
+        if not dest_path.exists() and not already_reserved:
+            if reserved_destinations is not None:
+                reserved_destinations.add(dest_key)
+            return dest_path
+
+        # 处理目标文件已存在或已被其他工作线程预定冲突
+        if conflict_policy == 'overwrite':
+            if reserved_destinations is not None:
+                reserved_destinations.add(dest_key)
+            return dest_path
+        elif conflict_policy == 'skip':
+            return None
+        elif conflict_policy == 'rename':
+            stem = dest_path.stem
+            suffix = dest_path.suffix
+            counter = 1
+            while True:
+                candidate = dest_dir / f"{stem}_{counter}{suffix}"
+                cand_key = os.path.normcase(os.path.abspath(str(candidate)))
+                cand_reserved = (reserved_destinations is not None and cand_key in reserved_destinations)
+                if not candidate.exists() and not cand_reserved:
+                    if reserved_destinations is not None:
+                        reserved_destinations.add(cand_key)
+                    return candidate
+                counter += 1
+        else:
+            if reserved_destinations is not None:
+                reserved_destinations.add(dest_key)
+            return dest_path
 
 
 def remove_read_only_and_unlink(path: Path) -> None:
@@ -845,17 +872,19 @@ def execute_batch_action(
     output_dir: Optional[Path],
     preserve_tree: bool,
     conflict_policy: str,
+    threads_count: int,
     logger: logging.Logger
 ) -> Tuple[int, int, int, int]:
     """
-    执行文件批处理动作（删除 / 回收站 / 移动）
+    高并发多线程执行文件批处理动作（删除 / 回收站 / 移动）。
+    【核心特性】：
+    1. 动态线程池并发加速，针对海量文件批处理 I/O 吞吐显著提升；
+    2. 移动操作独占目标预定（dest_lock + reserved_destinations 集合），确保并发重名解析绝对线程安全；
+    3. 实时进度展示与动态吞吐速度（项/秒）指标跟踪；
+    4. 优雅的 Ctrl+C 信号中断响应与资源安全清理。
+
     返回: (成功数, 失败数, 跳过数, 处理总字节数)
     """
-    success_count = 0
-    fail_count = 0
-    skip_count = 0
-    total_bytes = 0
-
     total_tasks = len(targets)
     if total_tasks == 0:
         return 0, 0, 0, 0
@@ -866,32 +895,44 @@ def execute_batch_action(
         'move': "文件移动"
     }.get(action, action)
 
-    logger.info(f"开始执行批处理操作: [{action_name}]，目标文件数: {total_tasks}")
+    worker_count = max(1, min(threads_count, total_tasks, 32))
+    logger.info(f"开始执行批处理操作: [{action_name}]，目标文件数: {total_tasks}，并发工作线程数: {worker_count}")
 
-    # 使用进度指示器（支持 Rich 动态进度条与控制台纯文本降级）
-    if HAS_RICH:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("({task.completed}/{task.total})"),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task(f"[bold cyan]正在执行{action_name}...", total=total_tasks)
+    success_count = 0
+    fail_count = 0
+    skip_count = 0
+    total_bytes = 0
 
-            for item in targets:
-                src = item.path
-                try:
-                    if not src.exists():
-                        logger.warning(f"文件已被移除或不存在，跳过: {src}")
-                        skip_count += 1
-                        progress.advance(task)
-                        continue
+    stats_lock = threading.Lock()
+    dest_lock = threading.Lock()
+    reserved_destinations: set = set()
+    stop_event = threading.Event()
+    start_exec_time = time.time()
 
-                    file_size = item.size
+    q: queue.Queue = queue.Queue()
+    for item in targets:
+        q.put(item)
 
+    def worker():
+        nonlocal success_count, fail_count, skip_count, total_bytes
+        while not stop_event.is_set():
+            try:
+                item: FileItem = q.get(timeout=0.05)
+            except queue.Empty:
+                if q.unfinished_tasks == 0:
+                    break
+                continue
+
+            src = item.path
+            file_size = item.size
+            status = 'success'
+            err_msg = ""
+
+            try:
+                if not src.exists():
+                    logger.warning(f"文件已被移除或不存在，跳过: {src}")
+                    status = 'skip'
+                else:
                     if action == 'delete':
                         remove_read_only_and_unlink(src)
                         logger.info(f"已删除: {src} ({format_size(file_size)})")
@@ -905,68 +946,310 @@ def execute_batch_action(
                     elif action == 'move':
                         if not output_dir:
                             raise ValueError("移动操作必须指定有效的目标目录 --output")
-                        dest = resolve_destination(item, output_dir, preserve_tree, conflict_policy)
+                        dest = resolve_destination(
+                            item=item,
+                            output_dir=output_dir,
+                            preserve_tree=preserve_tree,
+                            conflict_policy=conflict_policy,
+                            reserved_destinations=reserved_destinations,
+                            dest_lock=dest_lock
+                        )
                         if dest is None:
                             logger.info(f"由于冲突策略 skip，跳过移动: {src}")
-                            skip_count += 1
-                            progress.advance(task)
-                            continue
-
-                        shutil.move(str(src), str(dest))
-                        logger.info(f"已移动: {src} -> {dest}")
-
-                    success_count += 1
-                    total_bytes += file_size
-
-                except Exception as e:
-                    fail_count += 1
-                    logger.error(f"处理文件失败 {src}: {e}")
-                    console.print(f"[red]❌ 处理失败: {src.name} -> {e}[/]")
-
-                progress.advance(task)
-    else:
-        print(f"\n正在执行 {action_name}...")
-        for idx, item in enumerate(targets, 1):
-            src = item.path
-            try:
-                if not src.exists():
-                    logger.warning(f"文件不存在，跳过: {src}")
-                    skip_count += 1
-                    continue
-
-                file_size = item.size
-
-                if action == 'delete':
-                    remove_read_only_and_unlink(src)
-                    logger.info(f"已删除: {src} ({format_size(file_size)})")
-                elif action == 'trash':
-                    if not HAS_SEND2TRASH:
-                        raise RuntimeError("未检测到 send2trash 依赖库，无法使用回收站删除模式。")
-                    send2trash.send2trash(str(src))
-                    logger.info(f"已移入回收站: {src} ({format_size(file_size)})")
-                elif action == 'move':
-                    if not output_dir:
-                        raise ValueError("移动操作必须指定有效的目标目录 --output")
-                    dest = resolve_destination(item, output_dir, preserve_tree, conflict_policy)
-                    if dest is None:
-                        logger.info(f"跳过移动重名文件: {src}")
-                        skip_count += 1
-                        continue
-                    shutil.move(str(src), str(dest))
-                    logger.info(f"已移动: {src} -> {dest}")
-
-                success_count += 1
-                total_bytes += file_size
-
-                if idx % 20 == 0 or idx == total_tasks:
-                    print(f"进度: {idx}/{total_tasks} 完成...")
+                            status = 'skip'
+                        else:
+                            shutil.move(str(src), str(dest))
+                            logger.info(f"已移动: {src} -> {dest}")
 
             except Exception as e:
-                fail_count += 1
+                status = 'fail'
+                err_msg = str(e)
                 logger.error(f"处理文件失败 {src}: {e}")
-                print(f"❌ 处理失败: {src.name} -> {e}")
+
+            with stats_lock:
+                if status == 'success':
+                    success_count += 1
+                    total_bytes += file_size
+                elif status == 'skip':
+                    skip_count += 1
+                elif status == 'fail':
+                    fail_count += 1
+
+            if status == 'fail' and err_msg:
+                if HAS_RICH:
+                    console.print(f"[red]❌ 处理失败: {src.name} -> {err_msg}[/]")
+                else:
+                    print(f"❌ 处理失败: {src.name} -> {err_msg}")
+
+            q.task_done()
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(worker_count)]
+    for t in threads:
+        t.start()
+
+    try:
+        if HAS_RICH:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=None),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("({task.completed}/{task.total})"),
+                TextColumn("[cyan]{task.fields[speed]:,.0f} 项/秒[/]"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=False
+            ) as progress:
+                task = progress.add_task(f"[bold cyan]正在多线程{action_name}...", total=total_tasks, speed=0.0)
+                while not stop_event.is_set():
+                    time.sleep(0.04)
+                    with stats_lock:
+                        done = success_count + fail_count + skip_count
+                    now = time.time()
+                    elapsed = max(now - start_exec_time, 0.001)
+                    speed = done / elapsed
+                    progress.update(task, completed=done, speed=speed)
+                    if done >= total_tasks or q.unfinished_tasks == 0:
+                        break
+        else:
+            print(f"\n正在并发执行 {action_name} (工作线程: {worker_count})...")
+            last_report = time.time()
+            while not stop_event.is_set():
+                time.sleep(0.08)
+                now = time.time()
+                with stats_lock:
+                    done = success_count + fail_count + skip_count
+                    s_c, f_c, sk_c = success_count, fail_count, skip_count
+                if now - last_report >= 1.0 or done >= total_tasks:
+                    last_report = now
+                    elapsed = max(now - start_exec_time, 0.001)
+                    speed = done / elapsed
+                    pct = (done / total_tasks * 100) if total_tasks > 0 else 100.0
+                    print(f"[{action_name}进度] 已处理: {done}/{total_tasks} ({pct:.1f}%) | 速度: {speed:,.0f} 项/秒 | 成功: {s_c} 失败: {f_c} 跳过: {sk_c}")
+                if done >= total_tasks or q.unfinished_tasks == 0:
+                    break
+
+    except KeyboardInterrupt:
+        stop_event.set()
+        logger.warning("用户按下 Ctrl+C 中断批处理操作。")
+        if HAS_RICH:
+            console.print("\n[bold yellow]⚠ 操作已被用户按下 Ctrl+C 中断，已安全停止后续文件处理。[/]")
+        else:
+            print("\n⚠ 操作已被用户按下 Ctrl+C 中断，已安全停止后续文件处理。")
+
+    finally:
+        stop_event.set()
+        for t in threads:
+            t.join(timeout=0.5)
 
     return success_count, fail_count, skip_count, total_bytes
+
+
+def parse_user_specified_flags(argv: List[str]) -> Dict[str, bool]:
+    """
+    检查命令行中哪些参数是用户明确指定的，哪些是使用系统默认值。
+    """
+    flags_present = set()
+    for arg in argv:
+        if arg.startswith("--"):
+            flag_name = arg.split("=")[0]
+            flags_present.add(flag_name)
+        elif arg.startswith("-") and len(arg) > 1:
+            raw = arg.split("=")[0][1:]
+            for ch in raw:
+                flags_present.add(f"-{ch}")
+
+    return {
+        'dir': True,  # 必传位置参数
+        'dir_mode': ("--dir-mode" in flags_present or "--no-dir-mode" in flags_present),
+        'min_files': ("-m" in flags_present or "--min-files" in flags_present),
+        'action': ("-a" in flags_present or "--action" in flags_present),
+        'output': ("-o" in flags_present or "--output" in flags_present),
+        'interval': ("-i" in flags_present or "--interval" in flags_present),
+        'offset': ("--offset" in flags_present or "--start-first" in flags_present),
+        'sort_by': ("-s" in flags_present or "--sort-by" in flags_present),
+        'reverse': ("-R" in flags_present or "--reverse" in flags_present),
+        'recursive': ("-r" in flags_present or "--recursive" in flags_present or "--no-recursive" in flags_present),
+        'preserve_tree': ("--preserve-tree" in flags_present or "--no-preserve-tree" in flags_present),
+        'conflict': ("--conflict" in flags_present),
+        'pattern': ("-p" in flags_present or "--pattern" in flags_present),
+        'dry_run': ("--dry-run" in flags_present),
+        'yes': ("-y" in flags_present or "--yes" in flags_present),
+        'log_file': ("--log-file" in flags_present),
+        'verbose': ("-v" in flags_present or "--verbose" in flags_present),
+        'threads': ("-t" in flags_present or "--threads" in flags_present),
+    }
+
+
+def render_config_panel(
+    target_dir: Path,
+    args: argparse.Namespace,
+    output_dir: Optional[Path],
+    offset: int,
+    step: int,
+    total_dirs: int,
+    total_found: int,
+    active_groups: List[DirectoryGroup],
+    skipped_groups: List[DirectoryGroup],
+    all_targets: List[FileItem],
+    all_keeps: List[FileItem],
+    log_file_path: Path,
+    user_specified: Dict[str, bool]
+) -> None:
+    """
+    渲染紧凑型双列任务配置与参数核对面板，清晰区分【用户指定】与【系统默认】。
+    """
+    sort_desc_map = {
+        'name': "文件名 (自然排序)",
+        'size': "文件大小",
+        'mtime': "修改时间",
+        'ctime': "创建时间"
+    }
+    out_name = output_dir.name if output_dir else ""
+    action_desc_map = {
+        'delete': "物理删除",
+        'trash': "移入回收站",
+        'move': f"移动至 {out_name}" if out_name else "文件移动"
+    }
+    conflict_desc_map = {
+        'rename': "追加序号",
+        'overwrite': "直接覆盖",
+        'skip': "跳过同名"
+    }
+
+    # 左列项 (运行环境与核心规则): (标签, 取值, 是否用户指定)
+    target_display = str(target_dir)
+    if len(target_display) > 14:
+        target_display = target_display[:6] + "..." + target_display[-5:]
+
+    left_items: List[Tuple[str, str, bool]] = [
+        ("目标目录", target_display, user_specified.get('dir', True)),
+        ("递归扫描", "开启 (递归子目录)" if args.recursive else "关闭 (仅当前目录)", user_specified.get('recursive', False)),
+        ("匹配规则", args.pattern, user_specified.get('pattern', False)),
+        ("目录模式", "开启 (各目录独立)" if args.dir_mode else "关闭 (全局统筹)", user_specified.get('dir_mode', False)),
+        ("目录阈值", f">= {args.min_files} 个文件", user_specified.get('min_files', False)),
+        ("计划操作", action_desc_map.get(args.action, args.action), user_specified.get('action', False)),
+    ]
+
+    if args.action == 'move':
+        out_display = str(output_dir) if output_dir else "未指定"
+        if len(out_display) > 14:
+            out_display = out_display[:6] + "..." + out_display[-5:]
+        left_items.extend([
+            ("输出目录", out_display, user_specified.get('output', False)),
+            ("保持层级", "开启 (保留目录树)" if args.preserve_tree else "关闭 (平铺输出)", user_specified.get('preserve_tree', False)),
+            ("冲突策略", f"{args.conflict} ({conflict_desc_map.get(args.conflict, '')})", user_specified.get('conflict', False)),
+        ])
+
+    # 右列项 (采样控制与并发性能): (标签, 取值, 是否用户指定)
+    right_items: List[Tuple[str, str, bool]] = [
+        ("采样规则", f"隔 {args.interval} 取 1 (步长 {step})", user_specified.get('interval', False)),
+        ("起始偏移", f"offset={offset} (第 {offset + 1} 个)", user_specified.get('offset', False)),
+        ("排序依据", sort_desc_map.get(args.sort_by, args.sort_by), user_specified.get('sort_by', False)),
+        ("排序方向", "倒序 (降序)" if args.reverse else "正序 (升序)", user_specified.get('reverse', False)),
+        ("并发线程", f"{args.threads} 线程 (加速)", user_specified.get('threads', False)),
+        ("运行模式", "演练模式 (Dry-Run)" if args.dry_run else "正常执行", user_specified.get('dry_run', False)),
+        ("交互确认", "免确认直接执行 (-y)" if args.yes else "需确认 [y/N/l]", user_specified.get('yes', False)),
+    ]
+
+    active_dirs_count = len(active_groups)
+    skipped_dirs_count = len(skipped_groups)
+    skipped_files_count = sum(g.total_files for g in skipped_groups)
+    total_active_files = sum(len(g.items) for g in active_groups)
+    target_total_size = sum(it.size for it in all_targets)
+    keep_total_size = sum(it.size for it in all_keeps)
+
+    if HAS_RICH:
+        grid = Table.grid(padding=(0, 2), expand=True)
+        grid.add_column("Col1", ratio=1)
+        grid.add_column("Col2", ratio=1)
+
+        max_rows = max(len(left_items), len(right_items))
+        for r in range(max_rows):
+            # 左列单元格
+            if r < len(left_items):
+                lbl, val, is_user = left_items[r]
+                left_cell = Text()
+                left_cell.append("• ", style="dim")
+                left_cell.append(f"{lbl}: ", style="bold cyan")
+                val_str = str(val)
+                if len(val_str) > 14:
+                    val_str = val_str[:6] + "..." + val_str[-5:]
+                left_cell.append(val_str, style="white")
+                left_cell.append(" ")
+                if is_user:
+                    left_cell.append("[用户]", style="bold green")
+                else:
+                    left_cell.append("[默认]", style="dim")
+            else:
+                left_cell = Text("")
+
+            # 右列单元格
+            if r < len(right_items):
+                lbl, val, is_user = right_items[r]
+                right_cell = Text()
+                right_cell.append("• ", style="dim")
+                right_cell.append(f"{lbl}: ", style="bold cyan")
+                val_str = str(val)
+                if len(val_str) > 14:
+                    val_str = val_str[:6] + "..." + val_str[-5:]
+                right_cell.append(val_str, style="white")
+                right_cell.append(" ")
+                if is_user:
+                    right_cell.append("[用户]", style="bold green")
+                else:
+                    right_cell.append("[默认]", style="dim")
+            else:
+                right_cell = Text("")
+
+            grid.add_row(left_cell, right_cell)
+
+        stats_text = Text()
+        stats_text.append("【扫描与过滤统计】\n", style="bold yellow")
+        stats_text.append(f"• 扫描总计: 共扫描 {total_dirs:,} 个直接目录，发现 {total_found:,} 个有效文件\n")
+        stats_text.append(f"• 目录筛选: 达标 {active_dirs_count:,} 个目录 ({total_active_files:,} 个文件) | 跳过 {skipped_dirs_count:,} 个不足阈值目录 ({skipped_files_count:,} 个文件保留未变)\n")
+        stats_text.append(f"• 处置预估: 计划处理 {len(all_targets):,} 个 ({format_size(target_total_size)}) | 达标内保留 {len(all_keeps):,} 个 ({format_size(keep_total_size)})\n")
+        stats_text.append(f"• 日志记录: {log_file_path}", style="dim")
+
+        rule_widget = Rule(style="dim") if Rule else Text("─" * 60, style="dim")
+        panel = Panel(
+            Group(grid, rule_widget, stats_text),
+            title="[bold green]📦 任务配置与参数核对[/] [dim]([bold green][用户][/]: 用户指定  [dim][默认][/]: 系统默认)[/]",
+            border_style="cyan",
+            expand=False
+        )
+        console.print(panel)
+    else:
+        print("\n" + "=" * 76)
+        print("📦 任务配置与参数核对 ([用户]: 用户指定  [默认]: 系统默认)")
+        print("-" * 76)
+        max_rows = max(len(left_items), len(right_items))
+        for r in range(max_rows):
+            if r < len(left_items):
+                lbl, val, is_user = left_items[r]
+                tag = "[用户]" if is_user else "[默认]"
+                val_str = str(val)
+                col1 = f"• {lbl}: {val_str} {tag}"
+            else:
+                col1 = ""
+
+            if r < len(right_items):
+                lbl, val, is_user = right_items[r]
+                tag = "[用户]" if is_user else "[默认]"
+                val_str = str(val)
+                col2 = f"• {lbl}: {val_str} {tag}"
+            else:
+                col2 = ""
+
+            print(f"{col1:<37}  {col2}")
+
+        print("-" * 76)
+        print("【扫描与过滤统计】")
+        print(f"• 扫描总计: 共扫描 {total_dirs:,} 个直接目录，发现 {total_found:,} 个有效文件")
+        print(f"• 目录筛选: 达标 {active_dirs_count:,} 个目录 ({total_active_files:,} 个文件) | 跳过 {skipped_dirs_count:,} 个目录 ({skipped_files_count:,} 个文件)")
+        print(f"• 处置预估: 计划处理 {len(all_targets):,} 个 ({format_size(target_total_size)}) | 达标内保留 {len(all_keeps):,} 个 ({format_size(keep_total_size)})")
+        print(f"• 日志记录: {log_file_path}")
+        print("=" * 76 + "\n")
 
 
 def main():
@@ -1064,13 +1347,29 @@ def main():
     )
     parser.add_argument(
         "-r", "--recursive",
+        dest="recursive",
+        default=True,
         action="store_true",
-        help="递归扫描所有子目录下的文件（默认仅扫描当前根目录）"
+        help="【默认开启】递归扫描所有子目录下的文件"
+    )
+    parser.add_argument(
+        "--no-recursive",
+        dest="recursive",
+        action="store_false",
+        help="关闭递归扫描，仅扫描当前根目录下的单层文件"
     )
     parser.add_argument(
         "--preserve-tree",
+        dest="preserve_tree",
+        default=True,
         action="store_true",
-        help="移动文件且启用递归时，在输出目录中保持原始子目录层级结构"
+        help="【默认开启】移动文件且启用递归时，在输出目录中保持原始子目录层级结构"
+    )
+    parser.add_argument(
+        "--no-preserve-tree",
+        dest="preserve_tree",
+        action="store_false",
+        help="移动文件时平铺输出，不保持子目录层级结构"
     )
     parser.add_argument(
         "--conflict",
@@ -1105,15 +1404,16 @@ def main():
         action="store_true",
         help="启用详细日志输出模式"
     )
-    default_threads = min(16, (os.cpu_count() or 4) * 2)
+    default_threads = min(16, os.cpu_count() or 4)
     parser.add_argument(
         "-t", "--threads",
         type=int,
         default=default_threads,
-        help=f"多线程并发扫描工作线程数。默认: {default_threads}"
+        help=f"多线程并发工作线程数（同时加速文件扫描与批量删除/移动）。默认: {default_threads}"
     )
 
     args = parser.parse_args()
+    user_specified = parse_user_specified_flags(sys.argv[1:])
 
     if args.threads < 1:
         print("❌ 错误: --threads 线程数必须大于等于 1！", file=sys.stderr)
@@ -1239,52 +1539,22 @@ def main():
     target_total_size = sum(item.size for item in all_targets)
     keep_total_size = sum(item.size for item in all_keeps)
 
-    # 7. 展示运行参数与统计摘要面板
-    sort_desc_map = {
-        'name': "文件名 (自然排序)",
-        'size': "文件大小",
-        'mtime': "修改时间",
-        'ctime': "创建时间"
-    }
-    action_desc_map = {
-        'delete': "物理删除 (不可恢复)",
-        'trash': "移入回收站 (可找回)",
-        'move': f"移动至 {output_dir}"
-    }
-
-    summary_info = [
-        ("扫描根目录", str(target_dir)),
-        ("扫描范围", "递归子目录 (Recursive)" if args.recursive else "仅当前目录 (Flat)"),
-        ("匹配规则", args.pattern),
-        ("扫描总文件数", f"{total_found} 个 (共涉及 {total_dirs} 个直接目录)"),
-        ("目录处理模式", "按目录独立计算 (Dir Mode)" if args.dir_mode else "全局统筹模式 (Global Mode)"),
-        ("目录文件数阈值", f"{args.min_files} 个 (少于该数值自动跳过)"),
-        ("目录筛选结果", f"达标 {active_dirs_count} 个目录 (共 {len(all_active_items)} 个文件)；跳过 {skipped_dirs_count} 个不足阈值目录 (共 {skipped_files_count} 个文件)"),
-        ("排序方式", f"{sort_desc_map.get(args.sort_by)} [{'倒序 (降序)' if args.reverse else '正序 (升序)'}]"),
-        ("间隔采样规则", f"间隔 {args.interval} 个取 1 个 (每 {step} 个处理 1 个，起始偏移 offset={offset})"),
-        ("计划操作", action_desc_map.get(args.action, args.action)),
-        ("达标目录保留数", f"{len(all_keeps)} 个 ({format_size(keep_total_size)})"),
-        ("受影响处理数", f"{len(all_targets)} 个 ({format_size(target_total_size)})"),
-        ("运行模式", "演练模式 (Dry-Run)" if args.dry_run else "正常执行"),
-        ("日志文件", str(log_file_path))
-    ]
-
-    if HAS_RICH:
-        panel_content = Text()
-        for label, val in summary_info:
-            panel_content.append(f"• {label:>12}: ", style="bold cyan")
-            panel_content.append(f"{val}\n", style="white")
-
-        console.print(Panel(
-            panel_content,
-            title="[bold green]📦 任务配置与统计摘要[/]",
-            expand=False
-        ))
-    else:
-        print("\n=== 任务配置与统计摘要 ===")
-        for label, val in summary_info:
-            print(f"• {label:>12}: {val}")
-        print("==========================\n")
+    # 7. 展示紧凑型任务配置与参数核对面板（清晰区分用户指定与系统默认）
+    render_config_panel(
+        target_dir=target_dir,
+        args=args,
+        output_dir=output_dir,
+        offset=offset,
+        step=step,
+        total_dirs=total_dirs,
+        total_found=total_found,
+        active_groups=active_groups,
+        skipped_groups=skipped_groups,
+        all_targets=all_targets,
+        all_keeps=all_keeps,
+        log_file_path=log_file_path,
+        user_specified=user_specified
+    )
 
     # 8. 如果有跳过的目录，展示跳过概况
     if skipped_dirs_count > 0:
@@ -1334,19 +1604,25 @@ def main():
         logger.info("用户未确认执行或处于演练模式，任务安全退出。")
         return
 
-    # 11. 执行批处理操作
+    # 11. 高并发多线程执行批处理操作
     success_cnt, fail_cnt, skip_cnt, handled_bytes = execute_batch_action(
         targets=all_targets,
         action=args.action,
         output_dir=output_dir,
         preserve_tree=args.preserve_tree,
         conflict_policy=args.conflict,
+        threads_count=args.threads,
         logger=logger
     )
 
     elapsed = time.time() - start_time
 
     # 12. 最终总结报告
+    action_desc_map = {
+        'delete': "物理删除 (不可恢复)",
+        'trash': "移入回收站 (可找回)",
+        'move': f"移动至 {output_dir}" if output_dir else "文件移动"
+    }
     summary_report = [
         f"处理动作: {action_desc_map.get(args.action, args.action)}",
         f"达标处理目录: {active_dirs_count} 个",
