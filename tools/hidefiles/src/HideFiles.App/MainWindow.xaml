@@ -635,9 +635,22 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+
+                <!-- 会话凭据状态指示与快捷切换 -->
+                <ui:Button Grid.Column="1" Margin="12,0,12,0" Padding="8,2" Height="26"
+                           Appearance="Transparent"
+                           Command="{Binding ToggleSessionLockCommand}"
+                           ToolTip="{Binding SessionLockTooltip}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SessionLockIcon}" Margin="0,0,4,0" FontSize="12" />
+                        <TextBlock Text="{Binding SessionLockStatusText}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </ui:Button>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right"
                             Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVisibilityConverter}}">
                     <ProgressBar Value="{Binding ProgressValue}" Maximum="100" Width="160" Height="8" VerticalAlignment="Center" Margin="0,0,10,0" />
                     <ui:Button Content="取消" Appearance="Secondary" Padding="10,2" Height="26"

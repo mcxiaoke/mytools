@@ -33,6 +33,18 @@ public partial class MainViewModel : ObservableObject
     private HideFilesConfig _config;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SessionLockStatusText))]
+    [NotifyPropertyChangedFor(nameof(SessionLockIcon))]
+    [NotifyPropertyChangedFor(nameof(SessionLockTooltip))]
+    private bool _isSessionUnlocked;
+
+    public string SessionLockIcon => IsSessionUnlocked ? "🔓" : "🔒";
+    public string SessionLockStatusText => IsSessionUnlocked ? "已解锁" : "未解锁";
+    public string SessionLockTooltip => IsSessionUnlocked
+        ? "会话已解锁（内存持有主密钥，加解密与元数据嗅探无需重复输入密码）。点击可锁定会话。"
+        : "会话未解锁。点击输入主密码解锁，解锁后可迅速查看已保护文件的原始文件名。";
+
+    [ObservableProperty]
     private bool _isProcessing;
 
     [ObservableProperty]
@@ -523,7 +535,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>弹出安全验证对话框，记录本会话凭据（allowRecovery 控制是否允许使用恢复码）</summary>
     /// <summary>
     /// 直接用已有密码解锁会话，不弹窗。
-    /// 供自动化测试与将来的"记住密码/静默解锁"使用；密码错误时返回 false 且不改动会话。
+    /// 供自动化测试与启动解锁使用；密码错误时返回 false 且不改动会话。
     /// </summary>
     public bool TryUnlockSession(string pin)
     {
@@ -543,6 +555,8 @@ public partial class MainViewModel : ObservableObject
         _sessionRecoveryCode = null;
         Config.SessionPin = _sessionPin;
         RefreshSessionMasterKey();
+        IsSessionUnlocked = true;
+        RefreshLoadedFilesMetadata();
         return true;
     }
 
@@ -556,7 +570,82 @@ public partial class MainViewModel : ObservableObject
         _sessionPin = null;
         Config.SessionPin = null;
         RefreshSessionMasterKey();
+        IsSessionUnlocked = true;
+        RefreshLoadedFilesMetadata();
         return true;
+    }
+
+    [RelayCommand]
+    public void ToggleSessionLock()
+    {
+        if (IsSessionUnlocked)
+        {
+            LockSession();
+        }
+        else
+        {
+            PromptUnlockSession();
+        }
+    }
+
+    public void LockSession()
+    {
+        _sessionPin = null;
+        _sessionRecoveryCode = null;
+        _sessionMasterKey = null;
+        Config.SessionPin = null;
+        IsSessionUnlocked = false;
+        StatusMessage = "会话已锁定。";
+    }
+
+    [RelayCommand]
+    public void UnlockSession()
+    {
+        PromptUnlockSession();
+    }
+
+    public bool PromptUnlockSession()
+    {
+        if (!Config.HasPin)
+        {
+            StatusMessage = "尚未设置主密码，请先在“设置”中设置主密码。";
+            return false;
+        }
+
+        if (TryPromptCredential(allowRecovery: true))
+        {
+            StatusMessage = "会话已解锁。";
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>会话解锁后，重新嗅探并补全当前列表中已混淆/已加密文件的原始文件名</summary>
+    private void RefreshLoadedFilesMetadata()
+    {
+        if (_sessionMasterKey == null) return;
+        var targets = Files.Concat(SecureFiles)
+            .Where(f => f.Status == FileStatus.Obfuscated && string.IsNullOrEmpty(f.OriginalFileName))
+            .ToList();
+        if (targets.Count == 0) return;
+
+        Task.Run(() =>
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            foreach (var item in targets)
+            {
+                if (!File.Exists(item.FilePath)) continue;
+                bool isTail = V2Tail.IsTailFile(item.FilePath);
+                var insp = _obfuscator.Inspect(item.FilePath, _sessionMasterKey, forStructureWorkspace: isTail);
+                if (!string.IsNullOrEmpty(insp.OriginalFileName))
+                {
+                    dispatcher?.InvokeAsync(() =>
+                    {
+                        item.OriginalFileName = insp.OriginalFileName;
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                }
+            }
+        });
     }
 
     private bool TryPromptCredential(bool allowRecovery = true)
@@ -571,6 +660,11 @@ public partial class MainViewModel : ObservableObject
         _sessionRecoveryCode = string.IsNullOrEmpty(dlg.EnteredRecoveryCode) ? null : dlg.EnteredRecoveryCode;
         Config.SessionPin = _sessionPin;
         RefreshSessionMasterKey();
+        IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null;
+        if (IsSessionUnlocked)
+        {
+            RefreshLoadedFilesMetadata();
+        }
         return true;
     }
 
@@ -584,12 +678,17 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 还原所需凭据：密码或恢复码任一即可。
+    /// 还原所需凭据：优先使用已缓存的 Session 凭据（密码或主密钥），
+    /// 若无有效缓存则回退弹出密码验证对话框。
     /// 即使本机已没有密钥材料（密码被清除），也允许用恢复码还原。
     /// </summary>
     public bool EnsureRestoreCredential()
     {
-        if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode)) return true;
+        if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null)
+        {
+            IsSessionUnlocked = true;
+            return true;
+        }
         return TryPromptCredential(allowRecovery: true);
     }
 
@@ -597,7 +696,11 @@ public partial class MainViewModel : ObservableObject
     public bool EnsurePinVerified()
     {
         if (!Config.HasPin) return true;
-        if (!string.IsNullOrEmpty(_sessionPin) && Config.VerifyPin(_sessionPin)) return true;
+        if (!string.IsNullOrEmpty(_sessionPin) && Config.VerifyPin(_sessionPin))
+        {
+            IsSessionUnlocked = true;
+            return true;
+        }
         return TryPromptCredential(allowRecovery: false);
     }
 
@@ -633,6 +736,7 @@ public partial class MainViewModel : ObservableObject
         HasPinConfigured = Config.HasPin;
         _sessionPin = Config.SessionPin;
         RefreshSessionMasterKey();
+        IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin);
         if (result.MasterKeyRecreated)
         {
             RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
@@ -670,6 +774,7 @@ public partial class MainViewModel : ObservableObject
         HasPinConfigured = Config.HasPin;
         _sessionPin = Config.SessionPin;
         RefreshSessionMasterKey();
+        IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin);
         StatusMessage = "主密码修改成功。历史文件仍可使用新密码正常解密。";
     }
 
@@ -699,6 +804,7 @@ public partial class MainViewModel : ObservableObject
         _sessionPin = null;
         _sessionRecoveryCode = null;
         _sessionMasterKey = null;
+        IsSessionUnlocked = false;
         RecoveryCodeDisplay = string.Empty;
         StatusMessage = "主密码已清除。历史加密文件需使用恢复码解密。";
     }
@@ -729,6 +835,7 @@ public partial class MainViewModel : ObservableObject
             HasPinConfigured = Config.HasPin;
             _sessionPin = Config.SessionPin;
             RefreshSessionMasterKey();
+            IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin);
             if (result.MasterKeyRecreated)
                 RecoveryCodeDisplay = result.RecoveryCode ?? string.Empty;
 
@@ -736,7 +843,10 @@ public partial class MainViewModel : ObservableObject
         }
 
         if (!string.IsNullOrEmpty(Config.SessionPin) && Config.VerifyPin(Config.SessionPin))
+        {
+            IsSessionUnlocked = true;
             return true;
+        }
 
         if (!TryPromptCredential(allowRecovery: false) || string.IsNullOrEmpty(Config.SessionPin))
         {
