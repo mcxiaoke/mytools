@@ -152,8 +152,8 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
-                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
                                     <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                     <DataGridTemplateColumn Header="操作" Width="50">
@@ -285,8 +285,8 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="文件名" Binding="{Binding FileName}" Width="180" FontWeight="SemiBold" />
-                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding OriginalFileName}" Width="160" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                     <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
                                     <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                                     <DataGridTemplateColumn Header="操作" Width="50">

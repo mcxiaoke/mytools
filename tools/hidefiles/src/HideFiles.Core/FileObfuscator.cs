@@ -192,9 +192,7 @@ public sealed class FileObfuscator
                 Mode = config.ProtectionMode
             };
 
-            string targetName = config.ObfuscateFileName
-                ? $"hf_{BuildNameHash(originalFileName, origLen)}{GetFakeExtension(config, originalExt)}"
-                : originalFileName;
+            string targetName = PredictTargetFileName(originalFileName, origLen, config);
             string targetPath = Path.Combine(dir, targetName);
             // 关闭文件名混淆（或哈希名恰好等于原名）时为原地处理，不需要改名
             bool renameRequired = !string.Equals(filePath, targetPath, StringComparison.OrdinalIgnoreCase);
@@ -466,6 +464,22 @@ public sealed class FileObfuscator
         }
 
         return hasher.GetHashAndReset();
+    }
+
+    /// <summary>
+    /// 预测/生成文件混淆后的目标文件名。
+    /// 若配置关闭了文件名混淆，则返回原文件名；
+    /// 若开启，则返回 "hf_<8位哈希><伪装扩展名>"。
+    /// </summary>
+    public static string PredictTargetFileName(string originalFileName, long length, HideFilesConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(originalFileName)) return string.Empty;
+        if (!config.ObfuscateFileName) return originalFileName;
+
+        string originalExt = Path.GetExtension(originalFileName);
+        string nameHash = BuildNameHash(originalFileName, length);
+        string fakeExt = GetFakeExtension(config, originalExt);
+        return $"hf_{nameHash}{fakeExt}";
     }
 
     private static string GetFakeExtension(HideFilesConfig config, string originalExt)

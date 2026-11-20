@@ -9,6 +9,8 @@ public partial class FileItemModel : ObservableObject
     private string _filePath = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayOriginalFileName))]
+    [NotifyPropertyChangedFor(nameof(DisplayEncryptedFileName))]
     private string _fileName = string.Empty;
 
     [ObservableProperty]
@@ -18,7 +20,28 @@ public partial class FileItemModel : ObservableObject
     private FileStatus _status;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayOriginalFileName))]
     private string? _originalFileName;
+
+    /// <summary>
+    /// 加密/混淆后的文件名。
+    /// 未加密时为预测混淆名（如 hf_xxxx.dat）；已加密时为实际密文文件名。
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayEncryptedFileName))]
+    private string? _encryptedFileName;
+
+    /// <summary>用于界面展示的原始文件名：未加密文件直接为原名；已加密文件为解密后的原始名</summary>
+    public string DisplayOriginalFileName =>
+        !string.IsNullOrEmpty(OriginalFileName)
+            ? OriginalFileName
+            : (Status == FileStatus.Normal ? FileName : "(未解锁)");
+
+    /// <summary>用于界面展示的加密文件名：未加密文件为预测混淆名；已加密文件为磁盘密文名</summary>
+    public string DisplayEncryptedFileName =>
+        !string.IsNullOrEmpty(EncryptedFileName)
+            ? EncryptedFileName
+            : (Status == FileStatus.Obfuscated ? FileName : "--");
 
     [ObservableProperty]
     private string? _statusText;
@@ -40,6 +63,8 @@ public partial class FileItemModel : ObservableObject
     partial void OnStatusChanged(FileStatus value)
     {
         OnPropertyChanged(nameof(IsFailed));
+        OnPropertyChanged(nameof(DisplayOriginalFileName));
+        OnPropertyChanged(nameof(DisplayEncryptedFileName));
     }
 
     partial void OnErrorMessageChanged(string? value)

@@ -345,13 +345,29 @@ public partial class MainViewModel : ObservableObject
     private FileItemModel InspectSingleFile(string full, bool structureWorkspace)
     {
         var insp = _obfuscator.Inspect(full, _sessionMasterKey, forStructureWorkspace: structureWorkspace);
+        string currentName = Path.GetFileName(full);
+        string? origName = null;
+        string? encName = null;
+
+        if (insp.Status == FileStatus.Obfuscated)
+        {
+            origName = insp.OriginalFileName;
+            encName = currentName;
+        }
+        else
+        {
+            origName = currentName;
+            encName = FileObfuscator.PredictTargetFileName(currentName, insp.FileSize, Config);
+        }
+
         return new FileItemModel
         {
             FilePath = full,
-            FileName = Path.GetFileName(full),
+            FileName = currentName,
             FileSize = insp.FileSize,
             Status = insp.Status,
-            OriginalFileName = insp.OriginalFileName,
+            OriginalFileName = origName,
+            EncryptedFileName = encName,
             StatusText = insp.Status switch
             {
                 FileStatus.Obfuscated => "已混淆",
@@ -642,6 +658,7 @@ public partial class MainViewModel : ObservableObject
                     dispatcher?.InvokeAsync(() =>
                     {
                         item.OriginalFileName = insp.OriginalFileName;
+                        item.EncryptedFileName = Path.GetFileName(item.FilePath);
                     }, System.Windows.Threading.DispatcherPriority.Background);
                 }
             }
@@ -1040,10 +1057,20 @@ public partial class MainViewModel : ObservableObject
                             var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey, structWorkspace);
                             dispatcher?.InvokeAsync(() =>
                             {
+                                string newName = Path.GetFileName(res.FinalPath);
                                 item.FilePath = res.FinalPath;
-                                item.FileName = Path.GetFileName(res.FinalPath);
+                                item.FileName = newName;
                                 item.Status = insp.Status;
-                                item.OriginalFileName = insp.OriginalFileName;
+                                if (isObfuscate)
+                                {
+                                    item.EncryptedFileName = newName;
+                                    item.OriginalFileName = insp.OriginalFileName ?? item.OriginalFileName;
+                                }
+                                else
+                                {
+                                    item.OriginalFileName = newName;
+                                    item.EncryptedFileName = FileObfuscator.PredictTargetFileName(newName, insp.FileSize, Config);
+                                }
                                 item.ErrorMessage = null;
                                 item.StatusText = isObfuscate
                                     ? (structWorkspace ? "已混淆" : "已加密")
