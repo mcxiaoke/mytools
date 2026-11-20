@@ -25,23 +25,23 @@ public partial class FileItemModel : ObservableObject
 
     /// <summary>
     /// 加密/混淆后的文件名。
-    /// 未加密时为预测混淆名（如 hf_xxxx.dat）；已加密时为实际密文文件名。
+    /// 仅对已加密/已混淆文件有效（实际密文文件名）；未加密文件为 null。
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayEncryptedFileName))]
     private string? _encryptedFileName;
 
-    /// <summary>用于界面展示的原始文件名：未加密文件直接为原名；已加密文件为解密后的原始名</summary>
+    /// <summary>用于界面展示的原始文件名：未加密文件直接为原名；已加密文件为解密后的原始名（未解锁时显示未解锁）</summary>
     public string DisplayOriginalFileName =>
         !string.IsNullOrEmpty(OriginalFileName)
             ? OriginalFileName
             : (Status == FileStatus.Normal ? FileName : "(未解锁)");
 
-    /// <summary>用于界面展示的加密文件名：未加密文件为预测混淆名；已加密文件为磁盘密文名</summary>
+    /// <summary>用于界面展示的加密文件名：未处理文件显示为 --；已加密文件显示实际密文名</summary>
     public string DisplayEncryptedFileName =>
-        !string.IsNullOrEmpty(EncryptedFileName)
-            ? EncryptedFileName
-            : (Status == FileStatus.Obfuscated ? FileName : "--");
+        Status == FileStatus.Obfuscated
+            ? (!string.IsNullOrEmpty(EncryptedFileName) ? EncryptedFileName : FileName)
+            : "--";
 
     [ObservableProperty]
     private string? _statusText;

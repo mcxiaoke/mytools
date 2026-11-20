@@ -119,7 +119,7 @@ public static class ShellContextMenu
         using var subShell = mainMenuKey.CreateSubKey("shell");
         if (subShell == null) return;
 
-        // 清理旧版本遗留的子项（含旧版五个动词，以及更早的 3_OpenApp），避免菜单出现重复或陈旧项
+        // 清理旧版本遗留的子项（含旧版五个动词，以及 3_OpenApp），避免菜单出现重复或陈旧项
         foreach (var legacy in new[] { "1_Hide", "2_Unhide", "3_Encrypt", "4_Decrypt", "3_OpenApp" })
         {
             try { subShell.DeleteSubKeyTree(legacy, throwOnMissingSubKey: false); }
@@ -128,31 +128,22 @@ public static class ShellContextMenu
 
         string targetParam = isBackground ? "\"%V\"" : "\"%1\"";
 
-        // 菜单项 1: 文件混淆 & 还原（同一入口按容器类型自动分派）
+        // 菜单项 1: 混淆工作台（仅打开对应 Tab 并传入文件/文件夹，不自动执行加解密）
         using (var obfKey = subShell.CreateSubKey("1_Obfuscate"))
         {
-            obfKey.SetValue("MUIVerb", "文件混淆 / 还原");
+            obfKey.SetValue("MUIVerb", "混淆工作台");
             obfKey.SetValue("Icon", iconPath);
             using var cmdKey = obfKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --obfuscate {targetParam}");
+            cmdKey.SetValue("", $"\"{appExe}\" --tab struct {targetParam}");
         }
 
-        // 菜单项 2: 文件加密 & 解密（同一入口按容器类型自动分派）
+        // 菜单项 2: 加密工作台（仅打开对应 Tab 并传入文件/文件夹，不自动执行加解密）
         using (var encKey = subShell.CreateSubKey("2_Encrypt"))
         {
-            encKey.SetValue("MUIVerb", "文件加密 / 解密");
+            encKey.SetValue("MUIVerb", "加密工作台");
             encKey.SetValue("Icon", iconPath);
             using var cmdKey = encKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --secure {targetParam}");
-        }
-
-        // 菜单项 3: 打开 CarroCasket
-        using (var openKey = subShell.CreateSubKey("3_OpenApp"))
-        {
-            openKey.SetValue("MUIVerb", $"打开 {AppBrand.Name}");
-            openKey.SetValue("Icon", iconPath);
-            using var cmdKey = openKey.CreateSubKey("command");
-            cmdKey.SetValue("", $"\"{appExe}\" --open {targetParam}");
+            cmdKey.SetValue("", $"\"{appExe}\" --tab secure {targetParam}");
         }
     }
 

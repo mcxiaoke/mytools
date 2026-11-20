@@ -28,6 +28,9 @@ public sealed class ShellActionRequest
     public ShellActionKind Kind { get; init; }
     public List<string> Paths { get; init; } = new();
 
+    /// <summary>目标工作台：struct=混淆 secure=加密</summary>
+    public string TargetTab { get; init; } = "struct";
+
     /// <summary>是否会自动执行处理（Open 只加载列表）</summary>
     public bool IsAutoProcess => Kind != ShellActionKind.Open;
 
@@ -65,11 +68,26 @@ public static class ShellActionParser
     {
         var paths = new List<string>();
         var kind = ShellActionKind.Open;
+        string? specifiedTab = null;
 
-        foreach (string arg in args)
+        for (int i = 0; i < args.Count; i++)
         {
+            string arg = args[i];
+            if (string.Equals(arg, "--tab", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Count)
+            {
+                string tabVal = args[++i].ToLowerInvariant();
+                specifiedTab = tabVal.Contains("sec") || tabVal.Contains("enc") ? "secure" : "struct";
+                kind = ShellActionKind.Open;
+                continue;
+            }
+
             switch (arg)
             {
+                case "--struct" or "-struct":
+                    specifiedTab = "struct";
+                    kind = ShellActionKind.Open;
+                    break;
+
                 // 新菜单：一个入口覆盖"做"与"还原"
                 case "--obfuscate" or "-obfuscate":
                     kind = ShellActionKind.ObfuscateSmart;
@@ -102,6 +120,12 @@ public static class ShellActionParser
             }
         }
 
-        return new ShellActionRequest { Kind = kind, Paths = paths };
+        string tab = specifiedTab ?? (kind switch
+        {
+            ShellActionKind.Encrypt or ShellActionKind.Decrypt or ShellActionKind.SecureSmart => "secure",
+            _ => "struct"
+        });
+
+        return new ShellActionRequest { Kind = kind, Paths = paths, TargetTab = tab };
     }
 }

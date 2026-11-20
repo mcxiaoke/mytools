@@ -357,7 +357,7 @@ public partial class MainViewModel : ObservableObject
         else
         {
             origName = currentName;
-            encName = FileObfuscator.PredictTargetFileName(currentName, insp.FileSize, Config);
+            encName = null;
         }
 
         return new FileItemModel
@@ -1069,7 +1069,7 @@ public partial class MainViewModel : ObservableObject
                                 else
                                 {
                                     item.OriginalFileName = newName;
-                                    item.EncryptedFileName = FileObfuscator.PredictTargetFileName(newName, insp.FileSize, Config);
+                                    item.EncryptedFileName = null;
                                 }
                                 item.ErrorMessage = null;
                                 item.StatusText = isObfuscate
