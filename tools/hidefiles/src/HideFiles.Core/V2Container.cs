@@ -29,6 +29,8 @@ public sealed class V2WriteOptions
     public byte[] ConfigSalt { get; set; } = Array.Empty<byte>();
     public int KdfIterations { get; set; } = CoreConstants.DefaultKdfIterations;
     public string Pin { get; set; } = string.Empty;
+    public bool Deterministic { get; set; } = false;
+    public byte[]? DeterministicSeed { get; set; }
 }
 
 /// <summary>
@@ -61,11 +63,26 @@ public static class V2Container
         if (opt.MasterKey.Length != CoreConstants.MasterKeySize) throw new ArgumentException("Invalid master key.");
         if (string.IsNullOrEmpty(opt.Pin)) throw new ArgumentException("PIN is required to wrap master key.");
 
-        byte[] fileSalt = RandomNumberGenerator.GetBytes(CoreConstants.SaltSize);
-        byte[] fileNonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
-        byte[] fileKey = V2Crypto.DeriveFileKey(opt.MasterKey, fileSalt);
+        byte[] fileSalt;
+        byte[] fileNonce;
+        byte[] emkBlob;
         byte[] kek = V2Crypto.DeriveKek(opt.Pin, opt.ConfigSalt, CoreConstants.DefaultKdfIterations);
-        byte[] emkBlob = V2Crypto.WrapMasterKey(kek, opt.MasterKey);
+
+        if (opt.Deterministic && opt.DeterministicSeed != null)
+        {
+            var (fs, fn, en) = V2Crypto.DeriveDeterministicSaltsAndNonces(opt.MasterKey, kek, opt.DeterministicSeed);
+            fileSalt = fs;
+            fileNonce = fn;
+            emkBlob = V2Crypto.WrapMasterKey(kek, opt.MasterKey, en);
+        }
+        else
+        {
+            fileSalt = RandomNumberGenerator.GetBytes(CoreConstants.SaltSize);
+            fileNonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
+            emkBlob = V2Crypto.WrapMasterKey(kek, opt.MasterKey);
+        }
+
+        byte[] fileKey = V2Crypto.DeriveFileKey(opt.MasterKey, fileSalt);
 
         meta.Mode = opt.Mode;
         meta.KdfIterations = CoreConstants.DefaultKdfIterations;

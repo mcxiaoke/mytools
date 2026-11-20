@@ -33,10 +33,80 @@ public static class V2Crypto
         return HMACSHA256.HashData(masterKey, data);
     }
 
-    /// <summary>用 KEK 加密 MK，产出 60 字节 emkBlob：nonce(12)+cipher(32)+tag(16)</summary>
-    public static byte[] WrapMasterKey(byte[] kek, byte[] masterKey)
+    private static readonly byte[] DetMasterKeyPrefix = "HF2-DET-MK"u8.ToArray();
+    private static readonly byte[] DetFileSaltPrefix = "HF2-DET-FSALT"u8.ToArray();
+    private static readonly byte[] DetFileNoncePrefix = "HF2-DET-FNONCE"u8.ToArray();
+    private static readonly byte[] DetEmkNoncePrefix = "HF2-DET-EMKNONCE"u8.ToArray();
+
+    /// <summary>
+    /// 在确定性加密模式下，由 PIN 和全局固定盐确定性派生出 MasterKey。
+    /// 保证在不同机器、不同配置上，同一 PIN 始终派生出相同的 MasterKey。
+    /// </summary>
+    public static byte[] DeriveDeterministicMasterKey(string pin)
     {
-        byte[] nonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
+        byte[] kek = DeriveKek(pin, CoreConstants.DeterministicConfigSalt, CoreConstants.DefaultKdfIterations);
+        return HMACSHA256.HashData(kek, DetMasterKeyPrefix);
+    }
+
+    /// <summary>
+    /// 确定性加密模式下，计算原文件的头部指纹种子：
+    /// 读取原文件前 64KB（不足 64KB 则取全部）与原文件长度，计算 SHA-256。
+    /// 极速（<0.1ms），既不拖慢大文件处理，又能保证不同文件具备高雪崩差异。
+    /// </summary>
+    public static byte[] ComputeDeterministicSeed(Stream stream, long fileLength)
+    {
+        int readLen = (int)Math.Min(CoreConstants.DefaultHeadSize, fileLength);
+        byte[] head = new byte[readLen];
+        long prevPos = stream.CanSeek ? stream.Position : 0;
+        if (stream.CanSeek) stream.Seek(0, SeekOrigin.Begin);
+        stream.ReadExactly(head, 0, readLen);
+        if (stream.CanSeek) stream.Seek(prevPos, SeekOrigin.Begin);
+
+        byte[] buf = new byte[8 + readLen];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(buf, fileLength);
+        Buffer.BlockCopy(head, 0, buf, 8, readLen);
+        return SHA256.HashData(buf);
+    }
+
+    /// <summary>
+    /// 确定性模式下，根据 masterKey、kek 和原文件指纹种子，派生出确定性的 fileSalt、fileNonce 和 emkNonce。
+    /// </summary>
+    public static (byte[] FileSalt, byte[] FileNonce, byte[] EmkNonce) DeriveDeterministicSaltsAndNonces(
+        byte[] masterKey, byte[] kek, byte[] seed)
+    {
+        Span<byte> saltData = stackalloc byte[DetFileSaltPrefix.Length + seed.Length];
+        DetFileSaltPrefix.CopyTo(saltData);
+        seed.CopyTo(saltData.Slice(DetFileSaltPrefix.Length));
+        byte[] fileSalt = HMACSHA256.HashData(masterKey, saltData).AsSpan(0, CoreConstants.SaltSize).ToArray();
+
+        Span<byte> nonceData = stackalloc byte[DetFileNoncePrefix.Length + seed.Length];
+        DetFileNoncePrefix.CopyTo(nonceData);
+        seed.CopyTo(nonceData.Slice(DetFileNoncePrefix.Length));
+        byte[] fileNonce = HMACSHA256.HashData(masterKey, nonceData).AsSpan(0, CoreConstants.NonceSize).ToArray();
+
+        Span<byte> emkData = stackalloc byte[DetEmkNoncePrefix.Length + seed.Length];
+        DetEmkNoncePrefix.CopyTo(emkData);
+        seed.CopyTo(emkData.Slice(DetEmkNoncePrefix.Length));
+        byte[] emkNonce = HMACSHA256.HashData(kek, emkData).AsSpan(0, CoreConstants.NonceSize).ToArray();
+
+        return (fileSalt, fileNonce, emkNonce);
+    }
+
+    /// <summary>用 KEK 加密 MK，产出 60 字节 emkBlob：nonce(12)+cipher(32)+tag(16)。支持传入确定性 nonce</summary>
+    public static byte[] WrapMasterKey(byte[] kek, byte[] masterKey, byte[]? customNonce = null)
+    {
+        byte[] nonce;
+        if (customNonce != null)
+        {
+            if (customNonce.Length != CoreConstants.NonceSize)
+                throw new ArgumentException($"Nonce must be {CoreConstants.NonceSize} bytes.", nameof(customNonce));
+            nonce = (byte[])customNonce.Clone();
+        }
+        else
+        {
+            nonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
+        }
+
         byte[] cipher = new byte[CoreConstants.MasterKeySize];
         byte[] tag = new byte[CoreConstants.GcmTagSize];
         using (var gcm = new AesGcm(kek, CoreConstants.GcmTagSize))

@@ -176,13 +176,27 @@ public sealed class FileObfuscator
             if (V2Container.IsV2File(filePath) || V2Tail.IsTailFile(filePath))
             { res.ErrorMessage = "该文件已被加密。"; res.ErrorKind = ProcessErrorKind.AlreadyProcessed; return res; }
 
-            byte[] masterKey = config.UnwrapMasterKeyWithPin(config.SessionPin);
-            byte[] configSalt = Convert.FromBase64String(config.ConfigSalt!);
-
             string originalFileName = Path.GetFileName(filePath);
             string originalExt = Path.GetExtension(filePath);
             string dir = Path.GetDirectoryName(filePath)!;
             long origLen = new FileInfo(filePath).Length;
+
+            byte[] masterKey;
+            byte[] configSalt;
+            byte[]? deterministicSeed = null;
+
+            if (config.Deterministic)
+            {
+                configSalt = CoreConstants.DeterministicConfigSalt;
+                masterKey = V2Crypto.DeriveDeterministicMasterKey(config.SessionPin);
+                using (var fs = File.OpenRead(filePath))
+                    deterministicSeed = V2Crypto.ComputeDeterministicSeed(fs, origLen);
+            }
+            else
+            {
+                masterKey = config.UnwrapMasterKeyWithPin(config.SessionPin);
+                configSalt = Convert.FromBase64String(config.ConfigSalt!);
+            }
 
             var meta = new V2Metadata
             {
@@ -216,7 +230,7 @@ public sealed class FileObfuscator
                 cancellationToken.ThrowIfCancellationRequested();
                 // 原地加密 + 尾部追加 footer：不整体重写，任意大小文件都快
                 V2Tail.ProtectInPlace(filePath, meta, config.SessionPin, masterKey, configSalt,
-                    config.HeadObfuscateSize);
+                    config.HeadObfuscateSize, config.Deterministic, deterministicSeed);
                 if (renameRequired)
                     targetPath = UniquePath.Move(filePath, dir, targetName);
             }
@@ -235,7 +249,9 @@ public sealed class FileObfuscator
                     MasterKey = masterKey,
                     ConfigSalt = configSalt,
                     KdfIterations = config.KdfIterations,
-                    Pin = config.SessionPin
+                    Pin = config.SessionPin,
+                    Deterministic = config.Deterministic,
+                    DeterministicSeed = deterministicSeed
                 };
                 void WriteBody(Stream outFs, byte[] fileKey, byte[] fileNonce)
                 {

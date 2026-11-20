@@ -49,6 +49,12 @@ public sealed class HideFilesConfig
     public bool IncludeSubdirectories { get; set; } = false;
 
     /// <summary>
+    /// 确定性加密模式（默认 false）：
+    /// 开启后，同一个输入文件 + 同一个密码将生成字节完全一致的密文文件（适合网盘同步去重）。
+    /// </summary>
+    public bool Deterministic { get; set; } = false;
+
+    /// <summary>
     /// v2 密钥材料：用 PIN 派生的 KEK 加密主密钥 MK（Base64）。
     /// 每个文件头部内嵌同一份 blobs 的等价物，保证文件自包含；
     /// config 存此份是为了加密新文件时复用同一个 MK（= 同一个恢复码）。
@@ -216,6 +222,7 @@ public sealed class HideFilesConfig
             DefaultFakeExtension = ".dat",
             ObfuscateFileName = true,
             IncludeSubdirectories = false,
+            Deterministic = false,
             ConfigSalt = null,
             WrappedMasterKey = null,
             RecoveryCodeHash = null,

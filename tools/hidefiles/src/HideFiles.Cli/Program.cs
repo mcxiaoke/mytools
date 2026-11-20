@@ -42,6 +42,7 @@ public static class Program
         string? recovery = null;
         string? currentPin = null;
         ProtectionMode? modeOverride = null;
+        bool? deterministicOverride = null;
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -68,6 +69,10 @@ public static class Program
                 modeOverride = m.Equals("full", StringComparison.OrdinalIgnoreCase)
                     ? ProtectionMode.FullEncrypt : ProtectionMode.StructureLock;
             }
+            else if (a.Equals("--deterministic", StringComparison.OrdinalIgnoreCase) || a.Equals("--det", StringComparison.OrdinalIgnoreCase))
+            {
+                deterministicOverride = true;
+            }
             else
             {
                 targetArgs.Add(a);
@@ -78,6 +83,10 @@ public static class Program
         if (modeOverride.HasValue)
         {
             config.ProtectionMode = modeOverride.Value;
+        }
+        if (deterministicOverride.HasValue)
+        {
+            config.Deterministic = deterministicOverride.Value;
         }
         if (!string.IsNullOrEmpty(pin))
         {
@@ -454,6 +463,10 @@ public static class Program
         Console.WriteLine("      还原子目录名。");
         Console.WriteLine("  CarroCasketCli --help");
         Console.WriteLine("      显示本帮助。");
+        Console.WriteLine();
+        Console.WriteLine("通用选项：");
+        Console.WriteLine("  --deterministic, --det");
+        Console.WriteLine("      启用确定性加密：相同输入文件 + 相同密码生成字节完全一致的文件（便于网盘同步去重）。");
         Console.WriteLine();
     }
 

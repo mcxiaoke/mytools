@@ -50,7 +50,8 @@ public static class V2Tail
     /// 任一步骤失败都会写回原样并截掉半截 footer，重试安全。
     /// </summary>
     public static void ProtectInPlace(string filePath, V2Metadata meta, string pin,
-        byte[] masterKey, byte[] configSalt, int headSize = CoreConstants.DefaultHeadSize)
+        byte[] masterKey, byte[] configSalt, int headSize = CoreConstants.DefaultHeadSize,
+        bool deterministic = false, byte[]? deterministicSeed = null)
     {
         long origLen = new FileInfo(filePath).Length;
         meta.OriginalLength = origLen;
@@ -73,8 +74,24 @@ public static class V2Tail
         }
         meta.LockRegions = regions;
 
-        byte[] fileSalt = RandomNumberGenerator.GetBytes(CoreConstants.SaltSize);
-        byte[] fileNonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
+        byte[] fileSalt;
+        byte[] fileNonce;
+        byte[]? emkNonce = null;
+        byte[] kek = V2Crypto.DeriveKek(pin, configSalt, CoreConstants.DefaultKdfIterations);
+
+        if (deterministic && deterministicSeed != null)
+        {
+            var (fs, fn, en) = V2Crypto.DeriveDeterministicSaltsAndNonces(masterKey, kek, deterministicSeed);
+            fileSalt = fs;
+            fileNonce = fn;
+            emkNonce = en;
+        }
+        else
+        {
+            fileSalt = RandomNumberGenerator.GetBytes(CoreConstants.SaltSize);
+            fileNonce = RandomNumberGenerator.GetBytes(CoreConstants.NonceSize);
+        }
+
         byte[] fileKey = V2Crypto.DeriveFileKey(masterKey, fileSalt);
 
         // 锁定区原始字节：既用于 CRC，也是失败回滚的唯一依据（必须在加密前留存副本）
@@ -106,7 +123,7 @@ public static class V2Tail
                 fs.Flush(true);
 
                 // 3) 整段 footer 一次写入，缩小"半截 footer"的窗口
-                byte[] footer = BuildFooter(meta, pin, masterKey, configSalt, fileSalt, fileNonce, fileKey);
+                byte[] footer = BuildFooter(meta, pin, masterKey, configSalt, fileSalt, fileNonce, fileKey, emkNonce);
                 fs.Seek(0, SeekOrigin.End);
                 fs.Write(footer, 0, footer.Length);
                 fs.Flush(true);
@@ -125,14 +142,14 @@ public static class V2Tail
 
     /// <summary>构造完整 footer（元数据 GCM 密文 + 密钥材料 + 版本/魔数）</summary>
     private static byte[] BuildFooter(V2Metadata meta, string pin, byte[] masterKey, byte[] configSalt,
-        byte[] fileSalt, byte[] fileNonce, byte[] fileKey)
+        byte[] fileSalt, byte[] fileNonce, byte[] fileKey, byte[]? emkNonce = null)
     {
         // 完整性用 RegionCrcs 校验（只覆盖被加密区），无需全文件 SHA-256 —— 这是保持大文件秒级的关键
         meta.OriginalSha256 = Array.Empty<byte>();
 
         // 用 PIN 封装 MK
         byte[] kek = V2Crypto.DeriveKek(pin, configSalt, CoreConstants.DefaultKdfIterations);
-        byte[] emkBlob = V2Crypto.WrapMasterKey(kek, masterKey);
+        byte[] emkBlob = V2Crypto.WrapMasterKey(kek, masterKey, emkNonce);
 
         byte[] metaPlain = meta.Serialize();
         byte[] metaCipher = new byte[metaPlain.Length + CoreConstants.GcmTagSize];

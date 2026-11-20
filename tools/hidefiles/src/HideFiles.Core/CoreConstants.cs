@@ -46,6 +46,12 @@ public static class CoreConstants
     /// <summary>默认 PBKDF2 迭代次数（PIN 低熵，抗暴力）；实测 60 万次约 104ms</summary>
     public const int DefaultKdfIterations = 600_000;
 
+    /// <summary>
+    /// 确定性加密模式下使用的全局固定配置盐（16 字节）。
+    /// 保证不同机器或不同安装实例在开启确定性加密后，同一个 PIN 派生出完全一致的 KEK。
+    /// </summary>
+    public static readonly byte[] DeterministicConfigSalt = "HF2-DET-CFGSALT!"u8.ToArray();
+
     /// <summary>加密后的最小文件长度：头部 + 至少一字节元数据密文</summary>
     public const int V2MinSize = V2HeaderSize + GcmTagSize;
 

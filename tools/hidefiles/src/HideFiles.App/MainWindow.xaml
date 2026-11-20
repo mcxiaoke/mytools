@@ -444,6 +444,10 @@
                                     <CheckBox Content="扫描含子目录" Margin="24,0,0,0"
                                               VerticalAlignment="Center" IsChecked="{Binding Config.IncludeSubdirectories}"
                                               AutomationProperties.AutomationId="IncludeSubdirsCheck" />
+                                    <CheckBox Content="确定性加密（同文件产出一致）" Margin="24,0,0,0"
+                                              VerticalAlignment="Center" IsChecked="{Binding Config.Deterministic}"
+                                              ToolTip="相同文件与密码生成完全一致的字节，便于网盘同步去重"
+                                              AutomationProperties.AutomationId="DeterministicCheck" />
                                 </StackPanel>
                             </Grid>
                         </Border>

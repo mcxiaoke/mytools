@@ -31,15 +31,15 @@ Windows 文件混淆与加密工具（.NET 8 / WPF）。界面显示名为 **Car
 
 ```bash
 CarroCasketCli setpin <密码> [--current <当前密码>]   # 首次设置输出恢复码；修改密码需提供当前密码
-CarroCasketCli hide <路径...> --pin <密码>            # 混淆（仅媒体格式）
-CarroCasketCli encrypt <路径...> --pin <密码>         # 加密（任意格式）
+CarroCasketCli hide <路径...> --pin <密码>            # 混淆（仅媒体格式，可选 --deterministic）
+CarroCasketCli encrypt <路径...> --pin <密码>         # 加密（任意格式，可选 --deterministic）
 CarroCasketCli unhide <路径...> --pin <密码>          # 还原/解密（也可用 --recovery <恢复码>）
 CarroCasketCli scan [路径...]                         # 查看状态（带 --pin 时显示原始文件名）
 CarroCasketCli dir-hide <目录...>                     # 伪装目录内部的子目录名
 CarroCasketCli dir-unhide <目录...>                   # 还原目录内部的子目录名
 ```
 
-`unhide` / `restore` / `decrypt` 等价，按容器格式自动识别；`--dry-run` 只列出待处理文件。
+`unhide` / `restore` / `decrypt` 等价，按容器格式自动识别；`--dry-run` 只列出待处理文件；`--deterministic`（或 `--det`）开启确定性加密，保证同一文件+密码产生完全相同的密文输出（适合网盘同步与去重校验）。
 
 ## 右键菜单
 
@@ -80,6 +80,7 @@ CarroCasketCli dir-unhide <目录...>                   # 还原目录内部的�
 - 配置文件损坏时会保留 `config.json.corrupt-*` 备份并提示，不会静默覆盖密钥材料。
 - 加密后文件不可直接查看内容，解密后恢复原样。
 - 目标文件重名时自动添加编号 `(1)`，不覆盖已有文件。
+- **确定性加密可选**：设置页提供「确定性加密」开关（CLI 对应 `--deterministic`）。开启后由文件前 64KB 指纹与密码确定性派生密钥材料与 Nonce，同一个文件 + 同一个密码在任意机器上均生成逐字节一致的密文，便于网盘同步与去重校验；默认关闭（保持密码学语义安全）。
 
 ## 项目结构
 
