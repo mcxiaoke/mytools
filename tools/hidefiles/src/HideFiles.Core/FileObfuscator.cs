@@ -76,13 +76,13 @@ public sealed class ProcessFileResult
 public sealed class FileObfuscator
 {
     /// <summary>
-    /// 检查文件状态。传入 masterKey（本机已解锁的主密钥）时会顺带解出原始文件名，
+    /// 检查文件状态。可传入 masterKey、pin 或 recoveryCode 解出原始文件名，
     /// 便于在列表/扫描结果里辨认被改名的容器；没有密钥时只判断容器类型。
     /// forStructureWorkspace 为 true 时，未加密且格式不受结构混淆支持的文件
     /// 会被标记为 <see cref="FileStatus.Unsupported"/>，让界面直接显示"不支持"
     /// 而不是等到处理时才报失败。
     /// </summary>
-    public FileInspection Inspect(string filePath, byte[]? masterKey = null, bool forStructureWorkspace = false)
+    public FileInspection Inspect(string filePath, byte[]? masterKey = null, byte[]? fallbackMasterKey = null, string? pin = null, string? recoveryCode = null, bool forStructureWorkspace = false)
     {
         var info = new FileInspection { FilePath = filePath };
         if (!File.Exists(filePath))
@@ -122,7 +122,7 @@ public sealed class FileObfuscator
                 info.ProtectionMode = (ProtectionMode)head[9];
             }
 
-            TryFillMetadata(info, filePath, isTail, masterKey);
+            TryFillMetadata(info, filePath, isTail, masterKey, fallbackMasterKey, pin, recoveryCode);
             return info;
         }
         catch (IOException ex) when (IsFileLocked(ex))
@@ -139,22 +139,80 @@ public sealed class FileObfuscator
         }
     }
 
-    /// <summary>有主密钥时解出元数据里的原始文件名；解不出就保持空，不影响状态判定</summary>
-    private static void TryFillMetadata(FileInspection info, string path, bool isTail, byte[]? masterKey)
+    /// <summary>
+    /// 解出元数据里的原始文件名：优先尝试已缓存的主密钥（0 耗时快速路径），
+    /// 未命中且提供 pin 时尝试确定性主密钥与自包含 emkBlob 解密；解不出就保持空，不影响状态判定。
+    /// </summary>
+    private static void TryFillMetadata(FileInspection info, string path, bool isTail, byte[]? masterKey, byte[]? fallbackMasterKey = null, string? pin = null, string? recoveryCode = null)
     {
-        if (masterKey == null || masterKey.Length != CoreConstants.MasterKeySize) return;
+        // 1. 快速路径：传入的 masterKey（首选主密钥）直接解密（<0.01ms）
+        if (TryDecryptMetadataWithMasterKey(info, path, isTail, masterKey)) return;
+
+        // 1.2 快速路径 2：传入的 fallbackMasterKey（如另一种加密模式的主密钥）直接解密（<0.01ms）
+        if (TryDecryptMetadataWithMasterKey(info, path, isTail, fallbackMasterKey)) return;
+
+        // 2. 后备路径：如果传入了会话 pin
+        if (!string.IsNullOrEmpty(pin))
+        {
+            // 2.1 优先尝试 pin 派生的确定性主密钥（极速 <0.01ms，无需 PBKDF2）
+            try
+            {
+                byte[] detMk = V2Crypto.DeriveDeterministicMasterKey(pin);
+                string rc = V2Crypto.MasterKeyToRecoveryCode(detMk);
+                V2Metadata meta = isTail
+                    ? V2Tail.ReadFooter(path, null, rc).Metadata
+                    : V2Container.Read(path, null, rc).Metadata;
+                info.OriginalFileName = meta.OriginalFileName;
+                info.OriginalExtension = meta.OriginalExtension;
+                return;
+            }
+            catch { }
+
+            // 2.2 跨设备/其它配置盐文件：使用 pin 解读文件自包含 emkBlob
+            try
+            {
+                V2Metadata meta = isTail
+                    ? V2Tail.ReadFooter(path, pin, null).Metadata
+                    : V2Container.Read(path, pin, null).Metadata;
+                info.OriginalFileName = meta.OriginalFileName;
+                info.OriginalExtension = meta.OriginalExtension;
+                return;
+            }
+            catch { }
+        }
+
+        // 3. 后备路径：如果传入了恢复码
+        if (!string.IsNullOrEmpty(recoveryCode))
+        {
+            try
+            {
+                V2Metadata meta = isTail
+                    ? V2Tail.ReadFooter(path, null, recoveryCode).Metadata
+                    : V2Container.Read(path, null, recoveryCode).Metadata;
+                info.OriginalFileName = meta.OriginalFileName;
+                info.OriginalExtension = meta.OriginalExtension;
+                return;
+            }
+            catch { }
+        }
+    }
+
+    private static bool TryDecryptMetadataWithMasterKey(FileInspection info, string path, bool isTail, byte[]? masterKey)
+    {
+        if (masterKey == null || masterKey.Length != CoreConstants.MasterKeySize) return false;
         try
         {
-            string recoveryCode = V2Crypto.MasterKeyToRecoveryCode(masterKey);
+            string rc = V2Crypto.MasterKeyToRecoveryCode(masterKey);
             V2Metadata meta = isTail
-                ? V2Tail.ReadFooter(path, null, recoveryCode).Metadata
-                : V2Container.Read(path, null, recoveryCode).Metadata;
+                ? V2Tail.ReadFooter(path, null, rc).Metadata
+                : V2Container.Read(path, null, rc).Metadata;
             info.OriginalFileName = meta.OriginalFileName;
             info.OriginalExtension = meta.OriginalExtension;
+            return true;
         }
         catch
         {
-            // 不属于这批密钥的文件：保持字段为空
+            return false;
         }
     }
 

@@ -270,4 +270,95 @@ public class DeterministicEncryptionTests : IDisposable
         Assert.Equal("data.txt", Path.GetFileName(rest.FinalPath));
         Assert.Equal(content, File.ReadAllBytes(rest.FinalPath));
     }
+
+    [Fact]
+    public void Deterministic_InspectWithConfigMasterKey_FailsToDecryptMetadata()
+    {
+        string pin = "DetPin123456";
+        var config = HideFilesConfig.CreateDefault();
+        config.ChangePin(pin);
+        config.Deterministic = true;
+        config.SessionPin = pin;
+
+        string pngFile = Path.Combine(_testDir, "test.png");
+        File.WriteAllBytes(pngFile, CreateSamplePng());
+
+        var obf = new FileObfuscator();
+        var res = obf.ObfuscateFile(pngFile, config);
+        Assert.True(res.Success);
+
+        // 随机主密钥（当前 ViewModel 缓存的 _sessionMasterKey）
+        byte[] randomMasterKey = config.UnwrapMasterKeyWithPin(pin);
+        var inspWrong = obf.Inspect(res.FinalPath, randomMasterKey);
+        // 断言：由于主密钥不匹配，OriginalFileName 解不出来！
+        Assert.Null(inspWrong.OriginalFileName);
+
+        // 确定性主密钥
+        byte[] detMasterKey = V2Crypto.DeriveDeterministicMasterKey(pin);
+        var inspCorrect = obf.Inspect(res.FinalPath, detMasterKey);
+        // 断言：用确定性主密钥能解出原文件名！
+        Assert.Equal("test.png", inspCorrect.OriginalFileName);
+
+        // 新增验证：即使传入了错误/不匹配的主密钥，只要提供了 pin，后备链路能成功解密原始文件名
+        var inspWithPinFallback = obf.Inspect(res.FinalPath, masterKey: randomMasterKey, pin: pin);
+        Assert.Equal("test.png", inspWithPinFallback.OriginalFileName);
+
+        // 新增验证：不传 masterKey，直接传 pin，也能极速派生确定性密钥解密原始文件名
+        var inspPinDirect = obf.Inspect(res.FinalPath, pin: pin);
+        Assert.Equal("test.png", inspPinDirect.OriginalFileName);
+    }
+
+    [Fact]
+    public void CrossMode_SwitchingDeterministicSetting_DoesNotAffectInspectOrRestore()
+    {
+        string pin = "CrossPin_999888";
+        var config = HideFilesConfig.CreateDefault();
+        config.ChangePin(pin);
+        config.SessionPin = pin;
+
+        // 1. 在随机模式下加密文件 A
+        config.Deterministic = false;
+        string fileRandom = Path.Combine(_testDir, "random_mode.png");
+        byte[] bytesRandom = CreateSamplePng();
+        File.WriteAllBytes(fileRandom, bytesRandom);
+        var obf = new FileObfuscator();
+        var resRandom = obf.ObfuscateFile(fileRandom, config);
+        Assert.True(resRandom.Success, resRandom.ErrorMessage);
+
+        // 2. 在确定性模式下加密文件 B
+        config.Deterministic = true;
+        string fileDet = Path.Combine(_testDir, "deterministic_mode.png");
+        byte[] bytesDet = CreateSamplePng();
+        File.WriteAllBytes(fileDet, bytesDet);
+        var resDet = obf.ObfuscateFile(fileDet, config);
+        Assert.True(resDet.Success, resDet.ErrorMessage);
+
+        byte[] randomMasterKey = config.UnwrapMasterKeyWithPin(pin);
+        byte[] detMasterKey = V2Crypto.DeriveDeterministicMasterKey(pin);
+
+        // 场景 A：当前环境开启确定性加密（主密钥为确定性密钥），解密嗅探随机文件与确定性文件
+        var inspA1 = obf.Inspect(resRandom.FinalPath, masterKey: detMasterKey, pin: pin);
+        Assert.Equal("random_mode.png", inspA1.OriginalFileName);
+
+        var inspA2 = obf.Inspect(resDet.FinalPath, masterKey: detMasterKey, pin: pin);
+        Assert.Equal("deterministic_mode.png", inspA2.OriginalFileName);
+
+        // 场景 B：当前环境关闭确定性加密（主密钥为随机密钥），解密嗅探随机文件与确定性文件
+        var inspB1 = obf.Inspect(resRandom.FinalPath, masterKey: randomMasterKey, pin: pin);
+        Assert.Equal("random_mode.png", inspB1.OriginalFileName);
+
+        var inspB2 = obf.Inspect(resDet.FinalPath, masterKey: randomMasterKey, pin: pin);
+        Assert.Equal("deterministic_mode.png", inspB2.OriginalFileName);
+
+        // 场景 C：还原文件（RestoreFile 根本不依赖 Deterministic 开关，均能用 PIN 成功还原）
+        var rstRandom = obf.RestoreFile(resRandom.FinalPath, pin);
+        Assert.True(rstRandom.Success, rstRandom.ErrorMessage);
+        Assert.Equal("random_mode.png", Path.GetFileName(rstRandom.FinalPath));
+        Assert.Equal(bytesRandom, File.ReadAllBytes(rstRandom.FinalPath));
+
+        var rstDet = obf.RestoreFile(resDet.FinalPath, pin);
+        Assert.True(rstDet.Success, rstDet.ErrorMessage);
+        Assert.Equal("deterministic_mode.png", Path.GetFileName(rstDet.FinalPath));
+        Assert.Equal(bytesDet, File.ReadAllBytes(rstDet.FinalPath));
+    }
 }

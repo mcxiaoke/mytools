@@ -269,7 +269,7 @@ public static class Program
 
         foreach (var f in allCandidates)
         {
-            var insp = obfuscator.Inspect(f, masterKey);
+            var insp = obfuscator.Inspect(f, masterKey: masterKey, pin: pin, recoveryCode: recovery);
             if (insp.Status == FileStatus.Obfuscated)
             {
                 obfuscatedFiles.Add(f);
@@ -288,7 +288,7 @@ public static class Program
             Console.WriteLine("[预演] 将会解密：");
             foreach (var f in obfuscatedFiles)
             {
-                var insp = obfuscator.Inspect(f);
+                var insp = obfuscator.Inspect(f, masterKey: masterKey, pin: pin, recoveryCode: recovery);
                 Console.WriteLine($"  * {f}  →  {insp.OriginalFileName ?? "-"}");
             }
             return 0;
@@ -354,7 +354,7 @@ public static class Program
 
         foreach (var f in files)
         {
-            var insp = obfuscator.Inspect(f, masterKey);
+            var insp = obfuscator.Inspect(f, masterKey: masterKey, pin: pin);
             string statusStr;
             ConsoleColor col;
 
@@ -480,6 +480,10 @@ public static class Program
         try
         {
             var cfg = HideFilesConfig.Load();
+            if (cfg.Deterministic)
+            {
+                return V2Crypto.DeriveDeterministicMasterKey(pin);
+            }
             return cfg.HasKeyMaterial ? cfg.UnwrapMasterKeyWithPin(pin) : null;
         }
         catch

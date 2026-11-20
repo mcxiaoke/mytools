@@ -24,6 +24,8 @@ public partial class MainViewModel : ObservableObject
     private string? _sessionRecoveryCode;
     /// <summary>本机 config 中当前 PIN 对应的主密钥（改过 PIN 时兜底，避免每个文件都跑一次 PBKDF2）</summary>
     private byte[]? _sessionMasterKey;
+    /// <summary>确定性模式下当前 PIN 派生的主密钥（极速常量时间派生，解密确定性加密文件）</summary>
+    private byte[]? _sessionDeterministicMasterKey;
     private CancellationTokenSource? _processCts;
 
     [ObservableProperty]
@@ -401,9 +403,19 @@ public partial class MainViewModel : ObservableObject
         return text + "）。";
     }
 
+    private (byte[]? primary, byte[]? secondary) GetSessionMasterKeys()
+    {
+        if (Config.Deterministic)
+        {
+            return (_sessionDeterministicMasterKey, _sessionMasterKey);
+        }
+        return (_sessionMasterKey, _sessionDeterministicMasterKey);
+    }
+
     private FileItemModel InspectSingleFile(string full, bool structureWorkspace)
     {
-        var insp = _obfuscator.Inspect(full, _sessionMasterKey, forStructureWorkspace: structureWorkspace);
+        var (primaryKey, secondaryKey) = GetSessionMasterKeys();
+        var insp = _obfuscator.Inspect(full, masterKey: primaryKey, fallbackMasterKey: secondaryKey, pin: _sessionPin, recoveryCode: _sessionRecoveryCode, forStructureWorkspace: structureWorkspace);
         string currentName = Path.GetFileName(full);
         string? origName = null;
         string? encName = null;
@@ -668,6 +680,7 @@ public partial class MainViewModel : ObservableObject
         _sessionPin = null;
         _sessionRecoveryCode = null;
         _sessionMasterKey = null;
+        _sessionDeterministicMasterKey = null;
         Config.SessionPin = null;
         IsSessionUnlocked = false;
         StatusMessage = "会话已锁定。";
@@ -698,11 +711,15 @@ public partial class MainViewModel : ObservableObject
     /// <summary>会话解锁后，重新嗅探并补全当前列表中已混淆/已加密文件的原始文件名</summary>
     private void RefreshLoadedFilesMetadata()
     {
-        if (_sessionMasterKey == null) return;
+        if (string.IsNullOrEmpty(_sessionPin) && string.IsNullOrEmpty(_sessionRecoveryCode) && _sessionMasterKey == null && _sessionDeterministicMasterKey == null) return;
         var targets = Files.Concat(SecureFiles)
             .Where(f => f.Status == FileStatus.Obfuscated && string.IsNullOrEmpty(f.OriginalFileName))
             .ToList();
         if (targets.Count == 0) return;
+
+        var (primaryKey, secondaryKey) = GetSessionMasterKeys();
+        var pin = _sessionPin;
+        var recCode = _sessionRecoveryCode;
 
         Task.Run(() =>
         {
@@ -711,7 +728,7 @@ public partial class MainViewModel : ObservableObject
             {
                 if (!File.Exists(item.FilePath)) continue;
                 bool isTail = V2Tail.IsTailFile(item.FilePath);
-                var insp = _obfuscator.Inspect(item.FilePath, _sessionMasterKey, forStructureWorkspace: isTail);
+                var insp = _obfuscator.Inspect(item.FilePath, masterKey: primaryKey, fallbackMasterKey: secondaryKey, pin: pin, recoveryCode: recCode, forStructureWorkspace: isTail);
                 if (!string.IsNullOrEmpty(insp.OriginalFileName))
                 {
                     dispatcher?.InvokeAsync(() =>
@@ -736,7 +753,7 @@ public partial class MainViewModel : ObservableObject
         _sessionRecoveryCode = string.IsNullOrEmpty(dlg.EnteredRecoveryCode) ? null : dlg.EnteredRecoveryCode;
         Config.SessionPin = _sessionPin;
         RefreshSessionMasterKey();
-        IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null;
+        IsSessionUnlocked = !string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null || _sessionDeterministicMasterKey != null;
         if (IsSessionUnlocked)
         {
             RefreshLoadedFilesMetadata();
@@ -748,6 +765,12 @@ public partial class MainViewModel : ObservableObject
     private void RefreshSessionMasterKey()
     {
         _sessionMasterKey = null;
+        _sessionDeterministicMasterKey = null;
+        if (!string.IsNullOrEmpty(_sessionPin))
+        {
+            try { _sessionDeterministicMasterKey = V2Crypto.DeriveDeterministicMasterKey(_sessionPin); }
+            catch { _sessionDeterministicMasterKey = null; }
+        }
         if (string.IsNullOrEmpty(_sessionPin) || !Config.HasKeyMaterial) return;
         try { _sessionMasterKey = Config.UnwrapMasterKeyWithPin(_sessionPin); }
         catch { _sessionMasterKey = null; }
@@ -760,7 +783,7 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     public bool EnsureRestoreCredential()
     {
-        if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null)
+        if (!string.IsNullOrEmpty(_sessionPin) || !string.IsNullOrEmpty(_sessionRecoveryCode) || _sessionMasterKey != null || _sessionDeterministicMasterKey != null)
         {
             IsSessionUnlocked = true;
             return true;
@@ -880,6 +903,7 @@ public partial class MainViewModel : ObservableObject
         _sessionPin = null;
         _sessionRecoveryCode = null;
         _sessionMasterKey = null;
+        _sessionDeterministicMasterKey = null;
         IsSessionUnlocked = false;
         RecoveryCodeDisplay = string.Empty;
         StatusMessage = "主密码已清除。历史加密文件需使用恢复码解密。";
@@ -1113,7 +1137,8 @@ public partial class MainViewModel : ObservableObject
                         if (res.Success)
                         {
                             Interlocked.Increment(ref successCount);
-                            var insp = _obfuscator.Inspect(res.FinalPath, _sessionMasterKey, structWorkspace);
+                            var (pKey, sKey) = GetSessionMasterKeys();
+                            var insp = _obfuscator.Inspect(res.FinalPath, masterKey: pKey, fallbackMasterKey: sKey, pin: _sessionPin, recoveryCode: _sessionRecoveryCode, forStructureWorkspace: structWorkspace);
                             dispatcher?.InvokeAsync(() =>
                             {
                                 string newName = Path.GetFileName(res.FinalPath);

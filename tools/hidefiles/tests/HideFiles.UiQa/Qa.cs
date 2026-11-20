@@ -161,6 +161,27 @@ internal static class Program
             Check(File.Exists(realPng), "还原后原文件应回来");
         }
 
+        // ---------- D2. 验证已解锁会话下拖入已混淆文件时，原始文件名自动解密显示 ----------
+        string preObfFile = Path.Combine(_outDir, "已加密测试图.png");
+        File.WriteAllBytes(preObfFile, MakeTinyPng());
+        var obfHelper = new FileObfuscator();
+        var detCfg = HideFilesConfig.CreateDefault();
+        detCfg.ChangePin(Pin);
+        detCfg.Deterministic = true;
+        detCfg.ObfuscateFileName = true;
+        var obfRes = obfHelper.ObfuscateFile(preObfFile, detCfg);
+        Check(obfRes.Success, "预制确定性混淆文件应成功");
+
+        vm.AddPaths(new[] { obfRes.FinalPath }, "struct");
+        Pump();
+        var loadedObfItem = vm.Files.FirstOrDefault(f => f.FilePath == obfRes.FinalPath);
+        Check(loadedObfItem != null, "列表应包含拖入的已混淆文件");
+        Check(loadedObfItem?.Status == FileStatus.Obfuscated, "拖入的文件状态应为已混淆");
+        Check(loadedObfItem?.OriginalFileName == "已加密测试图.png",
+            $"已解锁会话拖入已混淆文件时，原始文件名应自动解密为「已加密测试图.png」，实际为「{loadedObfItem?.OriginalFileName}」");
+        Check(loadedObfItem?.DisplayOriginalFileName == "已加密测试图.png",
+            $"DisplayOriginalFileName 应显示原始文件名而非 (未解锁)，实际为「{loadedObfItem?.DisplayOriginalFileName}」");
+
         // ---------- E. 加密页：合并入口自动分派 ----------
         string encDir = Path.Combine(_outDir, "smart");
         Directory.CreateDirectory(encDir);
