@@ -114,6 +114,8 @@
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling"
                                       VirtualizingPanel.ScrollUnit="Pixel"
+                                      BeginningEdit="FileList_BeginningEdit"
+                                      MouseDoubleClick="FileList_MouseDoubleClick"
                                       Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="50">
@@ -152,10 +154,10 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" />
-                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
-                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" IsReadOnly="True" />
                                     <DataGridTemplateColumn Header="操作" Width="50">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
@@ -247,6 +249,8 @@
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling"
                                       VirtualizingPanel.ScrollUnit="Pixel"
+                                      BeginningEdit="FileList_BeginningEdit"
+                                      MouseDoubleClick="FileList_MouseDoubleClick"
                                       Visibility="{Binding HasSecureFiles, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="50">
@@ -285,10 +289,10 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" />
-                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" />
-                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                    <DataGridTextColumn Header="原始文件名" Binding="{Binding DisplayOriginalFileName}" Width="200" FontWeight="SemiBold" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="加密文件名" Binding="{Binding DisplayEncryptedFileName}" Width="180" Foreground="{DynamicResource TextFillColorSecondaryBrush}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="大小" Binding="{Binding DisplaySize}" Width="80" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="完整路径" Binding="{Binding FilePath}" MinWidth="300" Width="*" Foreground="{DynamicResource TextFillColorTertiaryBrush}" IsReadOnly="True" />
                                     <DataGridTemplateColumn Header="操作" Width="50">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
@@ -525,23 +529,17 @@
                         </Border>
 
                         <!-- 卡片 6: 格式规则（紧凑两列表格） -->
-                        <Border Style="{StaticResource SettingsCardStyle}">
+                        <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
                             <StackPanel>
-                                <Grid Margin="0,0,0,10">
+                                <Grid Margin="0,0,0,6">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="格式规则" Style="{StaticResource SettingsCardTitleStyle}" />
                                     <TextBlock Grid.Column="1" Text="勾选启用分组；方框为伪装后缀"
                                                Margin="12,0,12,0" HorizontalAlignment="Left"
                                                Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" />
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                        <Button Content="恢复默认" Command="{Binding ResetConfigCommand}" Height="26" Padding="10,2" FontSize="12" Margin="0,0,6,0" />
-                                        <ui:Button Content="保存设置" Command="{Binding SaveConfigCommand}" Appearance="Primary"
-                                                   Height="26" Padding="12,2" FontSize="12" AutomationProperties.AutomationId="SaveConfig" />
-                                    </StackPanel>
                                 </Grid>
 
                                 <ItemsControl ItemsSource="{Binding Config.Groups}" AutomationProperties.AutomationId="FormatRuleList">
@@ -553,7 +551,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                                    BorderThickness="0,1,0,0" Padding="0,7" Margin="0,0,12,0">
+                                                    BorderThickness="0,1,0,0" Padding="0,5" Margin="0,0,12,0">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto" />
@@ -581,6 +579,24 @@
                                 </ItemsControl>
                             </StackPanel>
                         </Border>
+
+                        <!-- 底部操作栏：恢复默认与手动保存设置 -->
+                        <Grid Margin="0,4,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="配置修改后自动即时保存生效"
+                                       VerticalAlignment="Center" Style="{StaticResource SettingsHintStyle}" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="恢复默认" Command="{Binding ResetConfigCommand}"
+                                        Height="28" Padding="12,2" FontSize="12" Margin="0,0,8,0"
+                                        AutomationProperties.AutomationId="ResetConfig" />
+                                <ui:Button Content="保存设置" Command="{Binding SaveConfigCommand}" Appearance="Primary"
+                                           Height="28" Padding="14,2" FontSize="12"
+                                           AutomationProperties.AutomationId="SaveConfig" />
+                            </StackPanel>
+                        </Grid>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

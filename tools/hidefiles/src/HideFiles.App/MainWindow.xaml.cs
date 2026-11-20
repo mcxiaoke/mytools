@@ -1,4 +1,10 @@
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using HideFiles.App.Models;
 using HideFiles.App.ViewModels;
 using Wpf.Ui.Controls;
 
@@ -9,6 +15,15 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (DataContext is MainViewModel vm)
+        {
+            vm.FlushConfig();
+        }
     }
 
     private void FileList_DragOver(object sender, DragEventArgs e)
@@ -36,5 +51,48 @@ public partial class MainWindow : FluentWindow
                 await vm.AddPathsAsync(paths, mode);
             }
         }
+    }
+
+    private void FileList_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
+    {
+        // 文件列表为只读视图，禁止进入单元格就地编辑模式（避免只读属性引发绑定异常）
+        e.Cancel = true;
+    }
+
+    private void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left) return;
+        if (e.OriginalSource is not DependencyObject dep) return;
+
+        // 排除列头、滚动条、复选框、删除按钮等内部操作控件
+        if (FindVisualParent<DataGridColumnHeader>(dep) != null) return;
+        if (FindVisualParent<ScrollBar>(dep) != null) return;
+        if (FindVisualParent<System.Windows.Controls.Button>(dep) != null) return;
+        if (FindVisualParent<System.Windows.Controls.CheckBox>(dep) != null) return;
+
+        // 仅在双击数据行时触发在资源管理器中定位
+        var row = FindVisualParent<DataGridRow>(dep);
+        if (row != null && row.Item is FileItemModel item && DataContext is MainViewModel vm)
+        {
+            e.Handled = true;
+            vm.LocateFile(item);
+        }
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? element) where T : DependencyObject
+    {
+        while (element != null)
+        {
+            if (element is T match) return match;
+            if (element is Visual || element is System.Windows.Media.Media3D.Visual3D)
+            {
+                element = VisualTreeHelper.GetParent(element);
+            }
+            else
+            {
+                element = LogicalTreeHelper.GetParent(element);
+            }
+        }
+        return null;
     }
 }

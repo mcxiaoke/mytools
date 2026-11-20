@@ -148,4 +148,47 @@ public class ConfigPersistenceTests : IDisposable
         Assert.True(dec.Success, dec.ErrorMessage);
         Assert.Equal("content", File.ReadAllText(dec.FinalPath));
     }
+
+    [Fact]
+    public void Config_PropertyChanged_FiresChangedEvent()
+    {
+        var cfg = HideFilesConfig.CreateDefault();
+        int changedCount = 0;
+        cfg.Changed += (_, _) => changedCount++;
+
+        cfg.HeadObfuscateSize = 1048576;
+        Assert.Equal(1, changedCount);
+
+        cfg.ObfuscateFileName = false;
+        Assert.Equal(2, changedCount);
+
+        cfg.IncludeSubdirectories = true;
+        Assert.Equal(3, changedCount);
+
+        cfg.Deterministic = true;
+        Assert.Equal(4, changedCount);
+
+        // 重复设置相同值不应触发
+        cfg.Deterministic = true;
+        Assert.Equal(4, changedCount);
+    }
+
+    [Fact]
+    public void ExtensionRuleGroup_PropertyChanged_BubblesToConfigChanged()
+    {
+        var cfg = HideFilesConfig.CreateDefault();
+        int changedCount = 0;
+        cfg.Changed += (_, _) => changedCount++;
+
+        var group = cfg.Groups.First();
+        group.Enabled = !group.Enabled;
+        Assert.Equal(1, changedCount);
+
+        group.FakeExtension = ".custom";
+        Assert.Equal(2, changedCount);
+
+        // 重复设置相同值不应触发
+        group.FakeExtension = ".custom";
+        Assert.Equal(2, changedCount);
+    }
 }

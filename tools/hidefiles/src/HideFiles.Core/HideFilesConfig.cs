@@ -11,9 +11,45 @@ namespace HideFiles.Core;
 
 public sealed class ExtensionRuleGroup
 {
-    public string Name { get; set; } = string.Empty;
-    public bool Enabled { get; set; } = true;
-    public string FakeExtension { get; set; } = ".dat";
+    private string _name = string.Empty;
+    private bool _enabled = true;
+    private string _fakeExtension = ".dat";
+
+    public event EventHandler? Changed;
+
+    public string Name
+    {
+        get => _name;
+        set => _name = value;
+    }
+
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled != value)
+            {
+                _enabled = value;
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string FakeExtension
+    {
+        get => _fakeExtension;
+        set
+        {
+            string val = value ?? string.Empty;
+            if (_fakeExtension != val)
+            {
+                _fakeExtension = val;
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
     public List<string> Extensions { get; set; } = new();
 
     public ExtensionRuleGroup() { }
@@ -42,17 +78,91 @@ public sealed class PinChangeResult
 
 public sealed class HideFilesConfig
 {
+    public event EventHandler? Changed;
+
+    private void NotifyChanged()
+    {
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void WireRuleEvents()
+    {
+        if (_groups == null) return;
+        foreach (var g in _groups)
+        {
+            g.Changed -= OnRuleGroupChanged;
+            g.Changed += OnRuleGroupChanged;
+        }
+    }
+
+    private void OnRuleGroupChanged(object? sender, EventArgs e)
+    {
+        NotifyChanged();
+    }
+
     public int Version { get; set; } = 1;
-    public int HeadObfuscateSize { get; set; } = CoreConstants.DefaultHeadSize;
+
+    private int _headObfuscateSize = CoreConstants.DefaultHeadSize;
+    public int HeadObfuscateSize
+    {
+        get => _headObfuscateSize;
+        set
+        {
+            if (_headObfuscateSize != value)
+            {
+                _headObfuscateSize = value;
+                NotifyChanged();
+            }
+        }
+    }
+
     public string DefaultFakeExtension { get; set; } = ".dat";
-    public bool ObfuscateFileName { get; set; } = true;
-    public bool IncludeSubdirectories { get; set; } = false;
+
+    private bool _obfuscateFileName = true;
+    public bool ObfuscateFileName
+    {
+        get => _obfuscateFileName;
+        set
+        {
+            if (_obfuscateFileName != value)
+            {
+                _obfuscateFileName = value;
+                NotifyChanged();
+            }
+        }
+    }
+
+    private bool _includeSubdirectories = false;
+    public bool IncludeSubdirectories
+    {
+        get => _includeSubdirectories;
+        set
+        {
+            if (_includeSubdirectories != value)
+            {
+                _includeSubdirectories = value;
+                NotifyChanged();
+            }
+        }
+    }
 
     /// <summary>
     /// 确定性加密模式（默认 false）：
     /// 开启后，同一个输入文件 + 同一个密码将生成字节完全一致的密文文件（适合网盘同步去重）。
     /// </summary>
-    public bool Deterministic { get; set; } = false;
+    private bool _deterministic = false;
+    public bool Deterministic
+    {
+        get => _deterministic;
+        set
+        {
+            if (_deterministic != value)
+            {
+                _deterministic = value;
+                NotifyChanged();
+            }
+        }
+    }
 
     /// <summary>
     /// v2 密钥材料：用 PIN 派生的 KEK 加密主密钥 MK（Base64）。
@@ -76,7 +186,16 @@ public sealed class HideFilesConfig
     /// <summary>v2 默认保护模式（设置页可切换）</summary>
     public ProtectionMode ProtectionMode { get; set; } = ProtectionMode.StructureLock;
 
-    public List<ExtensionRuleGroup> Groups { get; set; } = new();
+    private List<ExtensionRuleGroup> _groups = new();
+    public List<ExtensionRuleGroup> Groups
+    {
+        get => _groups;
+        set
+        {
+            _groups = value ?? new();
+            WireRuleEvents();
+        }
+    }
 
     /// <summary>是否已持有密钥材料（可用于加解密）</summary>
     [JsonIgnore]
@@ -403,6 +522,7 @@ public sealed class HideFilesConfig
             config.Groups.Add(new ExtensionRuleGroup("Others", ".dat",
                 new[] { ".exe", ".dll", ".iso", ".bin", ".apk", ".dmg", ".db" }));
         }
+        config.WireRuleEvents();
     }
 
     public void Save(string? path = null)

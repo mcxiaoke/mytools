@@ -386,6 +386,27 @@ internal static class Program
             vm.RecoveryCodeDisplay = string.Empty;
             Pump();
             win.UpdateLayout();
+
+            // ---------- 验证：配置项即时自动保存 ----------
+            bool prevInclude = vm.Config.IncludeSubdirectories;
+            vm.Config.IncludeSubdirectories = !prevInclude;
+            Pump(500); // 等待防抖计时器自动写入磁盘
+            string cfgJson = File.ReadAllText(Path.Combine(dataDir, "config.json"));
+            Check(cfgJson.Contains($"\"IncludeSubdirectories\": {(!prevInclude).ToString().ToLowerInvariant()}"),
+                "设置页面配置项修改后应即时自动保存到磁盘");
+            Check(vm.StatusMessage.Contains("自动保存"), "自动保存后状态栏应有提示");
+            vm.Config.IncludeSubdirectories = prevInclude;
+            Pump(500);
+
+            // ---------- 验证：主界面文件列表定位功能 ----------
+            tab.SelectedIndex = 0;
+            Pump();
+            if (vm.Files.Count > 0)
+            {
+                var targetItem = vm.Files[0];
+                SafeExecute(() => vm.LocateFile(targetItem), "双击文件定位");
+                Check(vm.StatusMessage.Contains("资源管理器"), "双击列表项应触发在资源管理器中定位提示");
+            }
         }
 
         tab.SelectedIndex = 3;

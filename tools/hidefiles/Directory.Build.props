@@ -7,7 +7,7 @@
   <PropertyGroup>
     <Major>1</Major>
     <Minor>2</Minor>
-    <Patch>1</Patch>
+    <Patch>2</Patch>
     <VersionPrefix>$(Major).$(Minor).$(Patch)</VersionPrefix>
     <FileVersionEpoch>2026-11-01</FileVersionEpoch>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

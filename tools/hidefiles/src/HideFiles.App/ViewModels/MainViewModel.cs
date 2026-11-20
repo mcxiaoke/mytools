@@ -123,7 +123,14 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        _autoSaveTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(300)
+        };
+        _autoSaveTimer.Tick += OnAutoSaveTimerTick;
+
         _config = HideFilesConfig.Load();
+        SubscribeConfigEvents(_config);
         HasPinConfigured = _config.HasPin;
         RefreshContextMenuStatus();
 
@@ -136,6 +143,58 @@ public partial class MainViewModel : ObservableObject
             StatusMessage = $"配置文件已损坏，已回退默认设置。原文件备份在：{backup}。"
                           + "请勿直接重设密码——先用备份文件恢复 config.json，否则历史文件只能用恢复码解密。";
             _configCorruptedOnLoad = true;
+        }
+    }
+
+    private readonly System.Windows.Threading.DispatcherTimer _autoSaveTimer;
+
+    partial void OnConfigChanged(HideFilesConfig? oldValue, HideFilesConfig newValue)
+    {
+        if (oldValue != null) UnsubscribeConfigEvents(oldValue);
+        if (newValue != null) SubscribeConfigEvents(newValue);
+    }
+
+    private void SubscribeConfigEvents(HideFilesConfig? config)
+    {
+        if (config == null) return;
+        config.WireRuleEvents();
+        config.Changed -= OnConfigModelChanged;
+        config.Changed += OnConfigModelChanged;
+    }
+
+    private void UnsubscribeConfigEvents(HideFilesConfig? config)
+    {
+        if (config == null) return;
+        config.Changed -= OnConfigModelChanged;
+    }
+
+    private void OnConfigModelChanged(object? sender, EventArgs e)
+    {
+        // 自动即时保存（300ms防抖以兼顾打字性能与即时保存）
+        _autoSaveTimer.Stop();
+        _autoSaveTimer.Start();
+    }
+
+    private void OnAutoSaveTimerTick(object? sender, EventArgs e)
+    {
+        _autoSaveTimer.Stop();
+        try
+        {
+            Config.Save();
+            StatusMessage = "设置已自动保存。";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"自动保存设置失败: {ex.Message}";
+        }
+    }
+
+    public void FlushConfig()
+    {
+        if (_autoSaveTimer.IsEnabled)
+        {
+            _autoSaveTimer.Stop();
+            try { Config.Save(); } catch { }
         }
     }
 
@@ -1173,6 +1232,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void SaveConfig()
     {
+        _autoSaveTimer.Stop();
         try
         {
             Config.Save();
@@ -1184,6 +1244,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ResetConfig()
     {
+        _autoSaveTimer.Stop();
         // 只重置规则，保留密钥材料
         var fresh = HideFilesConfig.CreateDefault();
         fresh.ConfigSalt = Config.ConfigSalt;
@@ -1197,6 +1258,63 @@ public partial class MainViewModel : ObservableObject
         HasPinConfigured = Config.HasPin;
         RefreshSessionMasterKey();
         StatusMessage = "已恢复默认设置（密码保持不变）。";
+    }
+
+    [RelayCommand]
+    public void LocateFile(FileItemModel? item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.FilePath)) return;
+        LocatePath(item.FilePath);
+    }
+
+    public void LocatePath(string filePath)
+    {
+        try
+        {
+            string fullPath = Path.GetFullPath(filePath);
+            if (File.Exists(fullPath))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{fullPath}\"",
+                    UseShellExecute = true
+                });
+                StatusMessage = $"已在资源管理器中定位：{Path.GetFileName(fullPath)}";
+            }
+            else if (Directory.Exists(fullPath))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{fullPath}\"",
+                    UseShellExecute = true
+                });
+                StatusMessage = $"已在资源管理器中打开目录：{fullPath}";
+            }
+            else
+            {
+                string? parent = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"\"{parent}\"",
+                        UseShellExecute = true
+                    });
+                    StatusMessage = $"文件不存在，已打开所在目录：{parent}";
+                }
+                else
+                {
+                    StatusMessage = $"文件或所在目录不存在：{fullPath}";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"无法打开资源管理器: {ex.Message}";
+        }
     }
 
     // ---------- 目录名伪装（独立操作） ----------
