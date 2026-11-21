@@ -312,7 +312,122 @@
                 </Grid>
             </TabItem>
 
-            <!-- TAB 3: 设置 -->
+            <!-- TAB 3: 工具 -->
+            <TabItem Header="工具">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+                    <StackPanel>
+                        <!-- Group 1: 目录名混淆与还原 -->
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="20,16" Margin="0,0,0,14">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- 标题与说明 -->
+                                <Grid Grid.Row="0" Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="目录名混淆" FontSize="14" FontWeight="Bold"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="对指定文件夹内部的子目录名进行可逆混淆或还原（添加或移除 _hf_ 前缀），不影响文件内容，仅降低可读性"
+                                               Margin="14,0,0,0" Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- 选项与操作按钮 -->
+                                <Grid Grid.Row="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <CheckBox Content="包含子目录（递归处理多层子目录）"
+                                                  IsChecked="{Binding ToolDirRecursive}"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.AutomationId="ToolDirRecursiveCheck" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:Button Content="混淆目录名" Command="{Binding ObfuscateDirNamesCommand}"
+                                                   Appearance="Primary" Height="32" Padding="16,4" FontSize="12.5" Margin="0,0,8,0"
+                                                   AutomationProperties.AutomationId="DirObfuscate"
+                                                   ToolTip="选择文件夹，混淆其内部子目录名称" />
+                                        <ui:Button Content="还原目录名" Command="{Binding RestoreDirNamesCommand}"
+                                                   Appearance="Secondary" Height="32" Padding="16,4" FontSize="12.5"
+                                                   AutomationProperties.AutomationId="DirRestore"
+                                                   ToolTip="选择文件夹，还原其内部被混淆的子目录名称" />
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <!-- Group 2: 文件名混淆与还原 -->
+                        <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="8" Padding="20,16" Margin="0,0,0,14">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- 标题与说明 -->
+                                <Grid Grid.Row="0" Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="文件名混淆" FontSize="14" FontWeight="Bold"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="对文件名称进行可逆混淆或还原（算法与目录名一致），支持批量处理文件夹或指定文件，无损还原"
+                                               Margin="14,0,0,0" Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- 选项与操作按钮 -->
+                                <Grid Grid.Row="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <CheckBox Content="包含子目录" IsChecked="{Binding ToolFileRecursive}"
+                                                  Margin="0,0,20,0" VerticalAlignment="Center"
+                                                  AutomationProperties.AutomationId="ToolFileRecursiveCheck"
+                                                  ToolTip="处理文件夹时，递归处理所有深度的子目录内文件" />
+                                        <CheckBox Content="保留扩展名（仅混淆主文件名）" IsChecked="{Binding ToolFileKeepExtension}"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.AutomationId="ToolFileKeepExtensionCheck"
+                                                  ToolTip="默认关闭（整名混淆隐藏格式）；勾选后保留 .mp4/.txt 等扩展名" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:Button Content="混淆文件夹" Command="{Binding ObfuscateFolderFilesCommand}"
+                                                   Appearance="Primary" Height="32" Padding="14,4" FontSize="12.5" Margin="0,0,8,0"
+                                                   AutomationProperties.AutomationId="FileObfuscateFolder"
+                                                   ToolTip="选择文件夹，批量混淆其内部所有文件名" />
+                                        <ui:Button Content="还原文件夹" Command="{Binding RestoreFolderFilesCommand}"
+                                                   Appearance="Secondary" Height="32" Padding="14,4" FontSize="12.5" Margin="0,0,16,0"
+                                                   AutomationProperties.AutomationId="FileRestoreFolder"
+                                                   ToolTip="选择文件夹，批量还原其内部被混淆的文件名" />
+                                        <ui:Button Content="混淆文件" Command="{Binding ObfuscateSelectedFilesCommand}"
+                                                   Appearance="Primary" Height="32" Padding="14,4" FontSize="12.5" Margin="0,0,8,0"
+                                                   AutomationProperties.AutomationId="FileObfuscateFiles"
+                                                   ToolTip="选择一个或多个具体文件直接混淆文件名" />
+                                        <ui:Button Content="还原文件" Command="{Binding RestoreSelectedFilesCommand}"
+                                                   Appearance="Secondary" Height="32" Padding="14,4" FontSize="12.5"
+                                                   AutomationProperties.AutomationId="FileRestoreFiles"
+                                                   ToolTip="选择一个或多个具体文件直接还原文件名" />
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- TAB 4: 设置 -->
             <TabItem Header="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
                     <StackPanel>
@@ -456,31 +571,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- 卡片 4: 目录名伪装（1 行） -->
-                        <Border Style="{StaticResource SettingsCardStyle}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock Text="目录名伪装" Style="{StaticResource SettingsCardTitleStyle}" />
-                                <TextBlock Grid.Column="1" Text="子目录名加 _hf_ 前缀，可原样还原；仅降低可读性"
-                                           Margin="12,0,12,0" Style="{StaticResource SettingsHintStyle}" TextTrimming="CharacterEllipsis" />
-
-                                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                    <ui:Button Content="伪装" Command="{Binding ObfuscateDirNamesCommand}"
-                                               Appearance="Primary" Height="30" Padding="12,3" FontSize="12.5" Margin="0,0,8,0"
-                                               AutomationProperties.AutomationId="DirObfuscate" />
-                                    <ui:Button Content="还原" Command="{Binding RestoreDirNamesCommand}"
-                                               Appearance="Secondary" Height="30" Padding="12,3" FontSize="12.5"
-                                               AutomationProperties.AutomationId="DirRestore" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-
-                        <!-- 卡片 5: Windows 资源管理器右键菜单（1 行） -->
+                        <!-- 卡片 4: Windows 资源管理器右键菜单（1 行） -->
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -528,7 +619,7 @@
                             </Grid>
                         </Border>
 
-                        <!-- 卡片 6: 格式规则（紧凑两列表格） -->
+                        <!-- 卡片 5: 格式规则（紧凑两列表格） -->
                         <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,8">
                             <StackPanel>
                                 <Grid Margin="0,0,0,6">
@@ -601,7 +692,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- TAB 4: 关于 -->
+            <!-- TAB 5: 关于 -->
             <TabItem Header="关于">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <Border Background="{DynamicResource ControlFillColorDefaultBrush}"

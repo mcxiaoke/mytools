@@ -91,6 +91,16 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private int _selectedTabIndex;
 
+    // ---------- 工具 Tab 选项 ----------
+    [ObservableProperty]
+    private bool _toolDirRecursive = true;
+
+    [ObservableProperty]
+    private bool _toolFileRecursive = true;
+
+    [ObservableProperty]
+    private bool _toolFileKeepExtension = false;
+
     /// <summary>当前活动工作台：struct=混淆 secure=加密（由 Tab 切换设置，决定拖拽/外部投递目标）</summary>
     [ObservableProperty]
     private string _activeMode = "struct";
@@ -1342,7 +1352,7 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    // ---------- 目录名伪装（独立操作） ----------
+    // ---------- 工具 Tab: 目录名混淆/还原 ----------
     [RelayCommand]
     private void ObfuscateDirNames() => ApplyDirectoryNames(obfuscate: true);
 
@@ -1351,17 +1361,67 @@ public partial class MainViewModel : ObservableObject
 
     private void ApplyDirectoryNames(bool obfuscate)
     {
-        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要伪装子目录名的文件夹" : "选择要还原子目录名的文件夹" };
+        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要混淆子目录名的文件夹" : "选择要还原被混淆子目录名的文件夹" };
         if (dlg.ShowDialog() != true || string.IsNullOrEmpty(dlg.FolderName)) return;
 
         var result = obfuscate
-            ? DirectoryObfuscator.ObfuscateDirectory(dlg.FolderName)
-            : DirectoryObfuscator.RestoreDirectory(dlg.FolderName);
+            ? DirectoryObfuscator.ObfuscateDirectory(dlg.FolderName, recursive: ToolDirRecursive)
+            : DirectoryObfuscator.RestoreDirectory(dlg.FolderName, recursive: ToolDirRecursive);
 
-        string verb = obfuscate ? "伪装" : "还原";
+        string verb = obfuscate ? "混淆" : "还原";
         StatusMessage = result.Success
             ? $"目录名{verb}完成：改名 {result.Renamed}，跳过 {result.Skipped}。"
             : $"目录名{verb}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count} —— "
+              + string.Join("；", result.Failures.Take(3));
+    }
+
+    // ---------- 工具 Tab: 文件名混淆/还原 ----------
+    [RelayCommand]
+    private void ObfuscateFolderFiles() => ApplyFolderFiles(obfuscate: true);
+
+    [RelayCommand]
+    private void RestoreFolderFiles() => ApplyFolderFiles(obfuscate: false);
+
+    private void ApplyFolderFiles(bool obfuscate)
+    {
+        var dlg = new OpenFolderDialog { Title = obfuscate ? "选择要混淆文件名的文件夹" : "选择要还原文件名的文件夹" };
+        if (dlg.ShowDialog() != true || string.IsNullOrEmpty(dlg.FolderName)) return;
+
+        var result = obfuscate
+            ? FileNameObfuscator.ObfuscateDirectoryFiles(dlg.FolderName, recursive: ToolFileRecursive, keepExtension: ToolFileKeepExtension)
+            : FileNameObfuscator.RestoreDirectoryFiles(dlg.FolderName, recursive: ToolFileRecursive);
+
+        string verb = obfuscate ? "混淆" : "还原";
+        StatusMessage = result.Success
+            ? $"文件名{verb}完成：改名 {result.Renamed}，跳过 {result.Skipped}。"
+            : $"文件名{verb}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count} —— "
+              + string.Join("；", result.Failures.Take(3));
+    }
+
+    [RelayCommand]
+    private void ObfuscateSelectedFiles() => ApplySelectedFiles(obfuscate: true);
+
+    [RelayCommand]
+    private void RestoreSelectedFiles() => ApplySelectedFiles(obfuscate: false);
+
+    private void ApplySelectedFiles(bool obfuscate)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = obfuscate ? "选择要混淆名称的文件" : "选择要还原名称的文件",
+            Multiselect = true,
+            Filter = "所有文件 (*.*)|*.*"
+        };
+        if (dlg.ShowDialog() != true || dlg.FileNames.Length == 0) return;
+
+        var result = obfuscate
+            ? FileNameObfuscator.ObfuscateFiles(dlg.FileNames, keepExtension: ToolFileKeepExtension)
+            : FileNameObfuscator.RestoreFiles(dlg.FileNames);
+
+        string verb = obfuscate ? "混淆" : "还原";
+        StatusMessage = result.Success
+            ? $"文件名{verb}完成：改名 {result.Renamed}，跳过 {result.Skipped}。"
+            : $"文件名{verb}：改名 {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count} —— "
               + string.Join("；", result.Failures.Take(3));
     }
 

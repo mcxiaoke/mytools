@@ -33,128 +33,14 @@ public sealed class DirectoryRenameResult
 /// </summary>
 public static class DirectoryObfuscator
 {
-    private static readonly byte[] Mask = { 0x3F, 0x7A, 0x19, 0xB2, 0x5C, 0x8E, 0x4D, 0x01 };
-
-    /// <summary>混淆后目录名的最大长度，避免撞 Windows 255 字符/路径上限</summary>
-    private const int MaxObfuscatedNameLength = 200;
-
-    /// <summary>校验尾长度：CRC32 低 16 位</summary>
-    private const int ChecksumSize = 2;
-
-    /// <summary>
-    /// v2 载荷的格式标记字节（放在载荷首位，参与 Base32 编码）。
-    /// 用载荷内标记而不是换前缀，是为了既保持 `_hf_` 对外形态不变（幂等判断、既有测试约定），
-    /// 又能与 v1（无标记、无校验尾）无歧义区分。
-    /// </summary>
-    private const byte FormatMarkerV2 = 0x02;
-
-    public static bool IsObfuscatedName(string dirName) =>
-        dirName.StartsWith(CoreConstants.ObfuscatedDirectoryPrefix, StringComparison.OrdinalIgnoreCase);
+    public static bool IsObfuscatedName(string dirName) => NameObfuscator.IsObfuscated(dirName);
 
     /// <summary>混淆单个目录名（已混淆的返回原值，保证幂等）</summary>
-    public static string ObfuscateName(string originalName)
-    {
-        if (string.IsNullOrWhiteSpace(originalName))
-            throw new ArgumentException("目录名不能为空。", nameof(originalName));
-        if (IsObfuscatedName(originalName)) return originalName;
-
-        byte[] raw = Encoding.UTF8.GetBytes(originalName);
-
-        // 载荷 = [格式标记][掩码后的原名][CRC32 低 16 位]
-        byte[] payload = new byte[1 + raw.Length + ChecksumSize];
-        payload[0] = FormatMarkerV2;
-        for (int i = 0; i < raw.Length; i++)
-            payload[1 + i] = (byte)(raw[i] ^ MaskKey(i));
-
-        ushort crc = (ushort)(Crc32Helper.Compute(raw) & 0xFFFF);
-        payload[1 + raw.Length] = (byte)(crc >> 8);
-        payload[2 + raw.Length] = (byte)crc;
-
-        string result = CoreConstants.ObfuscatedDirectoryPrefix + Base32.Encode(payload);
-        if (result.Length > MaxObfuscatedNameLength)
-            throw new InvalidOperationException(
-                $"目录名过长，混淆后达到 {result.Length} 字符（上限 {MaxObfuscatedNameLength}）。请先缩短该目录名。");
-        return result;
-    }
+    public static string ObfuscateName(string originalName) => NameObfuscator.Obfuscate(originalName);
 
     /// <summary>还原被混淆的目录名（v2 带校验尾；v1 旧格式尽力兼容）</summary>
-    public static bool TryRestoreName(string obfuscatedName, out string restoredName)
-    {
-        restoredName = string.Empty;
-        if (!IsObfuscatedName(obfuscatedName)) return false;
-
-        string body = obfuscatedName.Substring(CoreConstants.ObfuscatedDirectoryPrefix.Length);
-        if (body.Length == 0) return false;
-
-        byte[]? payload = TryDecodeCanonical(body);
-        if (payload == null || payload.Length == 0) return false;
-
-        if (payload[0] == FormatMarkerV2)
-        {
-            // v2：必须有校验尾，且 CRC 必须匹配，否则视为"不是本工具产生的名字"直接拒绝
-            if (payload.Length < 1 + 1 + ChecksumSize) return false;
-            int nameLen = payload.Length - 1 - ChecksumSize;
-            byte[] raw = new byte[nameLen];
-            for (int i = 0; i < nameLen; i++)
-                raw[i] = (byte)(payload[1 + i] ^ MaskKey(i));
-
-            ushort expected = (ushort)((payload[1 + nameLen] << 8) | payload[2 + nameLen]);
-            ushort actual = (ushort)(Crc32Helper.Compute(raw) & 0xFFFF);
-            if (expected != actual) return false;
-
-            return TryAcceptName(raw, out restoredName);
-        }
-
-        // v1：无标记无校验尾，只能靠严格解码与严格 UTF-8 降低误判
-        byte[] legacyRaw = new byte[payload.Length];
-        for (int i = 0; i < payload.Length; i++)
-            legacyRaw[i] = (byte)(payload[i] ^ MaskKey(i));
-        return TryAcceptName(legacyRaw, out restoredName);
-    }
-
-    /// <summary>
-    /// Base32 严格解码：要求规范编码（尾部冗余位必须为 0）且长度足够。
-    /// 规范编码天然排除掉绝大部分"随便起的" `_hf_xxx` 名字，是零成本的第一道过滤。
-    /// </summary>
-    private static byte[]? TryDecodeCanonical(string body)
-    {
-        try
-        {
-            var (bytes, leftoverBits, leftoverValue) = Base32.DecodeDetailed(body);
-            if (bytes.Length == 0) return null;
-            if (leftoverBits > 0 && leftoverValue != 0) return null;  // 非规范 Base32
-            return bytes;
-        }
-        catch (FormatException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>严格校验解码结果是否为合法 UTF-8 名称（拒绝替换字符与控制字符）</summary>
-    private static bool TryAcceptName(byte[] raw, out string name)
-    {
-        name = string.Empty;
-        try
-        {
-            // 严格 UTF-8：非法字节序列直接抛异常，而不是被替换成 U+FFFD
-            name = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(raw);
-        }
-        catch (DecoderFallbackException)
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(name)) return false;
-        if (name.Contains('\uFFFD')) return false;
-        foreach (char c in name)
-        {
-            if (char.IsControl(c)) return false;
-        }
-        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
-
-        return true;
-    }
+    public static bool TryRestoreName(string obfuscatedName, out string restoredName) =>
+        NameObfuscator.TryRestore(obfuscatedName, out restoredName);
 
     /// <summary>混淆给定目录内部的子目录名（自最深一层往上处理）</summary>
     public static DirectoryRenameResult ObfuscateDirectory(string rootPath, bool recursive = true)
@@ -224,9 +110,6 @@ public static class DirectoryObfuscator
 
         return result;
     }
-
-    private static byte MaskKey(int index) =>
-        (byte)(Mask[index % Mask.Length] ^ ((index * 17 + 0x3C) & 0xFF));
 
     private static int PathDepth(string path) => path.Count(c => c == Path.DirectorySeparatorChar);
 }

@@ -92,8 +92,8 @@ internal static class Program
         Snap(win, "a_tab_obfuscate.png");
 
         var tabNames = tab.Items.OfType<TabItem>().Select(t => t.Header?.ToString()).ToArray();
-        Check(tabNames.SequenceEqual(new[] { "混淆", "加密", "设置", "关于" }),
-            $"Tab 名称应为 混淆/加密/设置/关于，实际 {string.Join("/", tabNames)}");
+        Check(tabNames.SequenceEqual(new[] { "混淆", "加密", "工具", "设置", "关于" }),
+            $"Tab 名称应为 混淆/加密/工具/设置/关于，实际 {string.Join("/", tabNames)}");
 
         var texts = TextOf(win);
         Check(texts.Any(t => t.Contains("MP4") && t.Contains("MKV")),
@@ -217,13 +217,29 @@ internal static class Program
         string m1 = vm.ActiveMode;
         tab.SelectedIndex = 2; Pump();
         string m2 = vm.ActiveMode;
-        Check(m0 == "struct" && m1 == "secure" && m2 == "secure",
-            $"ActiveMode 应为 struct/secure/secure，实际 {m0}/{m1}/{m2}");
+        tab.SelectedIndex = 3; Pump();
+        string m3 = vm.ActiveMode;
+        Check(m0 == "struct" && m1 == "secure" && m2 == "secure" && m3 == "secure",
+            $"ActiveMode 应为 struct/secure/secure/secure，实际 {m0}/{m1}/{m2}/{m3}");
 
-        // ---------- G. 关于页与恢复码分组 ----------
-        tab.SelectedIndex = 3;
+        // ---------- G. 工具页验证 ----------
+        tab.SelectedIndex = 2;
         Pump();
-        Snap(win, "d_about.png");
+        Snap(win, "d_tools.png");
+        var toolTexts = TextOf(win);
+        Check(toolTexts.Contains("目录名混淆"), "工具页应包含「目录名混淆」分组");
+        Check(toolTexts.Contains("文件名混淆"), "工具页应包含「文件名混淆」分组");
+        Check(toolTexts.Any(t => t.Contains("混淆目录名")), "工具页应有混淆目录名按钮");
+        Check(toolTexts.Any(t => t.Contains("还原目录名")), "工具页应有还原目录名按钮");
+        Check(toolTexts.Any(t => t.Contains("混淆文件夹")), "工具页应有混淆文件夹按钮");
+        Check(toolTexts.Any(t => t.Contains("还原文件夹")), "工具页应有还原文件夹按钮");
+        Check(toolTexts.Any(t => t.Contains("混淆文件") && !t.Contains("混淆文件夹")), "工具页应有混淆文件按钮");
+        Check(toolTexts.Any(t => t.Contains("还原文件") && !t.Contains("还原文件夹")), "工具页应有还原文件按钮");
+
+        // ---------- H. 关于页与恢复码分组 ----------
+        tab.SelectedIndex = 4;
+        Pump();
+        Snap(win, "e_about.png");
         var about = TextOf(win);
         Check(about.Any(t => t.Contains("混淆")), "关于页应使用新术语");
         // 恢复码仅在建库时显示一次；这里直接验证分组展示逻辑本身
@@ -275,12 +291,12 @@ internal static class Program
         }
 
         // ---------- I. 设置页紧凑度：分组齐全且滚动量受控 ----------
-        tab.SelectedIndex = 2;
+        tab.SelectedIndex = 3;
         Pump();
-        Snap(win, "e_settings.png");
+        Snap(win, "f_settings.png");
 
         var settingsTexts = TextOf(win);
-        foreach (var title in new[] { "密码设置", "数据存储", "混淆文件名", "目录名伪装", "右键菜单", "格式规则" })
+        foreach (var title in new[] { "密码设置", "数据存储", "混淆文件名", "右键菜单", "格式规则" })
             Check(settingsTexts.Contains(title), $"设置页应包含分组「{title}」");
         Check(!settingsTexts.Any(t => t.Contains("格式伪装规则") || t.Contains("格式伪装规格")),
             "设置页标题应已改为「格式规则」，不应残留旧名");
@@ -314,13 +330,13 @@ internal static class Program
                 .Where(b => Math.Abs(b.CornerRadius.TopLeft - 8) < 0.1 && b.ActualHeight > 0)
                 .ToList();
             Console.WriteLine("       设置卡片高度: " + string.Join(", ", cards.Select(c => $"{c.ActualHeight:F0}")));
-            Check(cards.Count >= 6, $"设置页应有 6 个分组的卡片，实际 {cards.Count}");
+            Check(cards.Count >= 5, $"设置页应有 5 个分组的卡片，实际 {cards.Count}");
 
-            // 用户要求：密码设置、数据存储、混淆文件名、目录名伪装、右键菜单 全部为单行。
+            // 用户要求：密码设置、数据存储、混淆文件名、右键菜单 全部为单行。
             // 单行卡片的高度由内容撑开（按钮 30 + 上下 padding 24 + 边框 2 ≈ 56），放宽到 72 留出字体差异。
             var simpleCards = cards.Take(cards.Count - 1).ToList();
             Check(simpleCards.All(c => c.ActualHeight <= 72),
-                "前 5 个设置分组都应精简为单行（<=72px），实际 "
+                "前 4 个设置分组都应精简为单行（<=72px），实际 "
                 + string.Join("/", simpleCards.Select(c => $"{c.ActualHeight:F0}")));
 
             // 格式规则：标题行 + 两列三行，行距已放宽，不再强压高度
@@ -357,7 +373,7 @@ internal static class Program
                 .Where(t => t.Style == app.Resources["SettingsCardTitleStyle"] as Style)
                 .Select(t => t.Text).ToList();
             Console.WriteLine("       分组标题: " + string.Join(" / ", titles));
-            Check(titles.Count == 6, $"设置页应有 6 个分组标题，实际 {titles.Count}");
+            Check(titles.Count == 5, $"设置页应有 5 个分组标题，实际 {titles.Count}");
 
             // 格式规则行间距：两列布局下必须按“行”分桶（X 相近视为同一行），
             // 直接按 Y 排序会得到 0，测不出真实行距。
@@ -430,7 +446,7 @@ internal static class Program
             }
         }
 
-        tab.SelectedIndex = 3;
+        tab.SelectedIndex = 4;
         Pump();
 
         win.Close();

@@ -38,6 +38,7 @@ public static class Program
         string command = args[0].ToLowerInvariant();
         var targetArgs = new List<string>();
         bool dryRun = false;
+        bool keepExt = false;
         string? pin = null;
         string? recovery = null;
         string? currentPin = null;
@@ -72,6 +73,10 @@ public static class Program
             else if (a.Equals("--deterministic", StringComparison.OrdinalIgnoreCase) || a.Equals("--det", StringComparison.OrdinalIgnoreCase))
             {
                 deterministicOverride = true;
+            }
+            else if (a.Equals("--keep-ext", StringComparison.OrdinalIgnoreCase))
+            {
+                keepExt = true;
             }
             else
             {
@@ -121,6 +126,14 @@ public static class Program
 
             case "dir-unhide":
                 return ExecuteDirectoryNames(targetArgs, obfuscate: false);
+
+            case "fn-hide":
+            case "file-name-hide":
+                return ExecuteFileNames(targetArgs, obfuscate: true, keepExt: keepExt);
+
+            case "fn-unhide":
+            case "file-name-unhide":
+                return ExecuteFileNames(targetArgs, obfuscate: false, keepExt: false);
 
             default:
                 if (File.Exists(args[0]) || Directory.Exists(args[0]))
@@ -442,6 +455,54 @@ public static class Program
         return failed == 0 ? 0 : 2;
     }
 
+    private static int ExecuteFileNames(List<string> paths, bool obfuscate, bool keepExt)
+    {
+        if (paths.Count == 0)
+        {
+            Console.WriteLine($"[错误] 请指定文件或目录：CarroCasketCli {(obfuscate ? "fn-hide" : "fn-unhide")} <路径...>");
+            return 1;
+        }
+
+        int failed = 0;
+        foreach (string path in paths)
+        {
+            FileRenameResult result;
+            if (Directory.Exists(path))
+            {
+                result = obfuscate
+                    ? FileNameObfuscator.ObfuscateDirectoryFiles(path, recursive: true, keepExtension: keepExt)
+                    : FileNameObfuscator.RestoreDirectoryFiles(path, recursive: true);
+            }
+            else if (File.Exists(path))
+            {
+                result = obfuscate
+                    ? FileNameObfuscator.ObfuscateFiles(new[] { path }, keepExtension: keepExt)
+                    : FileNameObfuscator.RestoreFiles(new[] { path });
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"  [ERR] 路径不存在：{path}");
+                Console.ResetColor();
+                failed++;
+                continue;
+            }
+
+            Console.ForegroundColor = result.Success ? ConsoleColor.Green : ConsoleColor.Yellow;
+            Console.Write($"  [{(result.Success ? "OK" : "WARN")}] ");
+            Console.ResetColor();
+            string verb = obfuscate ? "混淆" : "还原";
+            Console.WriteLine($"{path}：{verb} {result.Renamed}，跳过 {result.Skipped}，失败 {result.Failures.Count}");
+
+            foreach (string failure in result.Failures)
+                Console.WriteLine($"         {failure}");
+
+            if (!result.Success) failed++;
+        }
+
+        return failed == 0 ? 0 : 2;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine($"{AppBrand.Name} - {AppBrand.Tagline}");
@@ -461,6 +522,10 @@ public static class Program
         Console.WriteLine("      伪装子目录名（添加 _hf_ 前缀）。");
         Console.WriteLine("  CarroCasketCli dir-unhide <目录...>");
         Console.WriteLine("      还原子目录名。");
+        Console.WriteLine("  CarroCasketCli fn-hide <路径...> [--keep-ext]");
+        Console.WriteLine("      混淆文件名（添加 _hf_ 前缀；可选 --keep-ext 保留扩展名）。");
+        Console.WriteLine("  CarroCasketCli fn-unhide <路径...>");
+        Console.WriteLine("      还原文件名。");
         Console.WriteLine("  CarroCasketCli --help");
         Console.WriteLine("      显示本帮助。");
         Console.WriteLine();
